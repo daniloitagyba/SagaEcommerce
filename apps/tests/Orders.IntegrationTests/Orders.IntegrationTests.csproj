@@ -8,13 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="coverlet.collector" Version="6.0.4" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageReference Include="Testcontainers.PostgreSql" Version="4.13.0" />
-    <PackageReference Include="Testcontainers.Redis" Version="4.13.0" />
-    <PackageReference Include="Testcontainers.Redpanda" Version="4.13.0" />
-    <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.Redis" />
+    <PackageReference Include="Testcontainers.Redpanda" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,7 +22,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\BuildingBlocks\BuildingBlocks.csproj" />
     <ProjectReference Include="..\..\src\Orders.Api\Orders.Api.csproj" />
     <ProjectReference Include="..\..\src\Orders.Application\Orders.Application.csproj" />
     <ProjectReference Include="..\..\src\Orders.Domain\Orders.Domain.csproj" />

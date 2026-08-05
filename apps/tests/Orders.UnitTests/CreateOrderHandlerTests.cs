@@ -1,3 +1,4 @@
+using BuildingBlocks;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.FeatureManagement;
 using Orders.Application.Ports;

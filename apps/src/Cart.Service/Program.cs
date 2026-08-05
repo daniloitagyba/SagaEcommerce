@@ -1,5 +1,4 @@
 using BuildingBlocks;
-using Cart.Service.Clients;
 using Cart.Service.Data;
 using Cart.Service.Endpoints;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;

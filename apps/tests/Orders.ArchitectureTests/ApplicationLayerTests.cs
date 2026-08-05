@@ -31,12 +31,15 @@ public class ApplicationLayerTests
     [InlineData("Microsoft.AspNetCore")]
     public void ApplicationDoesNotDependOnAnyInfrastructureFramework(string frameworkNamespace)
     {
-        // BuildingBlocks (an Orders.Application project reference) itself
-        // depends on EF Core Relational and StackExchange.Redis, so those
-        // assemblies are reachable on the reference graph regardless of
-        // this rule. This is the real guardrail: nothing else stops a use
-        // case handler from reaching for IDatabase/DbContext directly
-        // instead of going through an Orders.Application.Ports interface.
+        // Orders.Application references BuildingBlocks.Contracts (event
+        // records, cache-key builders) and BuildingBlocks.Observability
+        // only - split from the former monolithic BuildingBlocks
+        // specifically so neither EF Core/Npgsql nor StackExchange.Redis
+        // is reachable here at all, not even transitively. This is the
+        // real guardrail: nothing stops a use case handler from reaching
+        // for IDatabase/DbContext directly instead of going through an
+        // Orders.Application.Ports interface, so the fitness function
+        // still matters even though it now also holds by construction.
         var result = Types.InAssembly(ApplicationAssembly)
             .ShouldNot()
             .HaveDependencyOn(frameworkNamespace)

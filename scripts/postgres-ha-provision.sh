@@ -13,6 +13,8 @@ for command_name in docker kubectl; do
   command -v "$command_name" >/dev/null
 done
 
+(cd "$compose_directory" && docker compose --profile postgres-ha up --detach --wait minio)
+
 kubectl create namespace postgres-ha --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create secret generic minio-backup-credentials -n postgres-ha \

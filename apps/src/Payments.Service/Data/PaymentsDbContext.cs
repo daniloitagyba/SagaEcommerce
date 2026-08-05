@@ -1,10 +1,11 @@
+using BuildingBlocks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Payments.Service.Domain;
 
 namespace Payments.Service.Data;
 
-public sealed class PaymentsDbContext(DbContextOptions<PaymentsDbContext> options) : DbContext(options)
+public sealed class PaymentsDbContext(DbContextOptions<PaymentsDbContext> options) : DbContext(options), IOutboxDbContext
 {
     public DbSet<Payment> Payments => Set<Payment>();
 

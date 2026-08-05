@@ -1,10 +1,11 @@
+using BuildingBlocks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Inventory.Service.Domain;
 
 namespace Inventory.Service.Data;
 
-public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> options) : DbContext(options)
+public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> options) : DbContext(options), IOutboxDbContext
 {
     public DbSet<InventoryItem> InventoryItems => Set<InventoryItem>();
 

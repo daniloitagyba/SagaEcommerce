@@ -17,7 +17,7 @@
        out. Test/analysis-only, not a runtime dependency -
        PrivateAssets=all keeps it out of published output. -->
   <ItemGroup Condition="'$(MSBuildProjectExtension)' == '.csproj'">
-    <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="17.14.15">
+    <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>

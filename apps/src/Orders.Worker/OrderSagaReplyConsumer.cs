@@ -22,6 +22,8 @@ public sealed class OrderSagaReplyConsumer(
     IOptions<SagaOrchestrationOptions> options,
     IProducer<string, string> producer,
     SagaOrchestrationStore store,
+    OrderStatusStore orderStatusStore,
+    IOrderCacheInvalidator cacheInvalidator,
     IBestsellersStore bestsellersStore,
     ICatalogClient catalogClient,
     ILogger<OrderSagaReplyConsumer> logger) : BackgroundService
@@ -112,6 +114,8 @@ public sealed class OrderSagaReplyConsumer(
 
             var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
             SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, "RejectedInsufficientStock", latencyMs, completed.CorrelationId);
+            await orderStatusStore.TryCancelAsync(reply.OrderId, cancellationToken);
+            await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
             return;
         }
 
@@ -189,6 +193,13 @@ public sealed class OrderSagaReplyConsumer(
         var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
         SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, outcome, latencyMs, completed.CorrelationId);
 
+        // Payment was already approved by the time the saga reaches this
+        // step - a failed inventory commit is a fulfillment anomaly to
+        // flag (see the "ButCommitFailed" outcome above), not a reason to
+        // leave the order stuck at Created, so both branches confirm.
+        await orderStatusStore.TryConfirmAsync(reply.OrderId, cancellationToken);
+        await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
+
         if (reply.Committed)
         {
             await RecordSaleBestEffortAsync(completed.Sku, completed.Quantity, cancellationToken);
@@ -202,8 +213,8 @@ public sealed class OrderSagaReplyConsumer(
     {
         try
         {
-            var categorySlug = await catalogClient.FindCategorySlugBySkuAsync(sku, cancellationToken);
-            await bestsellersStore.RecordSaleAsync(sku, categorySlug, quantity, cancellationToken);
+            var product = await catalogClient.FindBySkuAsync(sku, cancellationToken);
+            await bestsellersStore.RecordSaleAsync(sku, product?.CategorySlug, quantity, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -229,6 +240,8 @@ public sealed class OrderSagaReplyConsumer(
         var outcome = reply.Released ? "RejectedPaymentDeclined" : "RejectedPaymentDeclinedButReleaseFailed";
         var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
         SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, outcome, latencyMs, completed.CorrelationId);
+        await orderStatusStore.TryCancelAsync(reply.OrderId, cancellationToken);
+        await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
     }
 
     private async Task PublishNextStepAsync<TRequest>(

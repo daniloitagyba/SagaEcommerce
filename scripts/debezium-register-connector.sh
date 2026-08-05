@@ -10,6 +10,9 @@ for command_name in curl docker jq; do
   command -v "$command_name" >/dev/null
 done
 
+cd "$compose_directory"
+docker compose --profile compose-apps --profile cdc up --detach --wait cdc-topics-init debezium
+
 postgres_password=$(
   cd "$compose_directory"
   docker compose --profile compose-apps config --format json |

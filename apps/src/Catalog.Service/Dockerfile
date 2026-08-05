@@ -2,11 +2,22 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 COPY Directory.Build.props global.json ./
-COPY apps/src/BuildingBlocks/BuildingBlocks.csproj apps/src/BuildingBlocks/
+COPY apps/Directory.Packages.props apps/
+COPY apps/src/BuildingBlocks.Caching/BuildingBlocks.Caching.csproj apps/src/BuildingBlocks.Caching/
+COPY apps/src/BuildingBlocks.Contracts/BuildingBlocks.Contracts.csproj apps/src/BuildingBlocks.Contracts/
+COPY apps/src/BuildingBlocks.Messaging/BuildingBlocks.Messaging.csproj apps/src/BuildingBlocks.Messaging/
+COPY apps/src/BuildingBlocks.Observability/BuildingBlocks.Observability.csproj apps/src/BuildingBlocks.Observability/
+COPY apps/src/BuildingBlocks.Persistence/BuildingBlocks.Persistence.csproj apps/src/BuildingBlocks.Persistence/
+COPY apps/src/BuildingBlocks.Resilience/BuildingBlocks.Resilience.csproj apps/src/BuildingBlocks.Resilience/
 COPY apps/src/Catalog.Service/Catalog.Service.csproj apps/src/Catalog.Service/
 RUN dotnet restore apps/src/Catalog.Service/Catalog.Service.csproj
 
-COPY apps/src/BuildingBlocks/ apps/src/BuildingBlocks/
+COPY apps/src/BuildingBlocks.Caching/ apps/src/BuildingBlocks.Caching/
+COPY apps/src/BuildingBlocks.Contracts/ apps/src/BuildingBlocks.Contracts/
+COPY apps/src/BuildingBlocks.Messaging/ apps/src/BuildingBlocks.Messaging/
+COPY apps/src/BuildingBlocks.Observability/ apps/src/BuildingBlocks.Observability/
+COPY apps/src/BuildingBlocks.Persistence/ apps/src/BuildingBlocks.Persistence/
+COPY apps/src/BuildingBlocks.Resilience/ apps/src/BuildingBlocks.Resilience/
 COPY apps/src/Catalog.Service/ apps/src/Catalog.Service/
 RUN dotnet publish apps/src/Catalog.Service/Catalog.Service.csproj \
     --configuration Release \

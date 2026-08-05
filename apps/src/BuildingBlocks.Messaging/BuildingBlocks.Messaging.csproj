@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="Confluent.SchemaRegistry" />
+    <PackageReference Include="Confluent.SchemaRegistry.Serdes.Avro" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildingBlocks.Contracts\BuildingBlocks.Contracts.csproj" />
+    <ProjectReference Include="..\BuildingBlocks.Observability\BuildingBlocks.Observability.csproj" />
+    <ProjectReference Include="..\BuildingBlocks.Resilience\BuildingBlocks.Resilience.csproj" />
+  </ItemGroup>
+
+</Project>

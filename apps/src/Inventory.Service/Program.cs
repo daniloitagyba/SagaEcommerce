@@ -3,7 +3,6 @@ using Confluent.Kafka;
 using Inventory.Service;
 using Inventory.Service.Data;
 using Inventory.Service.Endpoints;
-using Inventory.Service.Health;
 using Inventory.Service.Messaging;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
@@ -93,12 +92,46 @@ builder.Services.AddOrdersResilience();
 builder.Services.AddSingleton<IInventoryEventPublisher, KafkaInventoryEventPublisher>();
 builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
 builder.Services.AddSingleton<InventoryReservationMessageProcessor>();
-builder.Services.AddHostedService<OutboxPublisher>();
-builder.Services.AddHostedService<ReservationRequestedConsumer>();
-builder.Services.AddHostedService<ReservationCommitRequestedConsumer>();
-builder.Services.AddHostedService<ReservationReleaseRequestedConsumer>();
+builder.Services.AddScoped<IOutboxEventDispatcher, InventoryOutboxEventDispatcher>();
+builder.Services.AddHostedService<OutboxPublisher<InventoryDbContext>>();
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.ReservationRequestedConsumer");
+    return new KafkaConsumerHost<string>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.ReservationRequestedTopic], options.DeadLetterTopic,
+        processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
+});
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.ReservationCommitRequestedConsumer");
+    return new KafkaConsumerHost<string>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.CommitRequestedTopic], options.DeadLetterTopic,
+        processingOptions, processor.ProcessCommitAsync, deadLetterPublisher.PublishAsync, logger);
+});
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.ReservationReleaseRequestedConsumer");
+    return new KafkaConsumerHost<string>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.ReleaseRequestedTopic], options.DeadLetterTopic,
+        processingOptions, processor.ProcessReleaseAsync, deadLetterPublisher.PublishAsync, logger);
+});
 builder.Services.AddHealthChecks()
-    .AddCheck<PostgresHealthCheck>("postgres", tags: ["ready"])
+    .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Inventory"])
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"]);
 
 var app = builder.Build();

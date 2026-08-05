@@ -5,7 +5,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Payments.Service;
 using Payments.Service.Data;
-using Payments.Service.Health;
 using Payments.Service.Messaging;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -52,6 +51,8 @@ builder.Services.AddOptions<PaymentDecisionRequestOptions>()
     .Validate(options => !string.IsNullOrWhiteSpace(options.BootstrapServers), "Kafka bootstrap servers are required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.DecisionRequestedTopic), "Decision-requested topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.DecisionRepliedTopic), "Decision-replied topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.DeadLetterTopic), "Decision-request dead-letter topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.ConsumerGroup), "Kafka consumer group is required.")
     .ValidateOnStart();
 
 var connectionString = builder.Configuration.GetConnectionString("Payments")
@@ -97,13 +98,55 @@ builder.Services.AddSingleton<IAdminClient>(serviceProvider =>
 builder.Services.AddOrdersResilience();
 builder.Services.AddOrdersSchemaRegistry(builder.Configuration);
 builder.Services.AddSingleton<IPaymentEventPublisher, KafkaPaymentEventPublisher>();
+builder.Services.AddSingleton<IPaymentDecisionReplyPublisher, KafkaPaymentDecisionReplyPublisher>();
 builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
+builder.Services.AddSingleton<IPaymentDecisionDeadLetterPublisher, PaymentDecisionDeadLetterPublisher>();
 builder.Services.AddSingleton<PaymentMessageProcessor>();
-builder.Services.AddHostedService<OutboxPublisher>();
-builder.Services.AddHostedService<OrderCreatedConsumer>();
-builder.Services.AddHostedService<PaymentDecisionRequestHandler>();
+builder.Services.AddSingleton<PaymentDecisionRequestProcessor>();
+builder.Services.AddScoped<IOutboxEventDispatcher, PaymentOutboxEventDispatcher>();
+builder.Services.AddHostedService<OutboxPublisher<PaymentsDbContext>>();
+
+// Milestone 65: which saga(s) this instance actually answers to - see
+// SagaMode's own comment for why both sides needed to reach the same
+// reliability bar before this toggle could mean anything. Both is for
+// side-by-side comparison against identical traffic; Choreography stays
+// the default so anyone not opting in keeps today's behavior.
+var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Choreography);
+
+if (sagaMode is SagaMode.Choreography or SagaMode.Both)
+{
+    builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+    {
+        var options = serviceProvider.GetRequiredService<IOptions<PaymentsKafkaOptions>>().Value;
+        var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+        var processor = serviceProvider.GetRequiredService<PaymentMessageProcessor>();
+        var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+        var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Payments.Service.OrderCreatedConsumer");
+        return new KafkaConsumerHost<byte[]>(
+            options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+            [options.OrderCreatedTopic], options.DeadLetterTopic,
+            processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
+    });
+}
+
+if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
+{
+    builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+    {
+        var options = serviceProvider.GetRequiredService<IOptions<PaymentDecisionRequestOptions>>().Value;
+        var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+        var processor = serviceProvider.GetRequiredService<PaymentDecisionRequestProcessor>();
+        var deadLetterPublisher = serviceProvider.GetRequiredService<IPaymentDecisionDeadLetterPublisher>();
+        var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Payments.Service.PaymentDecisionRequestConsumer");
+        return new KafkaConsumerHost<string>(
+            options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+            [options.DecisionRequestedTopic], options.DeadLetterTopic,
+            processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
+    });
+}
+
 builder.Services.AddHealthChecks()
-    .AddCheck<PostgresHealthCheck>("postgres", tags: ["ready"])
+    .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Payments"])
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"]);
 
 var app = builder.Build();

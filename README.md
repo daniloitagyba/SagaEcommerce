@@ -17,7 +17,7 @@ Seven .NET services (`Orders.Api`/`Orders.Worker`, `Payments.Service`, `Catalog.
 - **Distributed concurrency without a database lock** — Kafka partition-key ownership serializes per-SKU stock reservations; a leader election keeps a scheduled sweeper single-flighted across replicas.
 - **CQRS, event sourcing, schema evolution, CDC** — a denormalized read model, an append-only event store, Avro + Schema Registry, and Debezium change-data-capture.
 - **Formal & simulation verification** — a TLA+ model proving the saga can't resurrect a completed order, cross-checked against thousands of seeded deterministic-simulation runs of the real code.
-- **Quality & security guardrails in CI** — N+1 query detection, async/threading analyzers, memory-leak heap-growth checks, secrets/CVE scanning, mutation testing, and coverage gates, each calibrated against a real measurement, not a guess.
+- **Quality & security guardrails in CI** — async/threading analyzers, cyclomatic complexity and module-size limits, secrets/CVE scanning, mutation testing, and coverage gates, each calibrated against a real measurement, not a guess. N+1 query detection (an EF Core interceptor) and memory-leak heap-growth checks (a k6 soak against live Prometheus heap metrics) run at the runtime/manual level, not as CI gates — see [`docs/cicd/milestone-59-quality-security-guardrails.md`](docs/cicd/milestone-59-quality-security-guardrails.md).
 - **Autoscaling** — CPU-based HPA and Kafka-lag-based KEDA scaling, load tested and measured, not asserted.
 - **GitOps & progressive delivery** — Argo CD reconciling from `main`, Argo Rollouts canaries gated by a Prometheus analysis template, with an actual proven automatic rollback.
 - **Service mesh, mTLS, authn/authz** — Linkerd, Keycloak-issued JWTs, Kyverno policy enforcement, and keyless-signed, SBOM'd, vulnerability-scanned container images.
@@ -57,6 +57,19 @@ curl --request POST http://127.0.0.1:8088/orders \
 - Prometheus: `http://127.0.0.1:9090`
 
 Bring everything down with `docker compose --profile compose-apps down`.
+
+A few pieces of infrastructure are opt-in, gated behind their own Compose profile since they
+don't participate in the flow above and would otherwise idle for no reason:
+
+| Profile | Brings up | Used by |
+|---|---|---|
+| `postgres-ha` | MinIO (backup target) | `kubernetes/data-platform/postgres-ha-*.yaml`, `scripts/postgres-ha-provision.sh` |
+| `cdc` | Debezium + its Kafka topics | `scripts/debezium-register-connector.sh` ([Milestone 21](docs/messaging/milestone-21-debezium-cdc.md)) |
+| `profiling` | Grafana Pyroscope | K3s only — `PYROSCOPE_PROFILING_ENABLED` in `kubernetes/base/*.yaml` ([continuous profiling](docs/architecture/continuous-profiling.md)) |
+| `kafka-quorum-demo` | 3-broker Kafka quorum | `scripts/kafka-quorum-durability-test.sh` |
+| `mongo-replicaset-demo` | 3-node MongoDB replica set | `scripts/mongo-replica-set-test.sh` |
+
+e.g. `docker compose --profile cdc up --detach --wait`.
 
 ## Run the tests
 

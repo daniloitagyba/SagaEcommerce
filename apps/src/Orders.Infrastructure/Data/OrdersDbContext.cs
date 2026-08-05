@@ -1,10 +1,11 @@
+using BuildingBlocks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Orders.Domain;
 
 namespace Orders.Infrastructure.Data;
 
-public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) : DbContext(options)
+public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) : DbContext(options), IOutboxDbContext
 {
     public DbSet<Order> Orders => Set<Order>();
 

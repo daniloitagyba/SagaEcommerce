@@ -143,17 +143,19 @@ jobs:
 
       - name: enforce coverage threshold
         run: |
-          # 3% - a hair under the 3.9% measured baseline for this UNIT-TEST-ONLY
-          # scope (Milestone 59, recalibrated). Coverage collection deliberately
-          # excludes the Integration/Contract test projects (see the "coverage
-          # (unit tests only)" step above), so this number is intentionally far
-          # below what the whole solution's tests exercise - it only gates
-          # Orders.UnitTests/Storefront.UnitTests regressing, not overall
-          # solution coverage.
+          # 3.5% - a real margin under the 3.8% measured baseline for this
+          # UNIT-TEST-ONLY scope (recalibrated 2026-08-05; was 3%, a full
+          # 0.9pp under baseline, which gated nothing in practice). Coverage
+          # collection deliberately excludes the Integration/Contract test
+          # projects (see the "coverage (unit tests only)" step above), so
+          # this number is intentionally far below what the whole solution's
+          # tests exercise - it only gates Orders.UnitTests/
+          # Storefront.UnitTests regressing, not overall solution coverage.
+          threshold="3.5"
           line_coverage=$(grep -oE "Line coverage: [0-9.]+%" ./coverage/report/Summary.txt | grep -oE "[0-9.]+")
           echo "Line coverage: ${line_coverage}%"
-          awk -v cov="$line_coverage" -v threshold="3" 'BEGIN { exit !(cov >= threshold) }' \
-            || { echo "Line coverage ${line_coverage}% is below the ${3}% threshold."; exit 1; }
+          awk -v cov="$line_coverage" -v threshold="$threshold" 'BEGIN { exit !(cov >= threshold) }' \
+            || { echo "Line coverage ${line_coverage}% is below the ${threshold}% threshold."; exit 1; }
 
   build-and-push:
     name: build, scan, sign (${{ matrix.service }})
@@ -166,7 +168,21 @@ jobs:
       id-token: write # required for cosign keyless (Sigstore/Fulcio) signing
     strategy:
       matrix:
-        service: [orders-api, orders-worker, payments-service]
+        include:
+          - service: orders-api
+            project: Orders.Api
+          - service: orders-worker
+            project: Orders.Worker
+          - service: payments-service
+            project: Payments.Service
+          - service: catalog-service
+            project: Catalog.Service
+          - service: inventory-service
+            project: Inventory.Service
+          - service: cart-service
+            project: Cart.Service
+          - service: storefront-service
+            project: Storefront.Service
     env:
       # Hardcoded lowercase rather than ghcr.io/${{ github.repository }}:
       # the repo name is mixed-case (DistributedEcommerce) and Docker/OCI
@@ -189,7 +205,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/src/${{ matrix.service == 'orders-api' && 'Orders.Api' || matrix.service == 'orders-worker' && 'Orders.Worker' || 'Payments.Service' }}/Dockerfile
+          file: apps/src/${{ matrix.project }}/Dockerfile
           push: true
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}

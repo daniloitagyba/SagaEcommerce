@@ -44,39 +44,49 @@ public sealed class LeaderElectionService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var kubernetesConfig = KubernetesClientConfiguration.InClusterConfig();
-        using var client = new Kubernetes(kubernetesConfig);
-        var resourceLock = new LeaseLock(client, _options.Namespace, _options.LeaseName, _identity);
-        var electionConfig = new LeaderElectionConfig(resourceLock)
-        {
-            LeaseDuration = TimeSpan.FromSeconds(_options.LeaseDurationSeconds),
-            RenewDeadline = TimeSpan.FromSeconds(_options.RenewDeadlineSeconds),
-            RetryPeriod = TimeSpan.FromSeconds(_options.RetryPeriodSeconds)
-        };
-
+        var retryPeriod = TimeSpan.FromSeconds(_options.RetryPeriodSeconds);
         LeaderElectionServiceLog.Starting(logger, _identity, _options.LeaseName);
 
         // RunUntilLeadershipLostAsync completes once leadership is lost and,
         // unlike client-go's Go original, does not retry acquisition on its
         // own - this outer loop keeps re-attempting for the pod's lifetime.
+        // Building the Kubernetes client (InClusterConfig, inside the try
+        // below) can fail exactly the same way leadership itself can - it
+        // throws outright when there's no ServiceAccount token to load,
+        // which is normal and expected outside a real cluster - so it gets
+        // the same catch-log-retry treatment instead of running unguarded,
+        // where the exception would go unhandled and (with this host's
+        // BackgroundServiceExceptionBehavior=StopHost) take the whole
+        // process down over what is, for this service, a routine and
+        // permanently-recoverable-on-the-next-retry condition.
         while (!stoppingToken.IsCancellationRequested)
         {
-            using var elector = new LeaderElector(electionConfig);
-            elector.OnStartedLeading += () =>
-            {
-                _isLeader = true;
-                LeaderElectionServiceLog.StartedLeading(logger, _identity);
-            };
-            elector.OnStoppedLeading += () =>
-            {
-                _isLeader = false;
-                LeaderElectionServiceLog.StoppedLeading(logger, _identity);
-            };
-            elector.OnNewLeader += leaderIdentity => LeaderElectionServiceLog.NewLeaderObserved(logger, leaderIdentity, _identity);
-            elector.OnError += exception => LeaderElectionServiceLog.ElectionError(logger, _identity, exception);
-
             try
             {
+                var kubernetesConfig = KubernetesClientConfiguration.InClusterConfig();
+                using var client = new Kubernetes(kubernetesConfig);
+                var resourceLock = new LeaseLock(client, _options.Namespace, _options.LeaseName, _identity);
+                var electionConfig = new LeaderElectionConfig(resourceLock)
+                {
+                    LeaseDuration = TimeSpan.FromSeconds(_options.LeaseDurationSeconds),
+                    RenewDeadline = TimeSpan.FromSeconds(_options.RenewDeadlineSeconds),
+                    RetryPeriod = retryPeriod
+                };
+
+                using var elector = new LeaderElector(electionConfig);
+                elector.OnStartedLeading += () =>
+                {
+                    _isLeader = true;
+                    LeaderElectionServiceLog.StartedLeading(logger, _identity);
+                };
+                elector.OnStoppedLeading += () =>
+                {
+                    _isLeader = false;
+                    LeaderElectionServiceLog.StoppedLeading(logger, _identity);
+                };
+                elector.OnNewLeader += leaderIdentity => LeaderElectionServiceLog.NewLeaderObserved(logger, leaderIdentity, _identity);
+                elector.OnError += exception => LeaderElectionServiceLog.ElectionError(logger, _identity, exception);
+
                 await elector.RunUntilLeadershipLostAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -87,7 +97,7 @@ public sealed class LeaderElectionService(
             {
                 LeaderElectionServiceLog.ElectionError(logger, _identity, exception);
                 _isLeader = false;
-                await Task.Delay(electionConfig.RetryPeriod, stoppingToken);
+                await Task.Delay(retryPeriod, stoppingToken);
             }
         }
 

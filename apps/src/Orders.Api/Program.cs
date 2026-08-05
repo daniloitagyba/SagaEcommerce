@@ -14,7 +14,6 @@ using Orders.Api.RateLimiting;
 using Orders.Application;
 using Orders.Infrastructure;
 using Orders.Infrastructure.Data;
-using Orders.Infrastructure.Health;
 
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
@@ -127,7 +126,7 @@ builder.Services.AddAuthorizationBuilder()
     .AddPolicy(OrdersAuthorizationPolicies.Read, policy => policy.RequireRole("orders:read", "orders:write"))
     .AddPolicy(OrdersAuthorizationPolicies.Write, policy => policy.RequireRole("orders:write"));
 builder.Services.AddHealthChecks()
-    .AddCheck<PostgresHealthCheck>("postgres", tags: ["ready"])
+    .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Orders"])
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"])
     .AddCheck<RedisHealthCheck>("redis", tags: ["ready"]);
 

@@ -8,7 +8,7 @@ Eight guardrails, each calibrated against a real measurement taken *from this re
 
 ## 1. N+1 query detection
 
-`NPlusOneDetectionInterceptor` (`apps/src/BuildingBlocks/NPlusOneDetectionInterceptor.cs`) is an EF Core `DbCommandInterceptor` that tracks exact `CommandText` repetition per `DbContext` scope in a `ConcurrentDictionary<string,int>` and logs a warning (`[LoggerMessage]` EventId 9900) the moment a query shape repeats 5 times - the classic "one query per loop iteration" signature. Wired into `Inventory.Service`, `Payments.Service`, and `Orders.Infrastructure`'s `OrdersDbContext` via `AddNPlusOneDetection(serviceProvider.GetRequiredService<ILoggerFactory>())`.
+`NPlusOneDetectionInterceptor` (`apps/src/BuildingBlocks.Persistence/NPlusOneDetectionInterceptor.cs`) is an EF Core `DbCommandInterceptor` that tracks exact `CommandText` repetition per `DbContext` scope in a `ConcurrentDictionary<string,int>` and logs a warning (`[LoggerMessage]` EventId 9900) the moment a query shape repeats 5 times - the classic "one query per loop iteration" signature. Wired into `Inventory.Service`, `Payments.Service`, and `Orders.Infrastructure`'s `OrdersDbContext` via `AddNPlusOneDetection(serviceProvider.GetRequiredService<ILoggerFactory>())`.
 
 Proven with two tests (`NPlusOneDetectionInterceptorTests`, SQLite in-memory): one that issues 6 per-parent queries in a loop and asserts the warning fires, one that issues a single join-style query covering the same data and asserts it does **not** - a detector that only fires on the shape it's meant to catch, not on every repeated query.
 
@@ -62,9 +62,9 @@ New `complexity-and-module-size` CI job, two independent checks:
 
 ## 7. Mutation testing
 
-`dotnet-stryker` 4.16.0 added as a local tool (`dotnet-tools.json`), scoped to `BuildingBlocks` (`apps/src/BuildingBlocks/stryker-config.json`, test project `Orders.UnitTests`). Runs only via `workflow_dispatch` or a weekly Monday-morning cron (`mutation-testing.yml`) - Stryker rebuilds and re-tests once per surviving mutant, far too slow for every push.
+`dotnet-stryker` 4.16.0 added as a local tool (`dotnet-tools.json`), scoped to `BuildingBlocks` (`apps/src/BuildingBlocks/stryker-config.json`, test project `Orders.UnitTests`) - since split into `BuildingBlocks.Contracts` and five sibling projects-per-concern, `stryker-config.json` now lives at `apps/src/BuildingBlocks.Contracts/stryker-config.json`. Runs only via `workflow_dispatch` or a weekly Monday-morning cron (`mutation-testing.yml`) - Stryker rebuilds and re-tests once per surviving mutant, far too slow for every push.
 
-**Real measured baseline**: 208 mutants generated, 156 skipped (109 no coverage, 46 removed by the block-already-covered filter, 1 compile error), 52 actually tested → **24 killed, 28 survived → 14.91% mutation score**. Uneven by design of what's under test: `NPlusOneDetectionInterceptor` (66.67%), `RetryDelayCalculator` (77.78%), `OrderCacheKeys` (66.67%), and `ResilienceExtensions` (44.44%) score well; most of `BuildingBlocks`' cross-cutting glue (`OrdersTelemetry`, `KafkaOptions`, `RedisExtensions`, `SchemaRegistryExtensions`, `RedisHealthCheck`, `RedisOptions`, `ObservabilityExtensions`) sits at 0% because `Orders.UnitTests` simply never exercises it directly. Thresholds in `stryker-config.json` were originally set to an aspirational `{high:80, low:60, break:50}` and recalibrated to **`{high:80, low:30, break:10}`** once the real number came back - a threshold that would fail on day one isn't a guardrail, it's noise the first CI run teaches everyone to ignore.
+**Real measured baseline** (against the original, single `BuildingBlocks` project, before the split): 208 mutants generated, 156 skipped (109 no coverage, 46 removed by the block-already-covered filter, 1 compile error), 52 actually tested → **24 killed, 28 survived → 14.91% mutation score**. Uneven by design of what's under test: `NPlusOneDetectionInterceptor` (66.67%), `RetryDelayCalculator` (77.78%), `OrderCacheKeys` (66.67%), and `ResilienceExtensions` (44.44%) score well; most of `BuildingBlocks`' cross-cutting glue (`OrdersTelemetry`, `KafkaOptions`, `RedisExtensions`, `SchemaRegistryExtensions`, `RedisHealthCheck`, `RedisOptions`, `ObservabilityExtensions`) sits at 0% because `Orders.UnitTests` simply never exercises it directly. Thresholds in `stryker-config.json` were originally set to an aspirational `{high:80, low:60, break:50}` and recalibrated to **`{high:80, low:30, break:10}`** once the real number came back - a threshold that would fail on day one isn't a guardrail, it's noise the first CI run teaches everyone to ignore. Post-split, mutation testing runs only against `BuildingBlocks.Contracts` - the project with the actual branching logic (`RetryDelayCalculator`, the cache-key builders); the baseline above will no longer match once that job runs against the narrower scope.
 
 ## 8. Test coverage threshold
 
@@ -105,9 +105,9 @@ dotnet list apps/DistributedEcommerce.slnx package --vulnerable --include-transi
 # Complexity / module size
 docker run --rm -v "$PWD/apps/src:/src" python:3.12-slim sh -c "pip install --quiet lizard && lizard /src --languages csharp --CCN 20"
 
-# Mutation testing (slow - minutes, scoped to BuildingBlocks)
+# Mutation testing (slow - minutes, scoped to BuildingBlocks.Contracts)
 dotnet tool restore
-cd apps/src/BuildingBlocks && dotnet stryker
+cd apps/src/BuildingBlocks.Contracts && dotnet stryker
 
 # Coverage (unit tests only - see "what didn't work" above for why)
 dotnet test apps/tests/Orders.UnitTests/Orders.UnitTests.csproj --collect:"XPlat Code Coverage" --results-directory ./coverage

@@ -12,8 +12,15 @@ permissions:
   contents: read
 
 jobs:
-  mutate-buildingblocks:
-    name: mutate BuildingBlocks
+  # BuildingBlocks was split into six projects-per-concern
+  # (Contracts/Messaging/Persistence/Caching/Observability/Resilience).
+  # Contracts is the mutation-worthy one: dependency-free records plus the
+  # few functions with actual branching logic (RetryDelayCalculator,
+  # cache-key builders), backed by Orders.UnitTests. The other five are
+  # almost entirely DI-registration/framework-wiring extension methods with
+  # little meaningful mutation surface.
+  mutate-buildingblocks-contracts:
+    name: mutate BuildingBlocks.Contracts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +33,7 @@ jobs:
         run: dotnet tool restore
 
       - name: stryker
-        working-directory: apps/src/BuildingBlocks
+        working-directory: apps/src/BuildingBlocks.Contracts
         run: dotnet stryker
 
       - name: upload mutation report
@@ -34,5 +41,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mutation-report
-          path: "apps/src/BuildingBlocks/StrykerOutput/**/reports/*.html"
+          path: "apps/src/BuildingBlocks.Contracts/StrykerOutput/**/reports/*.html"
           retention-days: 30

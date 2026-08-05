@@ -1,6 +1,11 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/BuildingBlocks/BuildingBlocks.csproj" />
+    <Project Path="src/BuildingBlocks.Caching/BuildingBlocks.Caching.csproj" />
+    <Project Path="src/BuildingBlocks.Contracts/BuildingBlocks.Contracts.csproj" />
+    <Project Path="src/BuildingBlocks.Messaging/BuildingBlocks.Messaging.csproj" />
+    <Project Path="src/BuildingBlocks.Observability/BuildingBlocks.Observability.csproj" />
+    <Project Path="src/BuildingBlocks.Persistence/BuildingBlocks.Persistence.csproj" />
+    <Project Path="src/BuildingBlocks.Resilience/BuildingBlocks.Resilience.csproj" />
     <Project Path="src/Cart.Service/Cart.Service.csproj" />
     <Project Path="src/Catalog.Service/Catalog.Service.csproj" />
     <Project Path="src/DlqRedriveTool/DlqRedriveTool.csproj" />

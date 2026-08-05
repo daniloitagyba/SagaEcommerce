@@ -165,33 +165,9 @@ public sealed class PaymentMessageProcessor(
 
 public sealed partial class PaymentsLog
 {
-    [LoggerMessage(EventId = 5000, Level = LogLevel.Information, Message = "Payments service subscribed to topic {Topic} with consumer group {GroupId}")]
-    public static partial void Started(ILogger logger, string topic, string groupId);
-
-    [LoggerMessage(EventId = 5001, Level = LogLevel.Information, Message = "Payments service is stopping gracefully")]
-    public static partial void Stopping(ILogger logger);
-
     [LoggerMessage(EventId = 5002, Level = LogLevel.Information, Message = "Decided payment {PaymentId} for order {OrderId}: approved={Approved} with correlation {CorrelationId}")]
     public static partial void Decided(ILogger logger, Guid orderId, Guid paymentId, bool approved, string correlationId);
 
-    [LoggerMessage(EventId = 5003, Level = LogLevel.Error, Message = "Kafka consume failed: {Reason}")]
-    public static partial void ConsumeFailed(ILogger logger, string reason, Exception exception);
-
     [LoggerMessage(EventId = 5005, Level = LogLevel.Information, Message = "Skipped duplicate event {EventId} for consumer {ConsumerName}")]
     public static partial void Duplicate(ILogger logger, Guid eventId, string consumerName);
-
-    [LoggerMessage(EventId = 5006, Level = LogLevel.Warning, Message = "Processing at {Offset} failed on attempt {Attempt}; retrying in {DelayMilliseconds} ms")]
-    public static partial void RetryScheduled(ILogger logger, string offset, int attempt, double delayMilliseconds, Exception exception);
-
-    [LoggerMessage(EventId = 5007, Level = LogLevel.Error, Message = "Moved message at {Offset} to {DeadLetterTopic} after {AttemptCount} attempts")]
-    public static partial void DeadLettered(ILogger logger, string offset, string deadLetterTopic, int attemptCount);
-
-    [LoggerMessage(EventId = 5008, Level = LogLevel.Error, Message = "Infrastructure failure while processing message at {Offset}; offset remains uncommitted")]
-    public static partial void InfrastructureFailure(ILogger logger, string offset, Exception exception);
-
-    [LoggerMessage(EventId = 5009, Level = LogLevel.Error, Message = "Failed to publish message at {Offset} to the dead-letter topic; offset remains uncommitted")]
-    public static partial void DeadLetterFailed(ILogger logger, string offset, Exception exception);
-
-    [LoggerMessage(EventId = 5010, Level = LogLevel.Warning, Message = "Failed to commit Kafka offset {Offset}; Inbox will prevent duplicate processing")]
-    public static partial void CommitFailed(ILogger logger, string offset, Exception exception);
 }

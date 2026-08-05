@@ -7,19 +7,19 @@ resources:
   - connectivity-job.yaml
 images:
   - name: distributed-ecommerce/orders-api
-    newTag: rename-v1
+    newTag: local
   - name: distributed-ecommerce/orders-worker
-    newTag: rename-v1
+    newTag: local
   - name: distributed-ecommerce/payments-service
-    newTag: rename-v1
+    newTag: local
   - name: distributed-ecommerce/catalog-service
-    newTag: rename-v1
+    newTag: local
   - name: distributed-ecommerce/inventory-service
-    newTag: rename-v1
+    newTag: local
   - name: distributed-ecommerce/cart-service
-    newTag: rename-v1
+    newTag: local
   - name: distributed-ecommerce/storefront-service
-    newTag: rename-v1
+    newTag: local
 patches:
   - target:
       kind: Rollout

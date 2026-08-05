@@ -10,6 +10,8 @@ public sealed class PaymentDecisionRequestOptions
 
     public string DecisionRepliedTopic { get; init; } = "payments.decision-replied.v1";
 
+    public string DeadLetterTopic { get; init; } = "payments.decision-requested.dlq.v1";
+
     public string ConsumerGroup { get; init; } = "payments-service-decision-request";
 
     public string ClientId { get; init; } = "payments-service-decision-request";

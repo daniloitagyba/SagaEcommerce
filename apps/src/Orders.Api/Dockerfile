@@ -2,14 +2,25 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 COPY Directory.Build.props global.json ./
-COPY apps/src/BuildingBlocks/BuildingBlocks.csproj apps/src/BuildingBlocks/
+COPY apps/Directory.Packages.props apps/
+COPY apps/src/BuildingBlocks.Caching/BuildingBlocks.Caching.csproj apps/src/BuildingBlocks.Caching/
+COPY apps/src/BuildingBlocks.Contracts/BuildingBlocks.Contracts.csproj apps/src/BuildingBlocks.Contracts/
+COPY apps/src/BuildingBlocks.Messaging/BuildingBlocks.Messaging.csproj apps/src/BuildingBlocks.Messaging/
+COPY apps/src/BuildingBlocks.Observability/BuildingBlocks.Observability.csproj apps/src/BuildingBlocks.Observability/
+COPY apps/src/BuildingBlocks.Persistence/BuildingBlocks.Persistence.csproj apps/src/BuildingBlocks.Persistence/
+COPY apps/src/BuildingBlocks.Resilience/BuildingBlocks.Resilience.csproj apps/src/BuildingBlocks.Resilience/
 COPY apps/src/Orders.Domain/Orders.Domain.csproj apps/src/Orders.Domain/
 COPY apps/src/Orders.Application/Orders.Application.csproj apps/src/Orders.Application/
 COPY apps/src/Orders.Infrastructure/Orders.Infrastructure.csproj apps/src/Orders.Infrastructure/
 COPY apps/src/Orders.Api/Orders.Api.csproj apps/src/Orders.Api/
 RUN dotnet restore apps/src/Orders.Api/Orders.Api.csproj
 
-COPY apps/src/BuildingBlocks/ apps/src/BuildingBlocks/
+COPY apps/src/BuildingBlocks.Caching/ apps/src/BuildingBlocks.Caching/
+COPY apps/src/BuildingBlocks.Contracts/ apps/src/BuildingBlocks.Contracts/
+COPY apps/src/BuildingBlocks.Messaging/ apps/src/BuildingBlocks.Messaging/
+COPY apps/src/BuildingBlocks.Observability/ apps/src/BuildingBlocks.Observability/
+COPY apps/src/BuildingBlocks.Persistence/ apps/src/BuildingBlocks.Persistence/
+COPY apps/src/BuildingBlocks.Resilience/ apps/src/BuildingBlocks.Resilience/
 COPY apps/src/Orders.Domain/ apps/src/Orders.Domain/
 COPY apps/src/Orders.Application/ apps/src/Orders.Application/
 COPY apps/src/Orders.Infrastructure/ apps/src/Orders.Infrastructure/

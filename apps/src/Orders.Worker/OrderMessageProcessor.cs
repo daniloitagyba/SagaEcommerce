@@ -117,3 +117,12 @@ public sealed class OrderMessageProcessor(
         return header is null ? null : Encoding.UTF8.GetString(header.GetValueBytes());
     }
 }
+
+public sealed partial class WorkerLog
+{
+    [LoggerMessage(EventId = 2002, Level = LogLevel.Information, Message = "Processed order {OrderId} from event {EventId} with correlation {CorrelationId}")]
+    public static partial void Processed(ILogger logger, Guid orderId, Guid eventId, string correlationId);
+
+    [LoggerMessage(EventId = 2005, Level = LogLevel.Information, Message = "Skipped duplicate event {EventId} for consumer {ConsumerName}")]
+    public static partial void Duplicate(ILogger logger, Guid eventId, string consumerName);
+}

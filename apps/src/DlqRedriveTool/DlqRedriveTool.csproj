@@ -9,11 +9,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Confluent.Kafka" Version="2.15.0" />
+    <PackageReference Include="Confluent.Kafka" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\BuildingBlocks\BuildingBlocks.csproj" />
+    <ProjectReference Include="..\BuildingBlocks.Contracts\BuildingBlocks.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

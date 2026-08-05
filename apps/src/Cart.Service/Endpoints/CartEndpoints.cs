@@ -1,4 +1,4 @@
-using Cart.Service.Clients;
+using BuildingBlocks;
 using Cart.Service.Data;
 using Cart.Service.Domain;
 

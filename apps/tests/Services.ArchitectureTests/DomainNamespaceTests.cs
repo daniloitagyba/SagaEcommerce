@@ -69,11 +69,45 @@ public class DomainNamespaceTests
         // Storefront.Service is deliberately a BFF/proxy with no Domain
         // namespace of its own (Milestone 45) - the equivalent rule for it
         // isn't "keep persistence out of Domain", it's "never own
-        // persistence or messaging at all". BuildingBlocks (its one project
-        // reference) already pulls in EF Core Relational and
-        // StackExchange.Redis transitively, so this is a real guardrail,
-        // not a trivially-true one.
+        // persistence or messaging at all". Its only project reference is
+        // BuildingBlocks.Observability (split from the former monolithic
+        // BuildingBlocks in the projects-per-concern refactor), which
+        // itself has no EF Core/Npgsql/MongoDB/Kafka/Redis dependency -
+        // this test now holds true by construction, and exists as a
+        // regression guard against a future project reference
+        // reintroducing one of those dependencies transitively.
         var assembly = typeof(Storefront.Service.KeycloakTokenProvider).Assembly;
+
+        var result = Types.InAssembly(assembly)
+            .ShouldNot()
+            .HaveDependencyOn(frameworkNamespace)
+            .GetResult();
+
+        Assert.True(result.IsSuccessful, Describe(result));
+    }
+
+    [Theory]
+    [InlineData("Microsoft.EntityFrameworkCore")]
+    [InlineData("Npgsql")]
+    [InlineData("MongoDB.Driver")]
+    [InlineData("MongoDB.Bson")]
+    [InlineData("Confluent.Kafka")]
+    [InlineData("StackExchange.Redis")]
+    [InlineData("Microsoft.AspNetCore")]
+    [InlineData("OpenTelemetry")]
+    [InlineData("Polly")]
+    public void BuildingBlocksContractsHasNoFrameworkDependency(string frameworkNamespace)
+    {
+        // BuildingBlocks was split into six projects-per-concern
+        // (Contracts/Messaging/Persistence/Caching/Observability/
+        // Resilience) precisely so a dependency-free shared library
+        // (event/command records, cache-key builders, retry math) wouldn't
+        // keep dragging EF Core, Kafka, Redis, and OpenTelemetry into every
+        // consumer - including Orders.Domain and Orders.Application, which
+        // have their own fitness functions banning exactly those
+        // frameworks. This guards the split itself: nothing should ever
+        // land in Contracts that pulls one of these back in.
+        var assembly = typeof(BuildingBlocks.OrderCreated).Assembly;
 
         var result = Types.InAssembly(assembly)
             .ShouldNot()

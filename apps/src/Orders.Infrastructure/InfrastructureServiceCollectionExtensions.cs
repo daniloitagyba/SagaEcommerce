@@ -85,7 +85,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<IIdempotencyStore, RedisIdempotencyStore>();
         services.AddSingleton<RedisSlidingWindowRateLimiter>();
         services.AddSingleton<IOrderEventPublisher, KafkaOrderEventPublisher>();
-        services.AddHostedService<OutboxPublisher>();
+        services.AddScoped<IOutboxEventDispatcher, OrderOutboxEventDispatcher>();
+        services.AddHostedService<OutboxPublisher<OrdersDbContext>>();
 
         return services;
     }

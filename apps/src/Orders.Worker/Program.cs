@@ -135,23 +135,71 @@ builder.Services.AddSingleton<IAdminClient>(serviceProvider =>
 builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
 builder.Services.AddSingleton<IPaymentResultDeadLetterPublisher, PaymentResultDeadLetterPublisher>();
 builder.Services.AddSingleton<IOrderProjectionDeadLetterPublisher, OrderProjectionDeadLetterPublisher>();
-builder.Services.AddHostedService<OrderCreatedConsumer>();
-builder.Services.AddHostedService<PaymentResultConsumer>();
-builder.Services.AddHostedService<OrderProjectionConsumer>();
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<KafkaOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<OrderMessageProcessor>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderCreatedConsumer");
+    return new KafkaConsumerHost<byte[]>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.OrderCreatedTopic], options.DeadLetterTopic,
+        processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
+});
+// Milestone 65: which saga(s) this instance actually answers to - see
+// SagaMode's own comment for why both sides needed to reach the same
+// reliability bar before this toggle could mean anything. Both is for
+// side-by-side comparison against identical traffic; Choreography stays
+// the default so anyone not opting in keeps today's behavior.
+var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Choreography);
+
+if (sagaMode is SagaMode.Choreography or SagaMode.Both)
+{
+    builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+    {
+        var options = serviceProvider.GetRequiredService<IOptions<PaymentResultKafkaOptions>>().Value;
+        var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+        var processor = serviceProvider.GetRequiredService<PaymentResultProcessor>();
+        var deadLetterPublisher = serviceProvider.GetRequiredService<IPaymentResultDeadLetterPublisher>();
+        var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.PaymentResultConsumer");
+        return new KafkaConsumerHost<string>(
+            options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+            [options.PaymentResultTopic], options.DeadLetterTopic,
+            processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
+    });
+}
+
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<OrderProjectionOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<OrderProjectionProcessor>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IOrderProjectionDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderProjectionConsumer");
+    return new KafkaConsumerHost<byte[]>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.OrderCreatedTopic, options.PaymentResultTopic], options.DeadLetterTopic,
+        processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
+});
 
 builder.Services.AddSingleton<SagaOrchestrationStore>();
-builder.Services.AddHostedService<OrderSagaOrchestrator>();
-builder.Services.AddHostedService<OrderSagaReplyConsumer>();
 
 builder.Services.AddSingleton<LeaderElectionService>();
-builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<LeaderElectionService>());
-builder.Services.AddHostedService<SagaTimeoutSweeper>();
+builder.Services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<LeaderElectionService>());
+
+if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
+{
+    builder.Services.AddHostedService<OrderSagaOrchestrator>();
+    builder.Services.AddHostedService<OrderSagaReplyConsumer>();
+    builder.Services.AddHostedService<SagaTimeoutSweeper>();
+}
 
 builder.Services.AddSingleton<OrderEventStoreAppender>();
 builder.Services.AddHostedService<OrderEventStoreProjector>();
 builder.Services.AddHealthChecks()
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"])
-    .AddCheck<PostgresHealthCheck>("postgres", tags: ["ready"])
+    .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Orders"])
     .AddCheck<RedisHealthCheck>("redis", tags: ["ready"]);
 
 var app = builder.Build();

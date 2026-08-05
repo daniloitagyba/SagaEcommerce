@@ -8,6 +8,17 @@
 # Applied imperatively (kubectl apply), the same way Linkerd and Sealed
 # Secrets were installed in Milestones 17/24: this is cluster infrastructure
 # configuration, not an application manifest Argo CD reconciles.
+#
+# Scope, stated plainly: `imageReferences` below matches
+# `ghcr.io/daniloitagyba/distributed-ecommerce/*` - the CI-published images
+# - not `distributed-ecommerce/*:local`, which is what this lab's own K3s
+# overlay actually runs (kubernetes/overlays/local/kustomization.yaml,
+# imagePullPolicy: Never). That's deliberate: the local dev loop
+# (scripts/k3s-build-images.sh) builds and imports images straight into
+# containerd for fast iteration, and signing every local rebuild would
+# defeat that. This policy verifies what a real deployment pointed at the
+# CI-published, cosign-signed GHCR images would be admitted to run - it
+# does not evaluate any pod in this lab's own local cluster today.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:

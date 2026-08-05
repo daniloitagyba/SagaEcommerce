@@ -13,13 +13,14 @@ x-api-common: &api-common
   image: distributed-ecommerce/orders-api:milestone-7
   profiles: ["compose-apps"]
   restart: unless-stopped
-  environment:
-    ASPNETCORE_ENVIRONMENT: Production
-    ConnectionStrings__Orders: Host=postgres;Port=5432;Database=orders;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-    Kafka__BootstrapServers: kafka:9092
-    Kafka__OrderCreatedTopic: orders.created.v1
-    Kafka__ClientId: orders-api
-    SchemaRegistry__Url: http://schema-registry:8081
+  # Note: orders-api-1/orders-api-2 below each redefine their own
+  # `environment:` block, and a service-level key always wins over the one
+  # merged in via `<<: *api-common` - YAML's merge key doesn't deep-merge
+  # nested maps, it just fills in keys the service doesn't already have. So
+  # anything added to `environment:` here has no effect on either of them;
+  # only `migrations` (which defines a narrower `environment:` of its own
+  # too) is in the same boat. Real environment values for all three live in
+  # each service's own block below, not here.
   depends_on:
     migrations:
       condition: service_completed_successfully
@@ -383,12 +384,9 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.result.dlq.v1 --partitions 1 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.projection.dlq.v1 --partitions 1 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic _schemas --partitions 1 --replication-factor 1 --config cleanup.policy=compact
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic debezium-connect-configs --partitions 1 --replication-factor 1 --config cleanup.policy=compact
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic debezium-connect-offsets --partitions 5 --replication-factor 1 --config cleanup.policy=compact
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic debezium-connect-status --partitions 1 --replication-factor 1 --config cleanup.policy=compact
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders-cdc.public.outbox_messages --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-requested.dlq.v1 --partitions 1 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-commit-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
@@ -479,6 +477,10 @@ services:
   # backup approach isn't available on this cluster; an object store is the
   # practical option for a home-lab single-node setup.
   minio:
+    # Only consumed by the Postgres HA backup path (kubernetes/data-platform/
+    # postgres-ha-backup.yaml, scripts/postgres-ha-provision.sh) - not part
+    # of the quickstart flow, so it doesn't run by default.
+    profiles: ["postgres-ha"]
     image: minio/minio:RELEASE.2025-04-08T15-41-24Z
     restart: unless-stopped
     environment:
@@ -501,11 +503,42 @@ services:
     cpus: 0.50
     stop_grace_period: 10s
 
+  # One-shot: creates the four Kafka topics Debezium Connect needs for its
+  # own internal state (config/offset/status storage) plus the CDC output
+  # topic - separate from kafka-init (which always runs) so these only get
+  # created when the CDC path is actually exercised via
+  # scripts/debezium-register-connector.sh.
+  cdc-topics-init:
+    profiles: ["cdc"]
+    image: apache/kafka:4.1.1
+    restart: "no"
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_HEAP_OPTS: -Xms128m -Xmx128m
+    command:
+      - /bin/bash
+      - -ec
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic debezium-connect-configs --partitions 1 --replication-factor 1 --config cleanup.policy=compact
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic debezium-connect-offsets --partitions 5 --replication-factor 1 --config cleanup.policy=compact
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic debezium-connect-status --partitions 1 --replication-factor 1 --config cleanup.policy=compact
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders-cdc.public.outbox_messages --partitions 3 --replication-factor 1 --config retention.ms=86400000
+    networks:
+      - backend
+    mem_limit: 256m
+    cpus: 0.50
+
   debezium:
+    # Not part of the quickstart flow - stays down until CDC is deliberately
+    # exercised via scripts/debezium-register-connector.sh
+    # (docs/messaging/milestone-21-debezium-cdc.md).
+    profiles: ["cdc"]
     image: debezium/connect:2.7.3.Final
     restart: unless-stopped
     depends_on:
-      kafka-init:
+      cdc-topics-init:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
@@ -567,6 +600,13 @@ services:
       Kafka__OrderCreatedTopic: orders.created.v1
       Kafka__ClientId: orders-api
       SchemaRegistry__Url: http://schema-registry:8081
+      Redis__ConnectionString: redis:6379
+      # appsettings.json defaults this to the k3s-bridge fixed IP
+      # (172.30.0.17), which K3s pods and host-run scripts can reach but
+      # orders-api-1/orders-api-2 cannot - they're only on frontend/backend,
+      # not k3s-bridge. Override to the Compose-internal DNS name both are
+      # already on the same network as.
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
       InstanceId: orders-api-1
 
   orders-api-2:
@@ -578,6 +618,8 @@ services:
       Kafka__OrderCreatedTopic: orders.created.v1
       Kafka__ClientId: orders-api
       SchemaRegistry__Url: http://schema-registry:8081
+      Redis__ConnectionString: redis:6379
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
       InstanceId: orders-api-2
 
   orders-worker:
@@ -599,6 +641,23 @@ services:
       Redis__ConnectionString: redis:6379
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-worker-1
+      # PaymentResultConsumer/OrderProjectionConsumer/OrderSagaOrchestrator+
+      # OrderSagaReplyConsumer/OrderEventStoreProjector each bind their own
+      # options section (see the SectionName on each class) rather than
+      # sharing KafkaOptions above - BootstrapServers defaults to
+      # localhost:9092 in every one of them, which only resolves inside
+      # this container itself, not the kafka service. Topics/consumer
+      # groups/client IDs already default correctly and don't need
+      # overriding here.
+      PaymentResultKafka__BootstrapServers: kafka:9092
+      OrderProjectionKafka__BootstrapServers: kafka:9092
+      SagaOrchestration__BootstrapServers: kafka:9092
+      OrderEventStore__BootstrapServers: kafka:9092
+      # Milestone 65: Choreography (default, matches payments-service below),
+      # Orchestration, or Both - see SagaMode's own comment for what each
+      # mode starts/stops. Both requires payments-service to also be set to
+      # Both so every request/reply pair has someone to talk to.
+      Saga__Mode: Choreography
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -630,6 +689,14 @@ services:
       Kafka__ClientId: payments-service-1
       SchemaRegistry__Url: http://schema-registry:8081
       InstanceId: payments-service-1
+      # PaymentDecisionRequestProcessor binds its own PaymentDecisionRequest
+      # options section rather than sharing Kafka above - same
+      # localhost:9092-default gap as orders-worker's extra Kafka options
+      # classes.
+      PaymentDecisionRequest__BootstrapServers: kafka:9092
+      # Milestone 65: must match orders-worker's Saga__Mode above - see that
+      # comment.
+      Saga__Mode: Choreography
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -805,6 +872,11 @@ services:
     stop_grace_period: 20s
 
   pyroscope:
+    # Only K3s Deployments set PYROSCOPE_PROFILING_ENABLED and the profiler
+    # env vars (kubernetes/base/*.yaml) - no Compose service instruments
+    # against it, so it stays down by default rather than idling for the
+    # Compose quickstart (docs/architecture/continuous-profiling.md).
+    profiles: ["profiling"]
     image: grafana/pyroscope:1.15.0
     restart: unless-stopped
     command: ["server"]
