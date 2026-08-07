@@ -1,3 +1,4 @@
+using BuildingBlocks;
 using Microsoft.Extensions.Options;
 
 namespace Orders.Worker;
@@ -14,18 +15,27 @@ namespace Orders.Worker;
 /// runs this loop, but non-leaders no-op each tick rather than each
 /// redundantly scanning the same rows.
 ///
-/// Milestone 43 scope note: a saga that times out mid-flight is logged and
-/// dropped, same as M22's original scope - it does NOT automatically
-/// compensate (e.g. release a reservation if the timeout happens while
-/// waiting for a payment decision). The tested, reproducible compensation
-/// path in this milestone is the deterministic one (payment explicitly
-/// declines); teaching the sweeper to also compensate on timeout is a real
-/// production concern but a separate piece of work from what this
-/// milestone set out to demonstrate.
+/// Milestone 43 scope note: a saga that times out mid-flight was logged and
+/// dropped - the order stayed "Created" forever, which was honest about the
+/// orchestrator noticing but useless to the customer looking at it.
+///
+/// Milestone 69 closes that half: a timed-out saga now cancels its order.
+/// This became possible rather than merely desirable once OrderStatuses
+/// existed, because cancelling from mid-flight means cancelling from
+/// whichever state the order happens to be in, and the old CAS could only
+/// guard against one hardcoded predecessor. Cancelling also releases the
+/// coupon redemption and voids any card hold, since those hang off the
+/// transition rather than off the caller.
+///
+/// Still out of scope, deliberately: releasing an <em>inventory</em>
+/// reservation held by the timed-out step. That needs a compensating
+/// command per step rather than a status change, and is the same piece of
+/// work M43 deferred.
 /// </summary>
 public sealed class SagaTimeoutSweeper(
     IOptions<SagaOrchestrationOptions> options,
     SagaOrchestrationStore store,
+    OrderStatusStore orderStatusStore,
     LeaderElectionService leaderElection,
     ILogger<SagaTimeoutSweeper> logger) : BackgroundService
 {
@@ -49,6 +59,7 @@ public sealed class SagaTimeoutSweeper(
             foreach (var (orderId, saga) in timedOut)
             {
                 SagaOrchestratorLog.SagaTimedOut(logger, orderId, saga.Step, _options.TimeoutSeconds, saga.CorrelationId);
+                await orderStatusStore.TryCancelAsync(orderId, saga.CorrelationId, stoppingToken);
             }
         }
     }

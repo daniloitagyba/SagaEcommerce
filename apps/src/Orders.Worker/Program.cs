@@ -8,6 +8,21 @@ using Orders.Worker;
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
+// Milestone 69: fail loudly at startup instead of silently at runtime.
+//
+// A missing DI registration used to surface only when something first
+// tried to resolve it - and when that something is the outbox dispatcher,
+// the failure is a background loop logging an exception every poll while
+// the service reports healthy and quietly stops publishing every event.
+// ValidateOnBuild turns that into a refusal to start. It is off by default
+// outside Development; the cost is a slower boot, which is the right trade
+// against an outbox that looks fine and delivers nothing.
+builder.Host.UseDefaultServiceProvider(options =>
+{
+    options.ValidateOnBuild = true;
+    options.ValidateScopes = true;
+});
+
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options =>
 {
@@ -96,6 +111,14 @@ builder.Services.AddHostedService<RetentionSweeper>();
 builder.Services.AddOrdersResilience();
 builder.Services.AddOrdersSchemaRegistry(builder.Configuration);
 builder.Services.AddSingleton<InboxStore>();
+builder.Services.AddOptions<PaymentSettlementRequestOptions>()
+    .Bind(builder.Configuration.GetSection(PaymentSettlementRequestOptions.SectionName))
+    .Validate(options => !string.IsNullOrWhiteSpace(options.CaptureRequestedTopic), "Capture-requested topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.VoidRequestedTopic), "Void-requested topic is required.")
+    .ValidateOnStart();
+builder.Services.AddSingleton<PaymentSettlementRequester>();
+builder.Services.AddSingleton<CouponRedemptionStore>();
+builder.Services.AddSingleton<CustomerTierStore>();
 builder.Services.AddSingleton<OrderStatusStore>();
 builder.Services.AddSingleton<OrderMessageProcessor>();
 builder.Services.AddSingleton<PaymentResultProcessor>();

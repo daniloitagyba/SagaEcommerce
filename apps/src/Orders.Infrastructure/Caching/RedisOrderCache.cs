@@ -111,4 +111,26 @@ public sealed class RedisOrderCache(
 
         return JsonSerializer.Deserialize<CachedOrder>((string)value!, SerializerOptions);
     }
+    /// <summary>
+    /// Deletes the cached value only - deliberately not the fence sequence.
+    ///
+    /// The sequence (Milestone 48) is a monotonic INCR, and the next reader
+    /// draws a token strictly higher than any already recorded, so the
+    /// stale <c>:fence</c> entry left behind cannot reject the refill.
+    /// Deleting the sequence would be the actively dangerous choice: it
+    /// restarts at 1, so a paused writer still holding token N could land
+    /// after the delete and then reject every subsequent refill as "older"
+    /// until the TTL expires - the precise stale-holder hazard fencing
+    /// exists to prevent, reintroduced by over-cleaning.
+    ///
+    /// Matches what Orders.Worker's RedisOrderCacheInvalidator has always
+    /// done; this port needed it too once the fulfilment API started
+    /// changing status outside the worker.
+    /// </summary>
+    public async Task InvalidateAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var database = connectionMultiplexer.GetDatabase();
+        await database.KeyDeleteAsync(OrderCacheKeys.Key(id));
+    }
+
 }

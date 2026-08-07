@@ -6,12 +6,14 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Orders.Api.Authorization;
 using Orders.Api.Endpoints;
 using Orders.Api.Grpc;
 using Orders.Api.Middleware;
 using Orders.Api.RateLimiting;
 using Orders.Application;
+using Orders.Application.Pricing;
 using Orders.Infrastructure;
 using Orders.Infrastructure.Data;
 
@@ -53,6 +55,21 @@ builder.WebHost.ConfigureKestrel(options =>
     });
 });
 
+// Milestone 69: fail loudly at startup instead of silently at runtime.
+//
+// A missing DI registration used to surface only when something first
+// tried to resolve it - and when that something is the outbox dispatcher,
+// the failure is a background loop logging an exception every poll while
+// the service reports healthy and quietly stops publishing every event.
+// ValidateOnBuild turns that into a refusal to start. It is off by default
+// outside Development; the cost is a slower boot, which is the right trade
+// against an outbox that looks fine and delivers nothing.
+builder.Host.UseDefaultServiceProvider(options =>
+{
+    options.ValidateOnBuild = true;
+    options.ValidateScopes = true;
+});
+
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options =>
 {
@@ -72,6 +89,26 @@ builder.Services.AddOptions<KafkaOptions>()
 
 var connectionString = builder.Configuration.GetConnectionString("Orders")
     ?? throw new InvalidOperationException("Connection string 'Orders' is required.");
+
+// Milestone 66: the promotion policy (coupon codes, category promotions,
+// free-shipping threshold) is configuration, so a campaign changes without
+// a redeploy. Absent config, PricingOptions' own defaults apply.
+builder.Services.Configure<PricingOptions>(builder.Configuration.GetSection(PricingOptions.SectionName));
+builder.Services.AddOptions<CatalogClientOptions>()
+    .Bind(builder.Configuration.GetSection(CatalogClientOptions.SectionName))
+    .Validate(options => !string.IsNullOrWhiteSpace(options.BaseUrl), "Catalog base URL is required.")
+    .ValidateOnStart();
+
+// Checkout cannot price an order without the catalog, so this call is on
+// the critical path - hence the short timeout and the standard resilience
+// handler rather than the best-effort treatment Orders.Worker gives the
+// same client for bestseller tracking.
+builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<CatalogClientOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(3);
+}).AddStandardResilienceHandler();
 
 builder.Services.AddOrdersApplication();
 builder.Services.AddOrdersInfrastructure(builder.Configuration, connectionString, instanceId);
@@ -163,6 +200,8 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 
 app.MapGet("/", () => Results.Ok(new { service = "Orders.Api", instanceId }));
 app.MapOrderEndpoints();
+app.MapFulfillmentEndpoints();
+app.MapReturnEndpoints();
 app.MapOrderSummaryEndpoints();
 app.MapOrderHistoryEndpoints();
 app.MapGrpcService<OrderQueryGrpcService>();

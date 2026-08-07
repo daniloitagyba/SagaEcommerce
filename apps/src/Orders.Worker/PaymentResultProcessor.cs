@@ -71,11 +71,11 @@ public sealed class PaymentResultProcessor(
 
         if (paymentDecided.Approved)
         {
-            await orderStatusStore.TryConfirmAsync(paymentDecided.OrderId, cancellationToken);
+            await orderStatusStore.TryConfirmAsync(paymentDecided.OrderId, correlationId, cancellationToken);
         }
         else
         {
-            await orderStatusStore.TryCancelAsync(paymentDecided.OrderId, cancellationToken);
+            await orderStatusStore.TryCancelAsync(paymentDecided.OrderId, correlationId, cancellationToken);
         }
 
         await cacheInvalidator.InvalidateAsync(paymentDecided.OrderId, cancellationToken);
