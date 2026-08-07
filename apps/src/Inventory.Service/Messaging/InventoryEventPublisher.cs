@@ -16,6 +16,10 @@ public interface IInventoryEventPublisher
     Task PublishAsync(InventoryReservationCommitReplied reply, CancellationToken cancellationToken);
 
     Task PublishAsync(InventoryReservationReleaseReplied reply, CancellationToken cancellationToken);
+
+    Task PublishAsync(InventoryRestockReplied reply, CancellationToken cancellationToken);
+
+    Task PublishAsync(WarehouseReplenishmentNeeded signal, CancellationToken cancellationToken);
 }
 
 public sealed class KafkaInventoryEventPublisher(
@@ -41,9 +45,37 @@ public sealed class KafkaInventoryEventPublisher(
         return PublishInternalAsync(options.Value.ReleaseRepliedTopic, reply.OrderId, reply.CorrelationId, reply, cancellationToken);
     }
 
-    private async Task PublishInternalAsync<TReply>(
+    public Task PublishAsync(InventoryRestockReplied reply, CancellationToken cancellationToken)
+    {
+        return PublishInternalAsync(options.Value.RestockRepliedTopic, reply.OrderId, reply.CorrelationId, reply, cancellationToken);
+    }
+
+    /// <summary>
+    /// Milestone 73: keyed by SKU rather than an order id, because this
+    /// event is about a shelf, not a purchase - and per-SKU ordering is the
+    /// guarantee this service already relies on everywhere else.
+    /// </summary>
+    public Task PublishAsync(WarehouseReplenishmentNeeded signal, CancellationToken cancellationToken)
+    {
+        return PublishInternalAsync(
+            options.Value.ReplenishmentNeededTopic,
+            signal.Sku,
+            signal.CorrelationId,
+            signal,
+            cancellationToken);
+    }
+
+    private Task PublishInternalAsync<TReply>(
         string topic,
         Guid orderId,
+        string correlationId,
+        TReply reply,
+        CancellationToken cancellationToken) =>
+        PublishInternalAsync(topic, orderId.ToString("N"), correlationId, reply, cancellationToken);
+
+    private async Task PublishInternalAsync<TReply>(
+        string topic,
+        string partitionKey,
         string correlationId,
         TReply reply,
         CancellationToken cancellationToken)
@@ -55,7 +87,7 @@ public sealed class KafkaInventoryEventPublisher(
 
         var message = new Message<string, string>
         {
-            Key = orderId.ToString("N"),
+            Key = partitionKey,
             Value = JsonSerializer.Serialize(reply, SerializerOptions),
             Headers = headers
         };

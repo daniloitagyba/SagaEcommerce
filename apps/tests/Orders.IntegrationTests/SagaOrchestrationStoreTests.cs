@@ -58,7 +58,7 @@ public sealed class SagaOrchestrationStoreTests : IAsyncLifetime
         var reservationId = Guid.NewGuid();
         var requestedAt = DateTimeOffset.UtcNow;
 
-        await _store!.TrackReserveRequestedAsync(orderId, "correlation-1", reservationId, "SKU-1", 2, 49.90m, "BRL", requestedAt, CancellationToken.None);
+        await _store!.TrackReserveRequestedAsync(orderId, "correlation-1", "customer-1", "Pix", "01", reservationId, "SKU-1", 2, 49.90m, "BRL", requestedAt, CancellationToken.None);
         var advanced = await _store.TryAdvanceAsync(orderId, SagaStep.ReserveInventory, SagaStep.DecidePayment, requestedAt.AddSeconds(1), CancellationToken.None);
         var completed = await _store.TryCompleteAsync(orderId, SagaStep.DecidePayment, CancellationToken.None);
         var secondAttempt = await _store.TryCompleteAsync(orderId, SagaStep.DecidePayment, CancellationToken.None);
@@ -81,7 +81,7 @@ public sealed class SagaOrchestrationStoreTests : IAsyncLifetime
         var orderId = Guid.NewGuid();
         var requestedAt = DateTimeOffset.UtcNow;
 
-        await _store!.TrackReserveRequestedAsync(orderId, "correlation-1", Guid.NewGuid(), "SKU-1", 1, 49.90m, "BRL", requestedAt, CancellationToken.None);
+        await _store!.TrackReserveRequestedAsync(orderId, "correlation-1", "customer-1", "Pix", "01", Guid.NewGuid(), "SKU-1", 1, 49.90m, "BRL", requestedAt, CancellationToken.None);
 
         // A stale/duplicate reply for a step the saga has already moved
         // past (e.g. a redelivered Reserve reply arriving after the saga
@@ -109,8 +109,8 @@ public sealed class SagaOrchestrationStoreTests : IAsyncLifetime
         var staleOrderId = Guid.NewGuid();
         var freshOrderId = Guid.NewGuid();
 
-        await _store!.TrackReserveRequestedAsync(staleOrderId, "stale-correlation", Guid.NewGuid(), "SKU-1", 1, 49.90m, "BRL", now - timeout - TimeSpan.FromSeconds(1), CancellationToken.None);
-        await _store.TrackReserveRequestedAsync(freshOrderId, "fresh-correlation", Guid.NewGuid(), "SKU-1", 1, 49.90m, "BRL", now, CancellationToken.None);
+        await _store!.TrackReserveRequestedAsync(staleOrderId, "stale-correlation", "customer-stale", "Pix", "01", Guid.NewGuid(), "SKU-1", 1, 49.90m, "BRL", now - timeout - TimeSpan.FromSeconds(1), CancellationToken.None);
+        await _store.TrackReserveRequestedAsync(freshOrderId, "fresh-correlation", "customer-fresh", "Pix", "01", Guid.NewGuid(), "SKU-1", 1, 49.90m, "BRL", now, CancellationToken.None);
 
         var firstClaim = await _store.ClaimTimedOutAsync(timeout, now, batchSize: 100, CancellationToken.None);
         var secondClaim = await _store.ClaimTimedOutAsync(timeout, now, batchSize: 100, CancellationToken.None);

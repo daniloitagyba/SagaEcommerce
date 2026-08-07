@@ -8,6 +8,9 @@ namespace Orders.Worker;
 
 public sealed record SagaOrchestrationRecord(
     string CorrelationId,
+    string CustomerId,
+    string PaymentMethod,
+    string ShippingPostalPrefix,
     DateTimeOffset RequestedAt,
     string Step,
     Guid ReservationId,
@@ -34,8 +37,8 @@ public sealed record SagaOrchestrationRecord(
 public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, ResiliencePipelineProvider<string> pipelineProvider)
 {
     private const string TrackReserveRequestedSql = """
-        INSERT INTO saga_orchestration_states (order_id, correlation_id, requested_at, step, reservation_id, sku, quantity, amount, currency)
-        VALUES (@order_id, @correlation_id, @requested_at, @step, @reservation_id, @sku, @quantity, @amount, @currency)
+        INSERT INTO saga_orchestration_states (order_id, correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, reservation_id, sku, quantity, amount, currency)
+        VALUES (@order_id, @correlation_id, @customer_id, @payment_method, @shipping_postal_prefix, @requested_at, @step, @reservation_id, @sku, @quantity, @amount, @currency)
         ON CONFLICT (order_id) DO NOTHING;
         """;
 
@@ -43,13 +46,13 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
         UPDATE saga_orchestration_states
         SET step = @next_step, requested_at = @requested_at
         WHERE order_id = @order_id AND step = @expected_step
-        RETURNING correlation_id, requested_at, step, reservation_id, sku, quantity, amount, currency;
+        RETURNING correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, reservation_id, sku, quantity, amount, currency;
         """;
 
     private const string TryCompleteSql = """
         DELETE FROM saga_orchestration_states
         WHERE order_id = @order_id AND step = @expected_step
-        RETURNING correlation_id, requested_at, step, reservation_id, sku, quantity, amount, currency;
+        RETURNING correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, reservation_id, sku, quantity, amount, currency;
         """;
 
     // FOR UPDATE SKIP LOCKED here is a belt-and-suspenders measure, not the
@@ -67,7 +70,7 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
             LIMIT @batch_size
             FOR UPDATE SKIP LOCKED
         )
-        RETURNING order_id, correlation_id, requested_at, step, reservation_id, sku, quantity, amount, currency;
+        RETURNING order_id, correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, reservation_id, sku, quantity, amount, currency;
         """;
 
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
@@ -75,6 +78,9 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
     public Task TrackReserveRequestedAsync(
         Guid orderId,
         string correlationId,
+        string customerId,
+        string paymentMethod,
+        string shippingPostalPrefix,
         Guid reservationId,
         string sku,
         int quantity,
@@ -88,6 +94,9 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
             await using var command = dataSource.CreateCommand(TrackReserveRequestedSql);
             command.Parameters.AddWithValue("order_id", NpgsqlDbType.Uuid, orderId);
             command.Parameters.AddWithValue("correlation_id", NpgsqlDbType.Varchar, correlationId);
+            command.Parameters.AddWithValue("customer_id", NpgsqlDbType.Varchar, customerId);
+            command.Parameters.AddWithValue("payment_method", NpgsqlDbType.Varchar, paymentMethod);
+            command.Parameters.AddWithValue("shipping_postal_prefix", NpgsqlDbType.Varchar, shippingPostalPrefix);
             command.Parameters.AddWithValue("requested_at", NpgsqlDbType.TimestampTz, requestedAt);
             command.Parameters.AddWithValue("step", NpgsqlDbType.Varchar, SagaStep.ReserveInventory);
             command.Parameters.AddWithValue("reservation_id", NpgsqlDbType.Uuid, reservationId);
@@ -153,13 +162,16 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
                     reader.GetGuid(0),
                     new SagaOrchestrationRecord(
                         reader.GetString(1),
-                        await reader.GetFieldValueAsync<DateTimeOffset>(2, ct),
+                        reader.GetString(2),
                         reader.GetString(3),
-                        reader.GetGuid(4),
-                        reader.GetString(5),
-                        reader.GetInt32(6),
-                        reader.GetDecimal(7),
-                        reader.GetString(8))));
+                        reader.GetString(4),
+                        await reader.GetFieldValueAsync<DateTimeOffset>(5, ct),
+                        reader.GetString(6),
+                        reader.GetGuid(7),
+                        reader.GetString(8),
+                        reader.GetInt32(9),
+                        reader.GetDecimal(10),
+                        reader.GetString(11))));
             }
 
             return (IReadOnlyList<(Guid, SagaOrchestrationRecord)>)claimed;
@@ -170,13 +182,16 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
     {
         return new SagaOrchestrationRecord(
             reader.GetString(0),
-            await reader.GetFieldValueAsync<DateTimeOffset>(1, cancellationToken),
+            reader.GetString(1),
             reader.GetString(2),
-            reader.GetGuid(3),
-            reader.GetString(4),
-            reader.GetInt32(5),
-            reader.GetDecimal(6),
-            reader.GetString(7));
+            reader.GetString(3),
+            await reader.GetFieldValueAsync<DateTimeOffset>(4, cancellationToken),
+            reader.GetString(5),
+            reader.GetGuid(6),
+            reader.GetString(7),
+            reader.GetInt32(8),
+            reader.GetDecimal(9),
+            reader.GetString(10));
     }
 }
 

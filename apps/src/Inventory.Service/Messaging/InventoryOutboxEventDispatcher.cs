@@ -41,6 +41,25 @@ public sealed class InventoryOutboxEventDispatcher(IInventoryEventPublisher publ
                 return (reply.ReservationId, reply.Sku);
             }
 
+            case nameof(InventoryRestockReplied):
+            {
+                var reply = JsonSerializer.Deserialize<InventoryRestockReplied>(message.Payload, SerializerOptions)
+                    ?? throw new JsonException("The outbox payload did not contain an InventoryRestockReplied event.");
+                await publisher.PublishAsync(reply, cancellationToken);
+                return (reply.ReturnId, reply.Sku);
+            }
+
+            case nameof(WarehouseReplenishmentNeeded):
+            {
+                var signal = JsonSerializer.Deserialize<WarehouseReplenishmentNeeded>(message.Payload, SerializerOptions)
+                    ?? throw new JsonException("The outbox payload did not contain a WarehouseReplenishmentNeeded event.");
+                await publisher.PublishAsync(signal, cancellationToken);
+                // Not tied to a reservation - the tuple this dispatcher
+                // returns is only used for logging, and Guid.Empty says
+                // "no reservation" more honestly than reusing an unrelated id.
+                return (Guid.Empty, signal.Sku);
+            }
+
             default:
                 throw new JsonException($"Unsupported outbox event type '{message.EventType}'.");
         }

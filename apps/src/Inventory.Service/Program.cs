@@ -9,6 +9,16 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Milestone 73: same guard Orders.Api has carried since Milestone 69, where
+// one unregistered IProducer took the whole outbox down while the service
+// went on reporting healthy - a background loop cannot fail loudly on its
+// own, so the failure has to happen at startup instead.
+builder.Host.UseDefaultServiceProvider(options =>
+{
+    options.ValidateOnBuild = true;
+    options.ValidateScopes = true;
+});
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
 builder.Logging.ClearProviders();
@@ -27,6 +37,8 @@ builder.Services.AddOptions<InventoryKafkaOptions>()
     .Validate(options => !string.IsNullOrWhiteSpace(options.BootstrapServers), "Kafka bootstrap servers are required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.ReservationRequestedTopic), "Kafka reservation-requested topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.ReservationRepliedTopic), "Kafka reservation-replied topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.RestockRequestedTopic), "Kafka restock-requested topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.RestockRepliedTopic), "Kafka restock-replied topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.CommitRequestedTopic), "Kafka commit-requested topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.CommitRepliedTopic), "Kafka commit-replied topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.ReleaseRequestedTopic), "Kafka release-requested topic is required.")
@@ -46,6 +58,12 @@ builder.Services.AddOptions<OutboxOptions>()
     .Validate(options => options.BatchSize is > 0 and <= 100, "Outbox batch size must be between 1 and 100.")
     .Validate(options => options.PollIntervalMilliseconds >= 100, "Outbox poll interval must be at least 100 milliseconds.")
     .Validate(options => options.MaximumRetryDelaySeconds > 0, "Outbox maximum retry delay must be positive.")
+    .ValidateOnStart();
+builder.Services.AddOptions<BackorderOptions>()
+    .Bind(builder.Configuration.GetSection(BackorderOptions.SectionName))
+    .Validate(options => options.TimeoutSweepIntervalSeconds > 0, "Backorder timeout sweep interval must be positive.")
+    .Validate(options => options.TimeoutSweepBatchSize > 0, "Backorder timeout sweep batch size must be positive.")
+    .Validate(options => options.TimeoutMinutes > 0, "Backorder timeout window must be positive.")
     .ValidateOnStart();
 
 var connectionString = builder.Configuration.GetConnectionString("Inventory")
@@ -91,9 +109,11 @@ builder.Services.AddSingleton<IAdminClient>(serviceProvider =>
 builder.Services.AddOrdersResilience();
 builder.Services.AddSingleton<IInventoryEventPublisher, KafkaInventoryEventPublisher>();
 builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
+builder.Services.AddScoped<WarehouseAllocationStore>();
 builder.Services.AddSingleton<InventoryReservationMessageProcessor>();
 builder.Services.AddScoped<IOutboxEventDispatcher, InventoryOutboxEventDispatcher>();
 builder.Services.AddHostedService<OutboxPublisher<InventoryDbContext>>();
+builder.Services.AddHostedService<BackorderTimeoutSweeper>();
 builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
@@ -129,6 +149,18 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
         [options.ReleaseRequestedTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessReleaseAsync, deadLetterPublisher.PublishAsync, logger);
+});
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.RestockRequestedConsumer");
+    return new KafkaConsumerHost<string>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.RestockRequestedTopic], options.DeadLetterTopic,
+        processingOptions, processor.ProcessRestockAsync, deadLetterPublisher.PublishAsync, logger);
 });
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Inventory"])

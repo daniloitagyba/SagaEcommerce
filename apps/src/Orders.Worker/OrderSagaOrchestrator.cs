@@ -99,11 +99,42 @@ public sealed class OrderSagaOrchestrator(
 
         var requestedAt = DateTimeOffset.UtcNow;
         var reservationId = Guid.NewGuid();
-        var (sku, quantity) = SagaSkuMapper.MapOrderToLineItem(orderCreated.OrderId);
+
+        // Milestone 66: reserve what the customer actually ordered. Until
+        // now this hashed the order id to pick one of nine seeded SKUs
+        // (SagaSkuMapper, deleted), so every "reservation" in every prior
+        // saga demonstration held stock for a product nobody bought.
+        //
+        // The saga still tracks a single line: SagaOrchestrationState is
+        // one row per order with one sku/quantity, and widening it into a
+        // per-line state machine (partial reservations, per-line
+        // compensation) is a genuinely larger change than this milestone
+        // is making. Taking the largest line by value is a stated
+        // simplification rather than a hidden one - but it is now a real
+        // line from a real order.
+        var primaryLine = orderCreated.LinesOrEmpty
+            .OrderByDescending(line => line.LineTotal)
+            .ThenBy(line => line.Sku, StringComparer.Ordinal)
+            .FirstOrDefault();
+
+        if (primaryLine is null)
+        {
+            // An amount-only order (schema v1, or the legacy request shape)
+            // has nothing to reserve. Skipping is right: inventing a SKU is
+            // exactly the behaviour this milestone removed.
+            SagaOrchestratorLog.SkippedOrderWithoutLines(logger, orderCreated.OrderId, orderCreated.CorrelationId);
+            return;
+        }
+
+        var sku = primaryLine.Sku;
+        var quantity = primaryLine.Quantity;
 
         await store.TrackReserveRequestedAsync(
             orderCreated.OrderId,
             orderCreated.CorrelationId,
+            orderCreated.CustomerId,
+            orderCreated.PaymentMethod,
+            orderCreated.ShippingPostalPrefix,
             reservationId,
             sku,
             quantity,
@@ -181,4 +212,10 @@ public sealed partial class SagaOrchestratorLog
 
     [LoggerMessage(EventId = 6011, Level = LogLevel.Warning, Message = "Bestseller tracking failed for sku {Sku} - the sale is not lost, only its ranking contribution is")]
     public static partial void BestsellerTrackingFailed(ILogger logger, string sku, Exception exception);
+
+    [LoggerMessage(EventId = 6012, Level = LogLevel.Information, Message = "Saga orchestrator skipped order {OrderId} because it carries no line items to reserve correlation {CorrelationId}")]
+    public static partial void SkippedOrderWithoutLines(ILogger logger, Guid orderId, string correlationId);
+
+    [LoggerMessage(EventId = 6013, Level = LogLevel.Information, Message = "Order {OrderId} backordered for sku {Sku} - waiting for a restock, saga parked at ReserveInventory, correlation {CorrelationId}")]
+    public static partial void Backordered(ILogger logger, Guid orderId, string sku, string correlationId);
 }

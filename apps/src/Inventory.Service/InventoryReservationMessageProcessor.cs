@@ -85,38 +85,97 @@ public sealed class InventoryReservationMessageProcessor(
         // Correctness for concurrent requests against the SAME Sku relies
         // entirely on Kafka never handing this Sku's partition to more than
         // one consumer instance at a time - see InventoryContracts.cs.
-        var item = await dbContext.InventoryItems.FirstOrDefaultAsync(i => i.Sku == request.Sku, cancellationToken);
-        var reserved = item is not null && item.TryReserve(request.Quantity, processedAt);
-        var reason = item is null
+        // Milestone 72: the warehouse network decides, not a single row.
+        // Milestone 74: the decision itself lives in WarehouseAllocationStore
+        // now, shared with the backorder release path below - see
+        // TryReserveAsync's own comment for why that sharing matters.
+        var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
+        var itemExists = await dbContext.InventoryItems.AnyAsync(i => i.Sku == request.Sku, cancellationToken);
+
+        var decision = itemExists
+            ? await allocationStore.TryReserveAsync(request.ReservationId, request.Sku, request.Quantity, processedAt, cancellationToken)
+            : WarehouseAllocationStore.ReservationDecision.Refused;
+
+        // A backorder is only worth recording when a restock could someday
+        // fill it. An unknown SKU will never restock - there is nothing to
+        // wait for - so that case still fails outright, exactly as it did
+        // before this milestone.
+        var backordered = !decision.Reserved && itemExists;
+        if (backordered)
+        {
+            dbContext.Backorders.Add(Backorder.Create(
+                request.ReservationId, request.OrderId, request.Sku, request.Quantity, correlationId, processedAt));
+            InventoryLog.Backordered(logger, request.ReservationId, request.Sku, correlationId);
+        }
+
+        var reason = !itemExists
             ? "unknown sku"
-            : reserved ? null : "insufficient stock";
+            : decision.Reserved ? null : "insufficient stock";
 
         var reply = new InventoryReservationReplied(
             request.ReservationId,
             request.OrderId,
             request.Sku,
             request.Quantity,
-            reserved,
+            decision.Reserved,
             reason,
             correlationId,
-            processedAt);
-        var outboxMessage = OutboxMessage.Create(
+            processedAt,
+            backordered);
+
+        EnqueueReservationReply(dbContext, reply, processedAt, correlationId);
+        EnqueueReplenishmentSignals(dbContext, decision.CrossedReorderPoint, correlationId, processedAt);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        activity?.SetTag("inventory.reserved", decision.Reserved);
+        activity?.SetTag("inventory.backordered", backordered);
+        OrdersTelemetry.RecordProcessed("success");
+        InventoryLog.Decided(logger, request.ReservationId, request.Sku, decision.Reserved, correlationId);
+        return MessageProcessingResult.Processed;
+    }
+
+    private static void EnqueueReservationReply(
+        InventoryDbContext dbContext, InventoryReservationReplied reply, DateTimeOffset processedAt, string correlationId)
+    {
+        dbContext.OutboxMessages.Add(OutboxMessage.Create(
             Guid.NewGuid(),
             nameof(InventoryReservationReplied),
             JsonSerializer.Serialize(reply, SerializerOptions),
             processedAt,
             correlationId,
             Activity.Current?.Id,
-            Activity.Current?.TraceStateString);
+            Activity.Current?.TraceStateString));
+    }
 
-        dbContext.OutboxMessages.Add(outboxMessage);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+    /// <summary>
+    /// Same transaction as the reservation that caused each crossing, so a
+    /// rollback cannot leave a replenishment alert for stock that was never
+    /// actually drawn down.
+    /// </summary>
+    private void EnqueueReplenishmentSignals(
+        InventoryDbContext dbContext,
+        IReadOnlyList<WarehouseStock> crossedReorderPoint,
+        string correlationId,
+        DateTimeOffset processedAt)
+    {
+        foreach (var stock in crossedReorderPoint)
+        {
+            var signal = new WarehouseReplenishmentNeeded(
+                stock.Sku, stock.WarehouseCode, stock.AvailableQuantity, stock.ReorderPoint, correlationId, processedAt);
 
-        activity?.SetTag("inventory.reserved", reserved);
-        OrdersTelemetry.RecordProcessed("success");
-        InventoryLog.Decided(logger, request.ReservationId, request.Sku, reserved, correlationId);
-        return MessageProcessingResult.Processed;
+            dbContext.OutboxMessages.Add(OutboxMessage.Create(
+                Guid.NewGuid(),
+                nameof(WarehouseReplenishmentNeeded),
+                JsonSerializer.Serialize(signal, SerializerOptions),
+                processedAt,
+                correlationId,
+                Activity.Current?.Id,
+                Activity.Current?.TraceStateString));
+
+            InventoryLog.ReplenishmentNeeded(logger, signal.Sku, signal.WarehouseCode, signal.AvailableQuantity, signal.ReorderPoint);
+        }
     }
 
     public async Task<MessageProcessingResult> ProcessCommitAsync(
@@ -136,6 +195,8 @@ public sealed class InventoryReservationMessageProcessor(
             correlationId,
             inboxConsumerSuffix: "commit",
             activityName: "inventory.commit",
+            settleAllocation: true,
+            commitAllocation: true,
             mutate: (item, quantity, now) => item.TryCommit(quantity, now),
             insufficientReason: "reservation not found or already settled",
             makeReply: (reservationId, orderId, sku, quantity, succeeded, reason, corrId, decidedAt) =>
@@ -163,6 +224,8 @@ public sealed class InventoryReservationMessageProcessor(
             correlationId,
             inboxConsumerSuffix: "release",
             activityName: "inventory.release",
+            settleAllocation: true,
+            commitAllocation: false,
             mutate: (item, quantity, now) => item.TryRelease(quantity, now),
             insufficientReason: "reservation not found or already settled",
             makeReply: (reservationId, orderId, sku, quantity, succeeded, reason, corrId, decidedAt) =>
@@ -170,6 +233,46 @@ public sealed class InventoryReservationMessageProcessor(
                     new InventoryReservationReleaseReplied(reservationId, orderId, sku, quantity, succeeded, reason, corrId, decidedAt)),
             logDecided: (reservationId, sku, succeeded, corrId) =>
                 InventoryLog.ReleaseDecided(logger, reservationId, sku, succeeded, corrId),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Milestone 70: returned units go back on the shelf.
+    ///
+    /// Reuses the same inbox-dedup / mutate / reply shape as commit and
+    /// release, but the mutation is different in kind: those two draw down
+    /// a <em>held</em> quantity, while a return is putting back stock that
+    /// left inventory entirely when the sale committed. There is no
+    /// reservation to find, so the mutation always succeeds - the inbox is
+    /// what stops a redelivered restock inflating stock a second time,
+    /// exactly as it does for the other three.
+    /// </summary>
+    public async Task<MessageProcessingResult> ProcessRestockAsync(
+        ConsumeResult<string, string> consumeResult,
+        CancellationToken cancellationToken)
+    {
+        var request = DeserializeAndValidate<InventoryRestockRequested>(
+            consumeResult, r => (r.ReturnId, r.OrderId, r.Sku, r.Quantity));
+        var correlationId = GetHeader(consumeResult.Message.Headers, MessagingHeaders.CorrelationId) ?? request.CorrelationId;
+
+        return await ProcessSettlementAsync(
+            consumeResult,
+            request.ReturnId,
+            request.OrderId,
+            request.Sku,
+            request.Quantity,
+            correlationId,
+            inboxConsumerSuffix: "restock",
+            activityName: "inventory.restock",
+            settleAllocation: false,
+            commitAllocation: false,
+            mutate: (item, quantity, now) => { item.Restock(quantity, now); return true; },
+            insufficientReason: "sku not found",
+            makeReply: (returnId, orderId, sku, quantity, succeeded, reason, corrId, decidedAt) =>
+                (nameof(InventoryRestockReplied),
+                    new InventoryRestockReplied(returnId, orderId, sku, quantity, succeeded, corrId, decidedAt)),
+            logDecided: (returnId, sku, succeeded, corrId) =>
+                InventoryLog.RestockDecided(logger, returnId, sku, succeeded, corrId),
             cancellationToken);
     }
 
@@ -188,6 +291,8 @@ public sealed class InventoryReservationMessageProcessor(
         string correlationId,
         string inboxConsumerSuffix,
         string activityName,
+        bool settleAllocation,
+        bool commitAllocation,
         Func<InventoryItem, int, DateTimeOffset, bool> mutate,
         string insufficientReason,
         Func<Guid, Guid, string, int, bool, string?, string, DateTimeOffset, (string EventType, object Reply)> makeReply,
@@ -238,6 +343,22 @@ public sealed class InventoryReservationMessageProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
+        // Milestone 72: replay the recorded allocation before touching the
+        // aggregate view. A reservation made before this milestone has no
+        // recorded plan, and TrySettleReservationAsync says so rather than
+        // failing - the single-warehouse path below still settles it, so
+        // orders in flight during the rollout are not stranded.
+        if (settleAllocation)
+        {
+            var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
+            await allocationStore.TrySettleReservationAsync(reservationId, commitAllocation, processedAt, cancellationToken);
+        }
+        else
+        {
+            var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
+            await allocationStore.TryRestockAsync(sku, quantity, processedAt, cancellationToken);
+        }
+
         var item = await dbContext.InventoryItems.FirstOrDefaultAsync(i => i.Sku == sku, cancellationToken);
         var succeeded = item is not null && mutate(item, quantity, processedAt);
         var reason = succeeded ? null : insufficientReason;
@@ -253,6 +374,18 @@ public sealed class InventoryReservationMessageProcessor(
             Activity.Current?.TraceStateString);
 
         dbContext.OutboxMessages.Add(outboxMessage);
+
+        // Milestone 74: only the restock path can clear a backorder, and
+        // only after the aggregate row above has actually been restocked -
+        // releasing against a stale AvailableQuantity would just refuse
+        // every waiting order again. Same allocationStore instance the
+        // restock above used, so it sees its own write.
+        if (!settleAllocation && succeeded)
+        {
+            var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
+            await ReleaseBackordersAsync(dbContext, allocationStore, sku, processedAt, cancellationToken);
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
@@ -260,6 +393,58 @@ public sealed class InventoryReservationMessageProcessor(
         OrdersTelemetry.RecordProcessed("success");
         logDecided(reservationId, sku, succeeded, correlationId);
         return MessageProcessingResult.Processed;
+    }
+
+    /// <summary>
+    /// Milestone 74: strict FIFO. Jumping ahead to a later, smaller
+    /// backorder because it happens to fit would be unfair to whoever has
+    /// been waiting the longest, so the loop stops at the first one that
+    /// still cannot be filled rather than skipping past it - the rest wait
+    /// for the next restock, same as they are waiting for this one.
+    /// </summary>
+    private async Task ReleaseBackordersAsync(
+        InventoryDbContext dbContext,
+        WarehouseAllocationStore allocationStore,
+        string sku,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var pending = await dbContext.Backorders
+            .Where(backorder => backorder.Sku == sku)
+            .OrderBy(backorder => backorder.RequestedAt)
+            .ToListAsync(cancellationToken);
+
+        foreach (var backorder in pending)
+        {
+            var decision = await allocationStore.TryReserveAsync(
+                backorder.ReservationId, sku, backorder.Quantity, now, cancellationToken);
+
+            if (!decision.Reserved)
+            {
+                break;
+            }
+
+            dbContext.Backorders.Remove(backorder);
+
+            // Reuses InventoryReservationReplied on the exact reservationId
+            // the saga is still parked on - see OrderSagaReplyConsumer's
+            // handling of Backordered:false. No new event type, no new
+            // saga-side code: this looks like an ordinary late reply.
+            var reply = new InventoryReservationReplied(
+                backorder.ReservationId,
+                backorder.OrderId,
+                sku,
+                backorder.Quantity,
+                Reserved: true,
+                Reason: null,
+                backorder.CorrelationId,
+                now);
+
+            EnqueueReservationReply(dbContext, reply, now, backorder.CorrelationId);
+            EnqueueReplenishmentSignals(dbContext, decision.CrossedReorderPoint, backorder.CorrelationId, now);
+
+            InventoryLog.BackorderReleased(logger, backorder.ReservationId, sku, backorder.OrderId, backorder.CorrelationId);
+        }
     }
 
     private static TRequest DeserializeAndValidate<TRequest>(
@@ -329,12 +514,24 @@ public sealed partial class InventoryLog
     [LoggerMessage(EventId = 9002, Level = LogLevel.Information, Message = "Decided reservation {ReservationId} for sku {Sku}: reserved={Reserved} with correlation {CorrelationId}")]
     public static partial void Decided(ILogger logger, Guid reservationId, string sku, bool reserved, string correlationId);
 
+    [LoggerMessage(EventId = 9010, Level = LogLevel.Warning, Message = "Warehouse {WarehouseCode} fell to {AvailableQuantity} of {Sku}, at or below its reorder point of {ReorderPoint}")]
+    public static partial void ReplenishmentNeeded(ILogger logger, string sku, string warehouseCode, int availableQuantity, int reorderPoint);
+
     [LoggerMessage(EventId = 9011, Level = LogLevel.Information, Message = "Decided commit {ReservationId} for sku {Sku}: committed={Committed} with correlation {CorrelationId}")]
     public static partial void CommitDecided(ILogger logger, Guid reservationId, string sku, bool committed, string correlationId);
 
     [LoggerMessage(EventId = 9012, Level = LogLevel.Information, Message = "Decided release {ReservationId} for sku {Sku}: released={Released} with correlation {CorrelationId}")]
     public static partial void ReleaseDecided(ILogger logger, Guid reservationId, string sku, bool released, string correlationId);
 
+    [LoggerMessage(EventId = 9006, Level = LogLevel.Information, Message = "Restocked {Sku} for return {ReturnId}: restocked={Restocked} with correlation {CorrelationId}")]
+    public static partial void RestockDecided(ILogger logger, Guid returnId, string sku, bool restocked, string correlationId);
+
     [LoggerMessage(EventId = 9005, Level = LogLevel.Information, Message = "Skipped duplicate reservation {ReservationId} for consumer {ConsumerName}")]
     public static partial void Duplicate(ILogger logger, Guid reservationId, string consumerName);
+
+    [LoggerMessage(EventId = 9013, Level = LogLevel.Information, Message = "Reservation {ReservationId} for sku {Sku} backordered - the network cannot cover it yet, waiting for a restock (correlation {CorrelationId})")]
+    public static partial void Backordered(ILogger logger, Guid reservationId, string sku, string correlationId);
+
+    [LoggerMessage(EventId = 9014, Level = LogLevel.Information, Message = "Released backorder {ReservationId} for sku {Sku} on order {OrderId} after a restock (correlation {CorrelationId})")]
+    public static partial void BackorderReleased(ILogger logger, Guid reservationId, string sku, Guid orderId, string correlationId);
 }

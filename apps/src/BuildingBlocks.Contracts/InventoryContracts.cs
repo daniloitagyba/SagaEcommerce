@@ -31,7 +31,14 @@ public sealed record InventoryReservationReplied(
     bool Reserved,
     string? Reason,
     string CorrelationId,
-    DateTimeOffset DecidedAt);
+    DateTimeOffset DecidedAt,
+    // Milestone 74: distinguishes "the network cannot cover this, wait for
+    // a restock" from "the network cannot cover this, give up" - both are
+    // Reserved: false, but only the first should stop the saga from
+    // cancelling. A stale message from before this field existed
+    // deserializes it false, which resolves to the pre-existing behaviour:
+    // cancel outright, exactly as it always did.
+    bool Backordered = false);
 
 /// <summary>
 /// Milestone 43: the two ways a reservation can be settled once made -
@@ -79,3 +86,28 @@ public sealed record InventoryReservationReleaseReplied(
     string? Reason,
     string CorrelationId,
     DateTimeOffset DecidedAt);
+
+/// <summary>
+/// Milestone 73: a warehouse has fallen to or below its reorder point.
+///
+/// Until now <c>ReorderPoint</c> was a column nobody read - the model
+/// carried a number that implied stock gets replenished and then never
+/// acted on it. This is the signal a replenishment process would consume.
+/// Nothing in this lab does yet, and that is the honest state of it: the
+/// event is emitted, durably and transactionally, and the consumer is
+/// somebody else's milestone.
+///
+/// <para>
+/// Emitted on the <em>crossing</em>, not on every reservation that finds a
+/// warehouse already low. A shop selling briskly from a depleted warehouse
+/// would otherwise publish one of these per order, which is how a useful
+/// signal becomes a topic everyone filters out.
+/// </para>
+/// </summary>
+public sealed record WarehouseReplenishmentNeeded(
+    string Sku,
+    string WarehouseCode,
+    int AvailableQuantity,
+    int ReorderPoint,
+    string CorrelationId,
+    DateTimeOffset DetectedAt);

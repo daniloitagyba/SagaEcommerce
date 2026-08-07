@@ -9,6 +9,16 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
 {
     public DbSet<Order> Orders => Set<Order>();
 
+    public DbSet<OrderLine> OrderLines => Set<OrderLine>();
+
+    public DbSet<Customer> Customers => Set<Customer>();
+
+    public DbSet<OrderReturn> OrderReturns => Set<OrderReturn>();
+
+    public DbSet<Coupon> Coupons => Set<Coupon>();
+
+    public DbSet<CouponRedemption> CouponRedemptions => Set<CouponRedemption>();
+
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     public DbSet<InboxMessage> InboxMessages => Set<InboxMessage>();
@@ -22,6 +32,10 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureOrder(modelBuilder);
+        ConfigureOrderLine(modelBuilder);
+        ConfigureCustomer(modelBuilder);
+        ConfigureOrderReturn(modelBuilder);
+        ConfigureCoupon(modelBuilder);
         ConfigureOutbox(modelBuilder);
         ConfigureInbox(modelBuilder);
         ConfigureOrderSummary(modelBuilder);
@@ -50,6 +64,138 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         order.Property(item => item.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
         order.Property(item => item.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         order.Property(item => item.CreatedAt).HasColumnName("created_at").IsRequired();
+
+        // Milestone 66: the pricing breakdown. Stored denormalised on the
+        // order rather than recomputed on read, because a promotion is a
+        // point-in-time fact - re-running today's rules against a
+        // six-month-old order would produce today's prices, not what the
+        // customer was actually charged.
+        order.Property(item => item.Subtotal).HasColumnName("subtotal").HasPrecision(18, 2).IsRequired();
+        order.Property(item => item.DiscountTotal).HasColumnName("discount_total").HasPrecision(18, 2).IsRequired();
+        order.Property(item => item.ShippingTotal).HasColumnName("shipping_total").HasPrecision(18, 2).IsRequired();
+        order.Property(item => item.TaxTotal).HasColumnName("tax_total").HasPrecision(18, 2).IsRequired();
+        order.Property(item => item.CouponCode).HasColumnName("coupon_code").HasMaxLength(64);
+        order.Property(item => item.PaymentMethod).HasColumnName("payment_method").HasMaxLength(16).IsRequired();
+
+        // Owned rather than a separate table: an address belongs to the
+        // order it shipped to and is never queried independently. Storing a
+        // snapshot also means a customer editing their address later cannot
+        // rewrite where a past order was actually sent.
+        order.OwnsOne(item => item.ShippingAddress, address =>
+        {
+            address.Property(value => value.Line1).HasColumnName("ship_line1").HasMaxLength(200);
+            address.Property(value => value.City).HasColumnName("ship_city").HasMaxLength(100);
+            address.Property(value => value.Region).HasColumnName("ship_region").HasMaxLength(8);
+            address.Property(value => value.PostalCode).HasColumnName("ship_postal_code").HasMaxLength(16);
+        });
+
+        order.HasMany(item => item.Lines)
+            .WithOne()
+            .HasForeignKey(line => line.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+        order.Navigation(item => item.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
+    private static void ConfigureOrderLine(ModelBuilder modelBuilder)
+    {
+        var line = modelBuilder.Entity<OrderLine>();
+
+        line.ToTable("order_lines");
+        line.HasKey(item => item.Id);
+        line.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
+        line.Property(item => item.OrderId).HasColumnName("order_id").IsRequired();
+        line.Property(item => item.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();
+        line.Property(item => item.ProductName).HasColumnName("product_name").HasMaxLength(256).IsRequired();
+        line.Property(item => item.CategorySlug).HasColumnName("category_slug").HasMaxLength(64).IsRequired();
+        line.Property(item => item.Quantity).HasColumnName("quantity").IsRequired();
+        line.Property(item => item.UnitPrice).HasColumnName("unit_price").HasPrecision(18, 2).IsRequired();
+        line.Property(item => item.LineSubtotal).HasColumnName("line_subtotal").HasPrecision(18, 2).IsRequired();
+        line.Property(item => item.LineDiscount).HasColumnName("line_discount").HasPrecision(18, 2).IsRequired();
+        line.Property(item => item.LineTotal).HasColumnName("line_total").HasPrecision(18, 2).IsRequired();
+        line.HasIndex(item => item.OrderId).HasDatabaseName("ix_order_lines_order_id");
+        line.HasIndex(item => item.Sku).HasDatabaseName("ix_order_lines_sku");
+        line.Property(item => item.ReturnedQuantity).HasColumnName("returned_quantity").IsRequired();
+    }
+
+    private static void ConfigureCustomer(ModelBuilder modelBuilder)
+    {
+        var customer = modelBuilder.Entity<Customer>();
+
+        customer.ToTable("customers");
+        customer.HasKey(item => item.Id);
+        customer.Property(item => item.Id).HasColumnName("id").HasMaxLength(100).ValueGeneratedNever();
+        customer.Property(item => item.Tier).HasColumnName("tier").HasMaxLength(16).IsRequired();
+        customer.Property(item => item.LifetimeSpend).HasColumnName("lifetime_spend").HasPrecision(18, 2).IsRequired();
+        customer.Property(item => item.CompletedOrderCount).HasColumnName("completed_order_count").IsRequired();
+        customer.Property(item => item.CreatedAt).HasColumnName("created_at").IsRequired();
+    }
+
+    private static void ConfigureOrderReturn(ModelBuilder modelBuilder)
+    {
+        var orderReturn = modelBuilder.Entity<OrderReturn>();
+
+        orderReturn.ToTable("order_returns");
+        orderReturn.HasKey(item => item.Id);
+        orderReturn.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
+        orderReturn.Property(item => item.OrderId).HasColumnName("order_id").IsRequired();
+        orderReturn.Property(item => item.CustomerId).HasColumnName("customer_id").HasMaxLength(100).IsRequired();
+        orderReturn.Property(item => item.Reason).HasColumnName("reason").HasMaxLength(256).IsRequired();
+        orderReturn.Property(item => item.RefundTotal).HasColumnName("refund_total").HasPrecision(18, 2).IsRequired();
+        orderReturn.Property(item => item.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
+        orderReturn.Property(item => item.RequestedAt).HasColumnName("requested_at").IsRequired();
+        orderReturn.HasIndex(item => item.OrderId).HasDatabaseName("ix_order_returns_order_id");
+        orderReturn.HasMany(item => item.Lines).WithOne().HasForeignKey(line => line.ReturnId).OnDelete(DeleteBehavior.Cascade);
+        orderReturn.Navigation(item => item.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        var returnLine = modelBuilder.Entity<OrderReturnLine>();
+        returnLine.ToTable("order_return_lines");
+        returnLine.HasKey(item => item.Id);
+        returnLine.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
+        returnLine.Property(item => item.ReturnId).HasColumnName("return_id").IsRequired();
+        returnLine.Property(item => item.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();
+        returnLine.Property(item => item.Quantity).HasColumnName("quantity").IsRequired();
+        returnLine.Property(item => item.RefundAmount).HasColumnName("refund_amount").HasPrecision(18, 2).IsRequired();
+    }
+
+    private static void ConfigureCoupon(ModelBuilder modelBuilder)
+    {
+        var coupon = modelBuilder.Entity<Coupon>();
+
+        coupon.ToTable("coupons");
+        coupon.HasKey(item => item.Code);
+        coupon.Property(item => item.Code).HasColumnName("code").HasMaxLength(64).ValueGeneratedNever();
+        coupon.Property(item => item.Description).HasColumnName("description").HasMaxLength(256).IsRequired();
+        coupon.Property(item => item.Percentage).HasColumnName("percentage").HasPrecision(5, 2).IsRequired();
+        coupon.Property(item => item.ValidFrom).HasColumnName("valid_from").IsRequired();
+        coupon.Property(item => item.ValidUntil).HasColumnName("valid_until").IsRequired();
+        coupon.Property(item => item.MinimumOrderAmount).HasColumnName("minimum_order_amount").HasPrecision(18, 2).IsRequired();
+        coupon.Property(item => item.MaxTotalRedemptions).HasColumnName("max_total_redemptions");
+        coupon.Property(item => item.MaxPerCustomer).HasColumnName("max_per_customer");
+        coupon.Property(item => item.RedemptionCount).HasColumnName("redemption_count").IsRequired();
+
+        var redemption = modelBuilder.Entity<CouponRedemption>();
+
+        redemption.ToTable("coupon_redemptions");
+        redemption.HasKey(item => item.Id);
+        redemption.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
+        redemption.Property(item => item.Code).HasColumnName("code").HasMaxLength(64).IsRequired();
+        redemption.Property(item => item.OrderId).HasColumnName("order_id").IsRequired();
+        redemption.Property(item => item.CustomerId).HasColumnName("customer_id").HasMaxLength(100).IsRequired();
+        redemption.Property(item => item.State).HasColumnName("state").HasMaxLength(16).IsRequired();
+        redemption.Property(item => item.ReservedAt).HasColumnName("reserved_at").IsRequired();
+        redemption.Property(item => item.SettledAt).HasColumnName("settled_at");
+
+        // One order redeems a given coupon at most once. This is not
+        // cosmetic: it is what makes a retried checkout unable to claim a
+        // second slot for the same order, in the database rather than by
+        // application convention.
+        redemption.HasIndex(item => new { item.Code, item.OrderId })
+            .IsUnique()
+            .HasDatabaseName("ux_coupon_redemptions_code_order");
+        // Covers the per-customer limit count, which runs on the checkout
+        // hot path inside the reservation transaction.
+        redemption.HasIndex(item => new { item.Code, item.CustomerId, item.State })
+            .HasDatabaseName("ix_coupon_redemptions_customer");
     }
 
     private static void ConfigureOutbox(ModelBuilder modelBuilder)
@@ -134,6 +280,9 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         saga.HasKey(item => item.OrderId);
         saga.Property(item => item.OrderId).HasColumnName("order_id").ValueGeneratedNever();
         saga.Property(item => item.CorrelationId).HasColumnName("correlation_id").HasMaxLength(128).IsRequired();
+        saga.Property(item => item.CustomerId).HasColumnName("customer_id").HasMaxLength(100).IsRequired();
+        saga.Property(item => item.PaymentMethod).HasColumnName("payment_method").HasMaxLength(16).IsRequired();
+        saga.Property(item => item.ShippingPostalPrefix).HasColumnName("shipping_postal_prefix").HasMaxLength(8).IsRequired();
         saga.Property(item => item.RequestedAt).HasColumnName("requested_at").IsRequired();
         saga.Property(item => item.Step).HasColumnName("step").HasMaxLength(32).IsRequired();
         saga.Property(item => item.ReservationId).HasColumnName("reservation_id").IsRequired();

@@ -6,6 +6,16 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using MongoDB.Driver;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Milestone 73: same guard Orders.Api has carried since Milestone 69, where
+// one unregistered IProducer took the whole outbox down while the service
+// went on reporting healthy - a background loop cannot fail loudly on its
+// own, so the failure has to happen at startup instead.
+builder.Host.UseDefaultServiceProvider(options =>
+{
+    options.ValidateOnBuild = true;
+    options.ValidateScopes = true;
+});
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
 builder.Logging.ClearProviders();
