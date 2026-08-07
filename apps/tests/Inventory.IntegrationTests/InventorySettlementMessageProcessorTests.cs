@@ -30,6 +30,7 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
 
         var services = new ServiceCollection();
         services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddScoped<WarehouseAllocationStore>();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -38,6 +39,14 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
         var item = InventoryItem.Create("SKU-TEST-001", 10, DateTimeOffset.UtcNow);
         item.TryReserve(4, DateTimeOffset.UtcNow);
         dbContext.InventoryItems.Add(item);
+        // See InventoryReservationMessageProcessorTests for why this is
+        // needed: CommitAndReleaseReuseTheSameReservationIdWithoutInboxCollision
+        // exercises the reserve path too, which since Milestone 72 refuses
+        // outright when there is no warehouse network to allocate from.
+        // The 6 available here mirrors the item's own Available after the
+        // 4 already reserved above - aggregate and network start in
+        // agreement, same as the M72 seed migration keeps them on deploy.
+        dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-TEST-001", "WH-TEST", 6, reorderPoint: 0, DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync();
     }
 

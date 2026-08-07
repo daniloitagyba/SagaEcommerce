@@ -33,6 +33,18 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 - [Milestone 43: Extending the Orchestrated Saga to 4 Steps with Compensation](saga/milestone-43-saga-compensation.md)
 - [Milestone 56: TLA+ Formal Verification of the 4-Step Saga](saga/milestone-56-tla-plus-saga-verification.md)
 
+## domain
+
+- [Milestone 66: Real Line Items, a Pricing Rules Engine, and Scored Payment Risk](domain/milestone-66-line-items-pricing-and-risk.md)
+- [Milestone 67: Coupons That Can Actually Run Out](domain/milestone-67-coupon-lifecycle.md)
+- [Milestone 68: Authorize, Then Capture](domain/milestone-68-authorize-capture.md)
+- [Milestone 69: The Order's Life Does Not End at Confirmed](domain/milestone-69-order-lifecycle.md)
+- [Milestone 70: Returns, Partial Refunds, and a Money Bug in Shipped Code](domain/milestone-70-returns-and-refunds.md)
+- [Milestone 71: The Customer Stops Being a String](domain/milestone-71-customers-tiers-and-geography.md)
+- [Milestone 72: Stock Lives in Buildings](domain/milestone-72-multi-warehouse-allocation.md)
+- [Milestone 73: Closing the Gaps the Plan Left Open](domain/milestone-73-closing-the-plan-gaps.md)
+- [Milestone 74: Waiting Is a State, Not a Cancellation](domain/milestone-74-backorders.md)
+
 ## cqrs
 
 - [Milestone 13: CQRS Read Projections](cqrs/milestone-13-read-projections.md)

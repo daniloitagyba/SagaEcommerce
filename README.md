@@ -10,6 +10,7 @@ Seven .NET services (`Orders.Api`/`Orders.Worker`, `Payments.Service`, `Catalog.
 
 ## What it demonstrates
 
+- **A real e-commerce domain** — orders with line items priced server-side against the live catalog (the client never states a price), promotions composed by a rules engine (NRules), cent-exact discount allocation across lines (NodaMoney), coupons with validity windows and redemption limits enforced atomically under concurrent checkout, payment decisions scored from customer history rather than a fixed amount threshold, a real authorize-then-capture money flow where the method (Card vs Pix) decides whether a hold is placed at all, an order lifecycle driven by an explicit transition table through picking, shipping and delivery, partial returns whose refunds come out of what was actually charged rather than the list price, loyalty tiers derived from lifetime spend that stack with the other promotions, stock spread across warehouses with a property-tested allocation policy that splits an order only when no single building can fill it, three payment methods whose differences the domain actually respects - a card hold, an instant Pix, and a boleto that waits unpaid - and orders that wait on a backorder queue instead of cancelling outright when the network is momentarily short, released in strict arrival order as restocks land. See [`docs/domain/milestone-66-line-items-pricing-and-risk.md`](docs/domain/milestone-66-line-items-pricing-and-risk.md).
 - **Delivery guarantees** — transactional Outbox + Inbox for idempotent, at-least-once Kafka processing; a durable event log.
 - **Sagas** — both choreographed (`Payments.Service` reacting autonomously) and orchestrated (an explicit 4-step saga — reserve inventory, decide payment, commit or *compensate* by releasing the reservation) side by side, for comparison.
 - **Polyglot persistence** — PostgreSQL for transactional state, MongoDB for heterogeneous catalog documents, Redis as an actual system of record for carts (not just a cache).
@@ -17,6 +18,7 @@ Seven .NET services (`Orders.Api`/`Orders.Worker`, `Payments.Service`, `Catalog.
 - **Distributed concurrency without a database lock** — Kafka partition-key ownership serializes per-SKU stock reservations; a leader election keeps a scheduled sweeper single-flighted across replicas.
 - **CQRS, event sourcing, schema evolution, CDC** — a denormalized read model, an append-only event store, Avro + Schema Registry, and Debezium change-data-capture.
 - **Formal & simulation verification** — a TLA+ model proving the saga can't resurrect a completed order, cross-checked against thousands of seeded deterministic-simulation runs of the real code.
+- **Property-based testing** — pricing invariants (the total is never negative, per-line discount shares sum to exactly the order discount, a coupon never costs the shopper more) checked by CsCheck against 10,000 generated orders each, with shrinking to a minimal counterexample — and confirmed to actually fail when the logic is broken.
 - **Quality & security guardrails in CI** — async/threading analyzers, cyclomatic complexity and module-size limits, secrets/CVE scanning, mutation testing, and coverage gates, each calibrated against a real measurement, not a guess. N+1 query detection (an EF Core interceptor) and memory-leak heap-growth checks (a k6 soak against live Prometheus heap metrics) run at the runtime/manual level, not as CI gates — see [`docs/cicd/milestone-59-quality-security-guardrails.md`](docs/cicd/milestone-59-quality-security-guardrails.md).
 - **Autoscaling** — CPU-based HPA and Kafka-lag-based KEDA scaling, load tested and measured, not asserted.
 - **GitOps & progressive delivery** — Argo CD reconciling from `main`, Argo Rollouts canaries gated by a Prometheus analysis template, with an actual proven automatic rollback.
@@ -46,11 +48,45 @@ Then get a token and create an order:
 ```bash
 TOKEN=$(../scripts/keycloak-get-token.sh)
 
+# Checkout: the server prices the line items against the live catalog and
+# applies whatever promotions match - the request never states a price.
+curl --request POST http://127.0.0.1:8088/orders \
+  --header "Authorization: Bearer $TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "customerId": "customer-42",
+    "items": [{"sku": "SKU-BOOK-001", "quantity": 2}, {"sku": "SKU-ELEC-001", "quantity": 1}],
+    "couponCode": "SAVE10"
+  }'
+
+# The amount-only shape from Milestone 7 still works (expand/contract - see
+# docs/domain/milestone-66-line-items-pricing-and-risk.md). It creates an
+# order with no line items and no pricing breakdown.
 curl --request POST http://127.0.0.1:8088/orders \
   --header "Authorization: Bearer $TOKEN" \
   --header 'Content-Type: application/json' \
   --data '{"customerId":"customer-42","amount":49.90,"currency":"BRL"}'
 ```
+
+The checkout response carries the breakdown - subtotal, each promotion that
+fired, shipping, tax, and every line's prorated share of the discount:
+
+```jsonc
+{
+  "amount": 3816.73,
+  "pricing": {
+    "subtotal": 4479.70,
+    "discountTotal": 662.97,   // SAVE10 (10%) + 5% off electronics, stacked
+    "shippingTotal": 0,        // free above 200.00
+    "lines": [ /* per-line unitPrice, lineDiscount, lineTotal */ ]
+  }
+}
+```
+
+Seeded coupons: `SAVE10` (unlimited), `SAVE20` (min. 200,00, 5 per customer) and
+`HALFOFF` (50% off, min. 100,00, capped at 100 total and **1 per customer**).
+Coupons have validity windows and redemption limits, and a rejected one says
+why — see [`docs/domain/milestone-67-coupon-lifecycle.md`](docs/domain/milestone-67-coupon-lifecycle.md).
 
 - Kafka UI: `http://127.0.0.1:8080`
 - Grafana: `http://127.0.0.1:3000`

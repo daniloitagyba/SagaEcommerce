@@ -9,11 +9,19 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
 {
     public DbSet<InventoryItem> InventoryItems => Set<InventoryItem>();
 
+    public DbSet<WarehouseStock> WarehouseStocks => Set<WarehouseStock>();
+
+    public DbSet<ReservationAllocation> ReservationAllocations => Set<ReservationAllocation>();
+
+    public DbSet<Backorder> Backorders => Set<Backorder>();
+
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureInventoryItem(modelBuilder);
+        ConfigureWarehouseStock(modelBuilder);
+        ConfigureBackorder(modelBuilder);
         ConfigureOutbox(modelBuilder);
         ConfigureInbox(modelBuilder);
     }
@@ -28,6 +36,52 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
         item.Property(entity => entity.AvailableQuantity).HasColumnName("available_quantity").IsRequired();
         item.Property(entity => entity.ReservedQuantity).HasColumnName("reserved_quantity").IsRequired();
         item.Property(entity => entity.UpdatedAt).HasColumnName("updated_at").IsRequired();
+    }
+
+    private static void ConfigureWarehouseStock(ModelBuilder modelBuilder)
+    {
+        var stock = modelBuilder.Entity<WarehouseStock>();
+
+        stock.ToTable("warehouse_stock");
+        stock.HasKey(entity => new { entity.Sku, entity.WarehouseCode });
+        stock.Property(entity => entity.Sku).HasColumnName("sku").HasMaxLength(64);
+        stock.Property(entity => entity.WarehouseCode).HasColumnName("warehouse_code").HasMaxLength(16);
+        stock.Property(entity => entity.AvailableQuantity).HasColumnName("available_quantity").IsRequired();
+        stock.Property(entity => entity.ReservedQuantity).HasColumnName("reserved_quantity").IsRequired();
+        stock.Property(entity => entity.ReorderPoint).HasColumnName("reorder_point").IsRequired();
+        stock.Property(entity => entity.UpdatedAt).HasColumnName("updated_at").IsRequired();
+
+        var allocation = modelBuilder.Entity<ReservationAllocation>();
+
+        allocation.ToTable("reservation_allocations");
+        allocation.HasKey(entity => entity.Id);
+        allocation.Property(entity => entity.Id).HasColumnName("id").ValueGeneratedNever();
+        allocation.Property(entity => entity.ReservationId).HasColumnName("reservation_id").IsRequired();
+        allocation.Property(entity => entity.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();
+        allocation.Property(entity => entity.WarehouseCode).HasColumnName("warehouse_code").HasMaxLength(16).IsRequired();
+        allocation.Property(entity => entity.Quantity).HasColumnName("quantity").IsRequired();
+        allocation.Property(entity => entity.AllocatedAt).HasColumnName("allocated_at").IsRequired();
+        // Commit and release look the allocation up by reservation - without
+        // this they would scan, on the saga's hot path.
+        allocation.HasIndex(entity => entity.ReservationId).HasDatabaseName("ix_reservation_allocations_reservation");
+    }
+
+    private static void ConfigureBackorder(ModelBuilder modelBuilder)
+    {
+        var backorder = modelBuilder.Entity<Backorder>();
+
+        backorder.ToTable("backorders");
+        backorder.HasKey(entity => entity.ReservationId);
+        backorder.Property(entity => entity.ReservationId).HasColumnName("reservation_id").ValueGeneratedNever();
+        backorder.Property(entity => entity.OrderId).HasColumnName("order_id").IsRequired();
+        backorder.Property(entity => entity.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();
+        backorder.Property(entity => entity.Quantity).HasColumnName("quantity").IsRequired();
+        backorder.Property(entity => entity.CorrelationId).HasColumnName("correlation_id").HasMaxLength(128).IsRequired();
+        backorder.Property(entity => entity.RequestedAt).HasColumnName("requested_at").IsRequired();
+        // The release path's whole query shape: oldest-first per SKU. Without
+        // this it is a sequential scan every time a restock lands.
+        backorder.HasIndex(entity => new { entity.Sku, entity.RequestedAt })
+            .HasDatabaseName("ix_backorders_sku_requested_at");
     }
 
     private static void ConfigureOutbox(ModelBuilder modelBuilder)

@@ -30,12 +30,20 @@ public sealed class InventoryReservationMessageProcessorTests : IAsyncLifetime
 
         var services = new ServiceCollection();
         services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddScoped<WarehouseAllocationStore>();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
         await dbContext.Database.MigrateAsync();
         dbContext.InventoryItems.Add(InventoryItem.Create("SKU-TEST-001", 10, DateTimeOffset.UtcNow));
+        // Milestone 72 made the allocator (not just the aggregate row) the
+        // thing that decides whether a reservation is fulfillable - a SKU
+        // with no warehouse_stock rows at all is an empty candidate list,
+        // which StockAllocator.Allocate always refuses. The aggregate row
+        // above and the network below have to agree on how much exists,
+        // same invariant the M72 seed migration keeps on the real database.
+        dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-TEST-001", "WH-TEST", 10, reorderPoint: 0, DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync();
     }
 

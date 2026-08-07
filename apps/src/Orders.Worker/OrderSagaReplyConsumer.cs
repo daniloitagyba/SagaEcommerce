@@ -105,6 +105,22 @@ public sealed class OrderSagaReplyConsumer(
 
         if (!reply.Reserved)
         {
+            if (reply.Backordered)
+            {
+                // Milestone 74: wait, don't give up. The saga row is left
+                // exactly where it is - still parked at ReserveInventory -
+                // so the eventual success reply from a backorder release
+                // (same reservationId, Reserved: true) advances it through
+                // TryAdvanceAsync below with no further changes needed here.
+                // Nothing has been charged yet: payment is decided one step
+                // later than this, so there is no hold to release either.
+                await orderStatusStore.TryTransitionAsync(
+                    reply.OrderId, OrderStatuses.Backordered, reply.CorrelationId, cancellationToken);
+                await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
+                SagaOrchestratorLog.Backordered(logger, reply.OrderId, reply.Sku, reply.CorrelationId);
+                return;
+            }
+
             var completed = await store.TryCompleteAsync(reply.OrderId, SagaStep.ReserveInventory, cancellationToken);
             if (completed is null)
             {
@@ -114,7 +130,7 @@ public sealed class OrderSagaReplyConsumer(
 
             var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
             SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, "RejectedInsufficientStock", latencyMs, completed.CorrelationId);
-            await orderStatusStore.TryCancelAsync(reply.OrderId, cancellationToken);
+            await orderStatusStore.TryCancelAsync(reply.OrderId, completed.CorrelationId, cancellationToken);
             await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
             return;
         }
@@ -129,7 +145,15 @@ public sealed class OrderSagaReplyConsumer(
 
         SagaOrchestratorLog.Advanced(logger, reply.OrderId, SagaStep.DecidePayment, advanced.CorrelationId);
 
-        var request = new PaymentDecisionRequested(reply.OrderId, advanced.Amount, advanced.Currency, advanced.CorrelationId, now);
+        var request = new PaymentDecisionRequested(
+            reply.OrderId,
+            advanced.Amount,
+            advanced.Currency,
+            advanced.CorrelationId,
+            now,
+            advanced.CustomerId,
+            advanced.PaymentMethod,
+            advanced.ShippingPostalPrefix);
         await PublishNextStepAsync(_options.DecisionRequestedTopic, reply.OrderId.ToString("N"), request, reply.OrderId, cancellationToken);
     }
 
@@ -194,10 +218,23 @@ public sealed class OrderSagaReplyConsumer(
         SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, outcome, latencyMs, completed.CorrelationId);
 
         // Payment was already approved by the time the saga reaches this
-        // step - a failed inventory commit is a fulfillment anomaly to
-        // flag (see the "ButCommitFailed" outcome above), not a reason to
-        // leave the order stuck at Created, so both branches confirm.
-        await orderStatusStore.TryConfirmAsync(reply.OrderId, cancellationToken);
+        // step, so the order is genuinely confirmed either way - a failed
+        // inventory commit is not a reason to leave it stuck at Created.
+        await orderStatusStore.TryConfirmAsync(reply.OrderId, completed.CorrelationId, cancellationToken);
+
+        if (!reply.Committed)
+        {
+            // Milestone 69: the ConfirmedButCommitFailed outcome above has
+            // been logged since Milestone 43 with nowhere to live - the
+            // order looked identical to a healthy one in every query and
+            // dashboard. It now moves to FulfillmentHold: the customer is
+            // owed something, but the stock it depends on was never
+            // actually deducted, so a human has to resolve it before this
+            // can be picked.
+            await orderStatusStore.TryTransitionAsync(
+                reply.OrderId, OrderStatuses.FulfillmentHold, completed.CorrelationId, cancellationToken);
+        }
+
         await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
 
         if (reply.Committed)
@@ -240,7 +277,7 @@ public sealed class OrderSagaReplyConsumer(
         var outcome = reply.Released ? "RejectedPaymentDeclined" : "RejectedPaymentDeclinedButReleaseFailed";
         var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
         SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, outcome, latencyMs, completed.CorrelationId);
-        await orderStatusStore.TryCancelAsync(reply.OrderId, cancellationToken);
+        await orderStatusStore.TryCancelAsync(reply.OrderId, completed.CorrelationId, cancellationToken);
         await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
     }
 
