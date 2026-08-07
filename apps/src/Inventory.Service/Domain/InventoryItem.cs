@@ -65,6 +65,26 @@ public sealed class InventoryItem
     }
 
     /// <summary>
+    /// Milestone 70: puts returned units back on the shelf.
+    ///
+    /// Distinct from TryRelease, which hands back stock that was only ever
+    /// <em>held</em> - a reservation that never became a sale. A return is
+    /// the opposite: the sale happened, the reservation was committed and
+    /// the stock left inventory entirely, so there is no ReservedQuantity
+    /// to draw down. This is a pure increment, and it cannot fail.
+    /// </summary>
+    public void Restock(int quantity, DateTimeOffset now)
+    {
+        if (quantity <= 0)
+        {
+            return;
+        }
+
+        AvailableQuantity += quantity;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
     /// The saga's compensating transaction: gives held stock back to
     /// Available. Called when a step downstream of the original reservation
     /// (payment, in this lab) fails - the reservation itself was never the
