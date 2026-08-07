@@ -47,7 +47,7 @@ public static class OrderStatuses
     /// <summary>Dispatched - and the point where a card authorization is actually captured.</summary>
     public const string Shipped = "Shipped";
 
-    /// <summary>Terminal success.</summary>
+    /// <summary>The happy path's endpoint - not terminal, since a delivered order can still be returned.</summary>
     public const string Delivered = "Delivered";
 
     /// <summary>Terminal failure. Any card hold still outstanding is voided on the way here.</summary>

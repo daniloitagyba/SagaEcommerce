@@ -48,7 +48,6 @@ public sealed class Payment
     /// </summary>
     public string ShippingPostalPrefix { get; private set; } = string.Empty;
 
-    /// <summary>Milestone 68: see PaymentStates.</summary>
     public string State { get; private set; } = string.Empty;
 
     /// <summary>
