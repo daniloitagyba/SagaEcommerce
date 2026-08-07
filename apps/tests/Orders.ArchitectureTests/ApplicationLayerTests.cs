@@ -58,6 +58,37 @@ public class ApplicationLayerTests
         Assert.True(result.IsSuccessful, Describe(result));
     }
 
+    // Interface Segregation guardrail: a port growing past this is a port
+    // that has stopped being one job for one consumer. 8 leaves real room
+    // over today's largest (IOrderCache, 3 members) while still catching a
+    // future port creeping into a god-interface no single adapter should
+    // have to implement whole.
+    private const int MaximumPortMembers = 8;
+
+    [Fact]
+    public void PortInterfacesStayFocused()
+    {
+        var ports = Types.InAssembly(ApplicationAssembly)
+            .That()
+            .ResideInNamespace("Orders.Application.Ports")
+            .And()
+            .AreInterfaces()
+            .GetTypes()
+            .ToList();
+
+        // Guards the rule below from passing trivially if every port were moved out of the namespace.
+        Assert.NotEmpty(ports);
+
+        var oversized = ports
+            .Where(port => port.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly).Length > MaximumPortMembers)
+            .Select(port => port.Name)
+            .ToList();
+
+        Assert.True(
+            oversized.Count == 0,
+            $"Port(s) exceed the {MaximumPortMembers}-member budget: {string.Join(", ", oversized)}. Split into narrower, consumer-specific interfaces.");
+    }
+
     [Theory]
     [InlineData(typeof(IOrderRepository))]
     [InlineData(typeof(IOrderCache))]

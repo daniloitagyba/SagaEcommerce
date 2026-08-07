@@ -75,6 +75,25 @@ jobs:
           fi
           echo "No source file exceeds 500 lines."
 
+      - name: no swallowed exceptions (empty catch blocks)
+        run: |
+          # An empty catch block is a failure the codebase chose to make
+          # invisible rather than handle - every real catch here logs,
+          # rethrows, or returns a fallback value; this keeps it that way.
+          # Plain Python regex over file text rather than grep -P, so this
+          # doesn't depend on the runner's grep build supporting PCRE.
+          python3 -c '
+          import re, sys, glob
+          pattern = re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}")
+          files = [f for f in glob.glob("apps/src/**/*.cs", recursive=True) if "/obj/" not in f and "/bin/" not in f]
+          offenders = [f for f in files if pattern.search(open(f, encoding="utf-8", errors="ignore").read())]
+          if offenders:
+              print("Empty catch block(s) found - handle, log, or rethrow instead of swallowing:")
+              print("\n".join(offenders))
+              sys.exit(1)
+          print("No empty catch blocks.")
+          '
+
   test:
     name: build and test
     runs-on: ubuntu-latest
