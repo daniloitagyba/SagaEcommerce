@@ -68,7 +68,10 @@ public static class ProxyEndpoints
         await WriteResponseAsync(request.HttpContext, response, cancellationToken);
     }
 
-    private static async Task WriteResponseAsync(HttpContext context, HttpResponseMessage response, CancellationToken cancellationToken)
+    // Not private: StorefrontEndpoints.CheckoutAsync reuses this to relay
+    // Orders.Api's response (success or validation/infra failure) verbatim,
+    // the same way every route in this file does.
+    internal static async Task WriteResponseAsync(HttpContext context, HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var responseBody = await response.Content.ReadAsByteArrayAsync(cancellationToken);
 

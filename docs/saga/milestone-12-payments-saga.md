@@ -7,7 +7,7 @@ This milestone adds a second, independently deployed service — **Payments.Serv
 Flow:
 
 1. `POST /orders` (Orders.Api) commits the order and an `OrderCreated` Outbox row in one PostgreSQL transaction, exactly as before. The order's initial status remains `Created`.
-2. Payments.Service consumes `orders.created.v1` on its own consumer group (`payments-service`), decides **approve or decline** using a deterministic rule (amount ≤ `PaymentDecision:DeclineAmountThreshold`, default 1,000), and commits a `Payment` row + a `PaymentDecided` Outbox row in one transaction against its **own** `payments` database — the same Inbox/Outbox pattern as Orders.Api, just owned by a different service and a different schema.
+2. Payments.Service consumes `orders.created.v1` on its own consumer group (`payments-service`), decides **approve or decline** using a deterministic rule (amount ≤ `PaymentDecision:DeclineAmountThreshold`, default 1,000 - *replaced in Milestone 66 by a scored risk policy over the customer's own history*), and commits a `Payment` row + a `PaymentDecided` Outbox row in one transaction against its **own** `payments` database — the same Inbox/Outbox pattern as Orders.Api, just owned by a different service and a different schema.
 3. Payments.Service's own Outbox publisher publishes `PaymentDecided` to `payments.result.v1`.
 4. A new consumer inside **Orders.Worker** (`PaymentResultConsumer`, its own consumer group `orders-worker-payments-result`) consumes that event and transitions the order: `Created → Confirmed` on approval, `Created → Cancelled` on decline — the compensating action for this saga, since with only two services there's nothing external left to unwind. It then invalidates the Redis cache entry (M9's mechanism, reused as-is).
 

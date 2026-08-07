@@ -7,6 +7,13 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
+  <!-- Milestone 66: CheckoutEndpointTests exercises StorefrontEndpoints.CheckoutAsync
+       directly, which takes an HttpContext - needs the ASP.NET Core shared
+       framework even though this is a plain Microsoft.NET.Sdk test project. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

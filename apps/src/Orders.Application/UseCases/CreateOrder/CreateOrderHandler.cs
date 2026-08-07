@@ -12,6 +12,7 @@ public sealed class CreateOrderHandler(
     IOrderRepository repository,
     IIdempotencyStore idempotencyStore,
     IFeatureManager featureManager,
+    OrderPricingService pricingService,
     ILogger<CreateOrderHandler> logger)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -24,10 +25,23 @@ public sealed class CreateOrderHandler(
             return new CreateOrderResult(null, Guid.Empty, errors);
         }
 
+        // Pricing happens before the idempotency gate so a replayed request
+        // never re-prices: the second call returns the order exactly as it
+        // was charged the first time, even if a campaign ended in between.
+        PricedCheckout? checkout = null;
+        if (command.IsLineItemCheckout)
+        {
+            (checkout, var pricingErrors) = await pricingService.PriceAsync(command, cancellationToken);
+            if (pricingErrors.Count > 0)
+            {
+                return new CreateOrderResult(null, Guid.Empty, pricingErrors);
+            }
+        }
+
         var idempotencyEnabled = await featureManager.IsEnabledAsync(FeatureFlags.IdempotencyKey);
         if (!idempotencyEnabled || string.IsNullOrWhiteSpace(command.IdempotencyKey))
         {
-            var (order, eventId) = await CreateAndPersistAsync(command, cancellationToken);
+            var (order, eventId) = await CreateAndPersistAsync(command, checkout, cancellationToken);
             return new CreateOrderResult(order, eventId, errors);
         }
 
@@ -36,7 +50,7 @@ public sealed class CreateOrderHandler(
             command.IdempotencyKey,
             async ct =>
             {
-                var (order, eventId) = await CreateAndPersistAsync(command, ct);
+                var (order, eventId) = await CreateAndPersistAsync(command, checkout, ct);
                 createdEventId = eventId;
                 return ToCachedOrder(order);
             },
@@ -60,12 +74,29 @@ public sealed class CreateOrderHandler(
 
     private async Task<(Order Order, Guid EventId)> CreateAndPersistAsync(
         CreateOrderCommand command,
+        PricedCheckout? checkout,
         CancellationToken cancellationToken)
     {
         var customerId = CreateOrderCommandValidator.NormalizeCustomerId(command.CustomerId!);
-        var currency = CreateOrderCommandValidator.NormalizeCurrency(command.Currency!);
         var createdAt = DateTimeOffset.UtcNow;
-        var order = Order.Create(customerId, command.Amount, currency, createdAt);
+
+        var order = checkout is null
+            ? Order.Create(
+                customerId,
+                command.Amount,
+                CreateOrderCommandValidator.NormalizeCurrency(command.Currency!),
+                createdAt)
+            : Order.CreateWithLines(
+                customerId,
+                checkout.Currency,
+                createdAt,
+                command.CouponCode?.Trim().ToUpperInvariant(),
+                checkout.Lines,
+                checkout.Breakdown.DiscountTotal.Amount,
+                checkout.Breakdown.ShippingTotal.Amount,
+                checkout.Breakdown.TaxTotal.Amount,
+                command.PaymentMethod ?? PaymentMethods.Pix,
+                command.ShippingAddress);
 
         var orderCreated = new OrderCreated(
             Guid.NewGuid(),
@@ -74,7 +105,15 @@ public sealed class CreateOrderHandler(
             order.Amount,
             order.Currency,
             order.CreatedAt,
-            command.CorrelationId);
+            command.CorrelationId,
+            [.. order.Lines.Select(line => new OrderCreatedLine(
+                line.Sku,
+                line.ProductName,
+                line.Quantity,
+                line.UnitPrice,
+                line.LineTotal))],
+            PaymentMethod: order.PaymentMethod,
+            ShippingPostalPrefix: order.ShippingAddress?.PostalPrefix ?? string.Empty);
         var outboxMessage = OutboxMessage.Create(
             orderCreated.EventId,
             nameof(OrderCreated),
@@ -89,7 +128,14 @@ public sealed class CreateOrderHandler(
         Activity.Current?.SetTag("messaging.message.id", orderCreated.EventId);
         Activity.Current?.SetTag("service.instance.id", command.InstanceId);
 
-        await repository.AddAsync(order, outboxMessage, cancellationToken);
+        // Milestone 67: the coupon's redemption slot is claimed in the same
+        // transaction as the order itself - see CouponReservation for why
+        // it cannot be a separate call.
+        var couponReservation = checkout?.CouponCode is { } couponCode
+            ? new CouponReservation(couponCode, order.Id, order.CustomerId, createdAt)
+            : null;
+
+        await repository.AddAsync(order, outboxMessage, couponReservation, cancellationToken);
 
         OrdersTelemetry.RecordCreated(order.Currency);
         CreateOrderLog.OrderAccepted(

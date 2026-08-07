@@ -2,6 +2,11 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Grpc.AspNetCore" />
+    <!-- Milestone 66: checkout calls Catalog.Service synchronously to price
+         line items, so this service now needs the standard HTTP resilience
+         handler (timeout, retry, circuit breaker) that Orders.Worker and
+         Cart.Service already use for the same client. -->
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
   </ItemGroup>
   <ItemGroup>
     <Protobuf Include="Protos\order_query.proto" GrpcServices="Server" />

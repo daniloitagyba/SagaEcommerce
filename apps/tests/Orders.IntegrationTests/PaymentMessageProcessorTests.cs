@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Payments.Service;
 using Payments.Service.Data;
+using Payments.Service.Risk;
 using Testcontainers.PostgreSql;
 using Testcontainers.Redpanda;
 
@@ -45,6 +46,10 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
 
         var services = new ServiceCollection();
         services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        // Milestone 66: the processor resolves the risk evaluator per
+        // message from its own scope, so it has to be registered here too.
+        services.Configure<PaymentRiskOptions>(_ => { });
+        services.AddScoped<PaymentRiskEvaluator>();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -63,12 +68,18 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
         _schemaRegistryClient.Dispose();
     }
 
+    // Milestone 66 replaced the bare amount threshold with a scored risk
+    // policy, and these two cases land the same way for a better reason:
+    // 49.90 from an unseen customer scores FIRST_PURCHASE(20), under the
+    // 60 decline threshold; 5000.00 scores HIGH_VALUE(50) +
+    // FIRST_PURCHASE(20) = 70, over it. The outcome is unchanged, so this
+    // still guards the same behaviour it always did.
     [Theory]
     [InlineData(49.90, true)]
     [InlineData(5000.00, false)]
-    public async Task ProcessAsyncDecidesBasedOnAmountThreshold(decimal amount, bool expectedApproved)
+    public async Task ProcessAsyncDecidesBasedOnRiskScore(decimal amount, bool expectedApproved)
     {
-        var processor = CreateProcessor(declineAmountThreshold: 1_000m);
+        var processor = CreateProcessor();
         var consumeResult = await CreateConsumeResultAsync(Guid.NewGuid(), Guid.NewGuid(), amount);
 
         var result = await processor.ProcessAsync(consumeResult, CancellationToken.None);
@@ -87,7 +98,7 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task ProcessAsyncSkipsDuplicateEvents()
     {
-        var processor = CreateProcessor(declineAmountThreshold: 1_000m);
+        var processor = CreateProcessor();
         var eventId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
 
@@ -102,15 +113,13 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
         Assert.Equal(1, await dbContext.Payments.CountAsync());
     }
 
-    private PaymentMessageProcessor CreateProcessor(decimal declineAmountThreshold)
+    private PaymentMessageProcessor CreateProcessor()
     {
-        var kafkaOptions = Options.Create(new PaymentsKafkaOptions());
-        var decisionOptions = Options.Create(new PaymentDecisionOptions { DeclineAmountThreshold = declineAmountThreshold });
         return new PaymentMessageProcessor(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _schemaRegistryClient,
-            kafkaOptions,
-            decisionOptions,
+            Options.Create(new PaymentsKafkaOptions()),
+            Options.Create(new PaymentRiskOptions()),
             NullLogger<PaymentMessageProcessor>.Instance);
     }
 

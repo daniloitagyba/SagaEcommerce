@@ -1,4 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!-- Milestone 66: the only dependency Orders.Domain has, and a
+         deliberate one - Money makes percentage discounts and the
+         per-line discount allocation round correctly by construction
+         instead of by review. It is a pure computation library with no
+         I/O, so the domain-purity fitness functions (no EF Core, Npgsql,
+         Kafka, Redis, ASP.NET Core, gRPC) still hold. -->
+    <PackageReference Include="NodaMoney" />
+  </ItemGroup>
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>

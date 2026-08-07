@@ -6,9 +6,25 @@ using Microsoft.Extensions.Options;
 using Payments.Service;
 using Payments.Service.Data;
 using Payments.Service.Messaging;
+using Payments.Service.Risk;
 
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
+
+// Milestone 69: fail loudly at startup instead of silently at runtime.
+//
+// A missing DI registration used to surface only when something first
+// tried to resolve it - and when that something is the outbox dispatcher,
+// the failure is a background loop logging an exception every poll while
+// the service reports healthy and quietly stops publishing every event.
+// ValidateOnBuild turns that into a refusal to start. It is off by default
+// outside Development; the cost is a slower boot, which is the right trade
+// against an outbox that looks fine and delivers nothing.
+builder.Host.UseDefaultServiceProvider(options =>
+{
+    options.ValidateOnBuild = true;
+    options.ValidateScopes = true;
+});
 
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options =>
@@ -42,9 +58,26 @@ builder.Services.AddOptions<OutboxOptions>()
     .Validate(options => options.PollIntervalMilliseconds >= 100, "Outbox poll interval must be at least 100 milliseconds.")
     .Validate(options => options.MaximumRetryDelaySeconds > 0, "Outbox maximum retry delay must be positive.")
     .ValidateOnStart();
-builder.Services.AddOptions<PaymentDecisionOptions>()
-    .Bind(builder.Configuration.GetSection(PaymentDecisionOptions.SectionName))
-    .Validate(options => options.DeclineAmountThreshold > 0, "Decline amount threshold must be positive.")
+// Milestone 66: replaces PaymentDecisionOptions' single amount threshold
+// with a scored risk policy - see PaymentRiskEvaluator.
+builder.Services.AddOptions<PaymentRiskOptions>()
+    .Bind(builder.Configuration.GetSection(PaymentRiskOptions.SectionName))
+    .Validate(options => options.DeclineScoreThreshold > 0, "Decline score threshold must be positive.")
+    .Validate(options => options.HighValueAmount > 0, "High-value amount must be positive.")
+    .Validate(options => options.VelocityWindowMinutes > 0, "Velocity window must be positive.")
+    .Validate(options => options.VelocityOrderThreshold > 0, "Velocity order threshold must be positive.")
+    .Validate(options => options.AtypicalAmountMultiplier > 1m, "Atypical amount multiplier must be greater than one.")
+    .ValidateOnStart();
+builder.Services.AddOptions<PaymentSettlementOptions>()
+    .Bind(builder.Configuration.GetSection(PaymentSettlementOptions.SectionName))
+    .Validate(options => !string.IsNullOrWhiteSpace(options.BootstrapServers), "Kafka bootstrap servers are required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.CaptureRequestedTopic), "Capture-requested topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.VoidRequestedTopic), "Void-requested topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.RefundRequestedTopic), "Refund-requested topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.SettlementRepliedTopic), "Settlement-replied topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.DeadLetterTopic), "Settlement dead-letter topic is required.")
+    .Validate(options => options.ExpirySweepIntervalSeconds > 0, "Expiry sweep interval must be positive.")
+    .Validate(options => options.ExpirySweepBatchSize > 0, "Expiry sweep batch size must be positive.")
     .ValidateOnStart();
 builder.Services.AddOptions<PaymentDecisionRequestOptions>()
     .Bind(builder.Configuration.GetSection(PaymentDecisionRequestOptions.SectionName))
@@ -99,8 +132,12 @@ builder.Services.AddOrdersResilience();
 builder.Services.AddOrdersSchemaRegistry(builder.Configuration);
 builder.Services.AddSingleton<IPaymentEventPublisher, KafkaPaymentEventPublisher>();
 builder.Services.AddSingleton<IPaymentDecisionReplyPublisher, KafkaPaymentDecisionReplyPublisher>();
+builder.Services.AddSingleton<IPaymentSettlementPublisher, KafkaPaymentSettlementPublisher>();
+builder.Services.AddSingleton<IPaymentSettlementDeadLetterPublisher, PaymentSettlementDeadLetterPublisher>();
+builder.Services.AddSingleton<PaymentSettlementProcessor>();
 builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
 builder.Services.AddSingleton<IPaymentDecisionDeadLetterPublisher, PaymentDecisionDeadLetterPublisher>();
+builder.Services.AddScoped<PaymentRiskEvaluator>();
 builder.Services.AddSingleton<PaymentMessageProcessor>();
 builder.Services.AddSingleton<PaymentDecisionRequestProcessor>();
 builder.Services.AddScoped<IOutboxEventDispatcher, PaymentOutboxEventDispatcher>();
@@ -144,6 +181,23 @@ if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
             processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
     });
 }
+
+// Milestone 68: capture/void handling and the expiry sweeper run
+// regardless of Saga:Mode - they follow the order's lifecycle, not the
+// saga style that created it.
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<PaymentSettlementOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<PaymentSettlementProcessor>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IPaymentSettlementDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Payments.Service.PaymentSettlementConsumer");
+    return new KafkaConsumerHost<string>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.CaptureRequestedTopic, options.VoidRequestedTopic, options.RefundRequestedTopic], options.DeadLetterTopic,
+        processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
+});
+builder.Services.AddHostedService<PaymentAuthorizationSweeper>();
 
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Payments"])

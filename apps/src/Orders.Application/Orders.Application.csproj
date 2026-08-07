@@ -1,6 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <PackageReference Include="FluentValidation" />
     <PackageReference Include="Microsoft.FeatureManagement" />
+    <PackageReference Include="NodaMoney" />
+    <!-- Milestone 66: the promotion rules engine lives here, never in
+         Orders.Domain - the domain owns the pricing model and the
+         IPricingEngine contract, this layer owns how the rules are
+         evaluated. Pinned by DomainDoesNotDependOnTheRulesEngine. -->
+    <PackageReference Include="NRules" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Orders.Domain\Orders.Domain.csproj" />

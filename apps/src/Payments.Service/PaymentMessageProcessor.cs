@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Payments.Service.Data;
 using Payments.Service.Domain;
 using Payments.Service.Messaging;
+using Payments.Service.Risk;
 
 namespace Payments.Service;
 
@@ -27,12 +28,12 @@ public sealed class PaymentMessageProcessor(
     IServiceScopeFactory scopeFactory,
     ISchemaRegistryClient schemaRegistryClient,
     IOptions<PaymentsKafkaOptions> kafkaOptions,
-    IOptions<PaymentDecisionOptions> decisionOptions,
+    IOptions<PaymentRiskOptions> riskOptions,
     ILogger<PaymentMessageProcessor> logger)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+    private readonly PaymentRiskOptions _riskOptions = riskOptions.Value;
     private readonly PaymentsKafkaOptions _kafkaOptions = kafkaOptions.Value;
-    private readonly PaymentDecisionOptions _decisionOptions = decisionOptions.Value;
     private readonly AvroDeserializer<GenericRecord> _avroDeserializer = new(schemaRegistryClient);
 
     public async Task<MessageProcessingResult> ProcessAsync(
@@ -88,13 +89,29 @@ public sealed class PaymentMessageProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        var approved = orderCreated.Amount <= _decisionOptions.DeclineAmountThreshold;
-        var payment = Payment.Decide(
+        // Milestone 66: the decision now depends on this customer's own
+        // history, read inside the same transaction that will write this
+        // payment - so a concurrent duplicate cannot observe a
+        // half-committed history and reach a different answer.
+        var riskEvaluator = serviceScope.ServiceProvider.GetRequiredService<PaymentRiskEvaluator>();
+        var assessment = await riskEvaluator.EvaluateAsync(
+            orderCreated.CustomerId,
+            orderCreated.Amount,
+            orderCreated.ShippingPostalPrefix,
+            processedAt,
+            cancellationToken);
+        var approved = assessment.Approved;
+
+        var payment = Payment.Authorize(
             orderCreated.OrderId,
+            orderCreated.CustomerId,
             orderCreated.Amount,
             orderCreated.Currency,
+            orderCreated.PaymentMethod,
+            orderCreated.ShippingPostalPrefix,
             approved,
             processedAt,
+            _riskOptions.SettlementWindowFor(orderCreated.PaymentMethod),
             correlationId);
         var paymentDecided = new PaymentDecided(
             Guid.NewGuid(),
@@ -120,9 +137,10 @@ public sealed class PaymentMessageProcessor(
         await transaction.CommitAsync(cancellationToken);
 
         activity?.SetTag("payment.approved", approved);
+        activity?.SetTag("payment.risk_score", assessment.Score);
         OrdersTelemetry.RecordProcessed("success");
         OrdersTelemetry.RecordPaymentDecided(approved);
-        PaymentsLog.Decided(logger, orderCreated.OrderId, payment.Id, approved, correlationId);
+        PaymentsLog.DecidedWithRisk(logger, orderCreated.OrderId, payment.Id, approved, assessment.Score, assessment.ReasonSummary, correlationId);
         return MessageProcessingResult.Processed;
     }
 
@@ -148,7 +166,12 @@ public sealed class PaymentMessageProcessor(
             throw new InvalidOrderMessageException("The OrderCreated event and order identifiers are required.");
         }
 
-        if (orderCreated.SchemaVersion != 1)
+        // Milestone 66: accept every schema version this consumer can
+        // actually read, not just the newest. Pinning to one exact version
+        // is what turns a backward-compatible schema change into a
+        // rolling-deploy outage - during the rollout both v1 and v2
+        // messages are genuinely on the topic at the same time.
+        if (!OrderCreatedSchemaVersions.IsSupported(orderCreated.SchemaVersion))
         {
             throw new InvalidOrderMessageException($"Unsupported OrderCreated schema version {orderCreated.SchemaVersion}.");
         }
@@ -170,4 +193,7 @@ public sealed partial class PaymentsLog
 
     [LoggerMessage(EventId = 5005, Level = LogLevel.Information, Message = "Skipped duplicate event {EventId} for consumer {ConsumerName}")]
     public static partial void Duplicate(ILogger logger, Guid eventId, string consumerName);
+
+    [LoggerMessage(EventId = 5006, Level = LogLevel.Information, Message = "Decided payment {PaymentId} for order {OrderId}: approved={Approved} riskScore={RiskScore} signals=[{RiskSignals}] with correlation {CorrelationId}")]
+    public static partial void DecidedWithRisk(ILogger logger, Guid orderId, Guid paymentId, bool approved, int riskScore, string riskSignals, string correlationId);
 }

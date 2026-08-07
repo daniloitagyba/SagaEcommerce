@@ -9,6 +9,13 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
+    <!-- Milestone 66: property-based testing for the pricing rules. Every
+         other test in this repo asserts on hand-picked examples; pricing
+         is the first thing here whose interesting failures live in the
+         combinations nobody thinks to write down (two campaigns stacking
+         past 100%, a discount that fails to divide evenly across lines),
+         which is exactly what generated inputs find. -->
+    <PackageReference Include="CsCheck" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
     <!-- Microsoft.EntityFrameworkCore.Sqlite 10.0.4 transitively pulls
          SQLitePCLRaw.lib.e_sqlite3 2.1.11, which NuGet's own vulnerability
@@ -31,6 +38,7 @@
     <ProjectReference Include="..\..\src\Orders.Infrastructure\Orders.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\Orders.Worker\Orders.Worker.csproj" />
     <ProjectReference Include="..\..\src\Payments.Service\Payments.Service.csproj" />
+    <ProjectReference Include="..\..\src\Inventory.Service\Inventory.Service.csproj" />
   </ItemGroup>
 
 </Project>

@@ -3,17 +3,49 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.FeatureManagement;
 using Orders.Application.Ports;
 using Orders.Application.UseCases.CreateOrder;
+using Microsoft.Extensions.Options;
+using Orders.Application.Pricing;
 using Orders.Domain;
 
 namespace Orders.UnitTests;
 
 public sealed class CreateOrderHandlerTests
 {
+    // These tests exercise the amount-only path, which never reaches the
+    // catalog or the coupon table - collaborators that throw if called are
+    // therefore the honest stubs, and would fail loudly if that ever
+    // stopped being true.
+    private static OrderPricingService BuildPricingService() =>
+        new(new ThrowingCatalogClient(),
+            new ThrowingCouponRepository(),
+            new ThrowingCustomerRepository(),
+            new NRulesPricingEngine(Options.Create(new PricingOptions())),
+            TimeProvider.System);
+
+    private sealed class ThrowingCatalogClient : ICatalogClient
+    {
+        public Task<CatalogProductSnapshot?> FindBySkuAsync(string sku, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The amount-only path must not call the catalog.");
+    }
+
+    private sealed class ThrowingCustomerRepository : ICustomerRepository
+    {
+        public Task<Customer> GetOrCreateAsync(string customerId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The amount-only path must not resolve a customer.");
+    }
+
+    private sealed class ThrowingCouponRepository : ICouponRepository
+    {
+        public Task<(CouponSnapshot? Coupon, int CustomerRedemptionCount)> FindAsync(
+            string code, string customerId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The amount-only path must not resolve a coupon.");
+    }
+
     [Fact]
     public async Task HandleAsyncWithoutIdempotencyKeyCreatesANewOrderOnEveryCall()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: true), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: true), BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1");
 
         var first = await handler.HandleAsync(command, CancellationToken.None);
@@ -29,7 +61,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncWithSameIdempotencyKeyReplaysTheFirstResultInsteadOfCreatingAgain()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: true), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: true), BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "retry-key-1");
 
         var first = await handler.HandleAsync(command, CancellationToken.None);
@@ -45,7 +77,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncWithDifferentIdempotencyKeysCreatesIndependentOrders()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: true), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: true), BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
 
         var first = await handler.HandleAsync(
             new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "key-a"),
@@ -62,7 +94,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncIgnoresTheIdempotencyKeyWhenTheFeatureFlagIsDisabled()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: false), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: false), BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "retry-key-1");
 
         var first = await handler.HandleAsync(command, CancellationToken.None);
@@ -80,10 +112,21 @@ public sealed class CreateOrderHandlerTests
 
         public int AddCallCount { get; private set; }
 
-        public Task AddAsync(Order order, OutboxMessage outboxMessage, CancellationToken cancellationToken)
+        public List<CouponReservation> CouponReservations { get; } = [];
+
+        public Task AddAsync(
+            Order order,
+            OutboxMessage outboxMessage,
+            CouponReservation? couponReservation,
+            CancellationToken cancellationToken)
         {
             AddCallCount++;
             _orders[order.Id] = order;
+            if (couponReservation is not null)
+            {
+                CouponReservations.Add(couponReservation);
+            }
+
             return Task.CompletedTask;
         }
 

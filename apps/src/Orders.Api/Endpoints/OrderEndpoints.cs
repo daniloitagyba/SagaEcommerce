@@ -32,7 +32,19 @@ public static class OrderEndpoints
         var correlationId = httpContext.GetCorrelationId();
         var instanceId = configuration["InstanceId"] ?? Environment.MachineName;
         var idempotencyKey = httpContext.Request.Headers["Idempotency-Key"].FirstOrDefault();
-        var command = new CreateOrderCommand(request.CustomerId, request.Amount, request.Currency, correlationId, instanceId, idempotencyKey);
+        var command = new CreateOrderCommand(
+            request.CustomerId,
+            request.Amount,
+            request.Currency,
+            correlationId,
+            instanceId,
+            idempotencyKey,
+            request.Items?.Select(item => new CreateOrderItem(item.Sku, item.Quantity)).ToList(),
+            request.CouponCode,
+            request.PaymentMethod,
+            request.ShippingAddress is { } address
+                ? new ShippingAddress(address.Line1 ?? "", address.City ?? "", address.Region ?? "", address.PostalCode ?? "")
+                : null);
 
         CreateOrderResult result;
         try
@@ -42,6 +54,18 @@ public static class OrderEndpoints
         catch (InfrastructureUnavailableException)
         {
             return ServiceUnavailable(httpContext, "PostgreSQL is currently unavailable.");
+        }
+        catch (CouponRedemptionUnavailableException exception)
+        {
+            // Milestone 67: the coupon passed the advisory eligibility check
+            // and then lost the race for the last slot. 409, not 400 -
+            // nothing about the request was wrong, it simply arrived second,
+            // and resubmitting it unchanged would be equally valid and
+            // equally unlucky.
+            return Results.Problem(
+                detail: exception.Message,
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Coupon Unavailable");
         }
 
         if (!result.IsValid)
@@ -116,7 +140,35 @@ public static class OrderEndpoints
             order.Status,
             order.CreatedAt,
             correlationId,
-            instanceId);
+            instanceId,
+            ToPricingResponse(order),
+            order.PaymentMethod);
+    }
+
+    // An amount-only order reports no breakdown at all rather than one full
+    // of zeroes - "this order has no pricing detail" and "this order had
+    // nothing discounted" are different statements.
+    private static OrderPricingResponse? ToPricingResponse(Order order)
+    {
+        if (order.Lines.Count == 0)
+        {
+            return null;
+        }
+
+        return new OrderPricingResponse(
+            order.Subtotal,
+            order.DiscountTotal,
+            order.ShippingTotal,
+            order.TaxTotal,
+            order.CouponCode,
+            [.. order.Lines.Select(line => new OrderLineResponse(
+                line.Sku,
+                line.ProductName,
+                line.Quantity,
+                line.UnitPrice,
+                line.LineSubtotal,
+                line.LineDiscount,
+                line.LineTotal))]);
     }
 
     private static OrderResponse ToResponse(

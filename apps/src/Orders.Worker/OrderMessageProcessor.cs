@@ -103,7 +103,12 @@ public sealed class OrderMessageProcessor(
             throw new InvalidOrderMessageException("The OrderCreated event and order identifiers are required.");
         }
 
-        if (orderCreated.SchemaVersion != 1)
+        // Milestone 66: accept every schema version this consumer can
+        // actually read, not just the newest. Pinning to one exact version
+        // is what turns a backward-compatible schema change into a
+        // rolling-deploy outage - during the rollout both v1 and v2
+        // messages are genuinely on the topic at the same time.
+        if (!OrderCreatedSchemaVersions.IsSupported(orderCreated.SchemaVersion))
         {
             throw new InvalidOrderMessageException($"Unsupported OrderCreated schema version {orderCreated.SchemaVersion}.");
         }

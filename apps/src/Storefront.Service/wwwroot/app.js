@@ -212,26 +212,28 @@ async function renderCart() {
 async function checkout() {
   const checkoutButton = document.getElementById("checkout-button");
   const message = document.getElementById("checkout-message");
+  const couponInput = document.getElementById("coupon-code");
   message.hidden = true;
   message.className = "checkout-message";
 
   checkoutButton.disabled = true;
   try {
-    const cart = await getCart();
-    if (!cart.items.length) {
-      return;
-    }
-
-    const order = await fetchJson("/api/orders", {
+    // The Storefront BFF (not this code) reads the cart and prices it
+    // against the live catalog - see StorefrontEndpoints.CheckoutAsync.
+    // Sending the cart's own total here would be exactly the "trust the
+    // client's price" mistake Milestone 66 set out to remove; this call
+    // carries no price at all, only which cart to check out.
+    const couponCode = couponInput.value.trim() || undefined;
+    const order = await fetchJson("/api/storefront/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customerId, amount: cart.total, currency: cart.currency })
+      body: JSON.stringify({ cartId, customerId, couponCode })
     });
 
-    await fetchJson(`/api/cart/carts/${cartId}`, { method: "DELETE" });
     await renderCart();
+    couponInput.value = "";
 
-    message.textContent = `Pedido ${order.id} criado! Ele passa agora pela saga de checkout (reserva de estoque, decisão de pagamento e confirmação ou compensação).`;
+    message.textContent = describeOrder(order);
     message.className = "checkout-message success";
     message.hidden = false;
   } catch (error) {
@@ -241,6 +243,15 @@ async function checkout() {
   } finally {
     checkoutButton.disabled = false;
   }
+}
+
+function describeOrder(order) {
+  const base = `Pedido ${order.id} criado! Ele passa agora pela saga de checkout (reserva de estoque, decisão de pagamento e confirmação ou compensação).`;
+  if (!order.pricing || !order.pricing.discountTotal) {
+    return base;
+  }
+  const discount = formatCurrency(order.pricing.discountTotal, order.currency);
+  return `${base} Desconto aplicado: ${discount} sobre um subtotal de ${formatCurrency(order.pricing.subtotal, order.currency)}.`;
 }
 
 function setupCartPanel() {

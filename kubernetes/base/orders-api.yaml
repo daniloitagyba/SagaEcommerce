@@ -73,6 +73,12 @@ spec:
               value: http://keycloak:8080/realms/orders-lab
             - name: Redis__ConnectionString
               value: redis:6379
+            # Milestone 66: checkout prices line items against the live
+            # catalog server-side, so orders-api now depends on
+            # catalog-service. CatalogClientOptions defaults to
+            # localhost:5080, which would resolve to the pod itself.
+            - name: Catalog__BaseUrl
+              value: http://catalog-service:8080
             - name: Cache__TimeToLiveSeconds
               value: "30"
             - name: Cache__LockTimeoutMilliseconds
