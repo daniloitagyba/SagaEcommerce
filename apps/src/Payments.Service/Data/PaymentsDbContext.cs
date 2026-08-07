@@ -26,12 +26,29 @@ public sealed class PaymentsDbContext(DbContextOptions<PaymentsDbContext> option
         payment.HasKey(item => item.Id);
         payment.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
         payment.Property(item => item.OrderId).HasColumnName("order_id").IsRequired();
+        payment.Property(item => item.CustomerId).HasColumnName("customer_id").HasMaxLength(100).IsRequired();
         payment.Property(item => item.Amount).HasColumnName("amount").HasPrecision(18, 2).IsRequired();
         payment.Property(item => item.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
         payment.Property(item => item.Approved).HasColumnName("approved").IsRequired();
         payment.Property(item => item.DecidedAt).HasColumnName("decided_at").IsRequired();
         payment.Property(item => item.CorrelationId).HasColumnName("correlation_id").HasMaxLength(128).IsRequired();
+        payment.Property(item => item.Method).HasColumnName("method").HasMaxLength(16).IsRequired();
+        payment.Property(item => item.ShippingPostalPrefix).HasColumnName("shipping_postal_prefix").HasMaxLength(8).IsRequired();
+        payment.Property(item => item.State).HasColumnName("state").HasMaxLength(16).IsRequired();
+        payment.Property(item => item.AuthorizationExpiresAt).HasColumnName("authorization_expires_at");
+        payment.Property(item => item.SettledAt).HasColumnName("settled_at");
+        payment.Property(item => item.SettlementReason).HasColumnName("settlement_reason").HasMaxLength(256);
+        payment.Property(item => item.RefundedAmount).HasColumnName("refunded_amount").HasPrecision(18, 2).IsRequired();
+        // Milestone 68: the expiry sweeper scans exactly this - authorizations
+        // past their window - so it is a hot-path index, not reporting.
+        payment.HasIndex(item => new { item.State, item.AuthorizationExpiresAt })
+            .HasDatabaseName("ix_payments_pending_authorizations");
         payment.HasIndex(item => item.OrderId).HasDatabaseName("ix_payments_order_id");
+        // Milestone 66: the risk rules read a customer's recent history on
+        // every decision, so this index is on the hot path, not a
+        // reporting convenience.
+        payment.HasIndex(item => new { item.CustomerId, item.DecidedAt })
+            .HasDatabaseName("ix_payments_customer_history");
     }
 
     private static void ConfigureOutbox(ModelBuilder modelBuilder)

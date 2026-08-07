@@ -5,7 +5,8 @@ namespace Payments.Service.Messaging;
 
 public sealed class PaymentOutboxEventDispatcher(
     IPaymentEventPublisher paymentEventPublisher,
-    IPaymentDecisionReplyPublisher decisionReplyPublisher) : IOutboxEventDispatcher
+    IPaymentDecisionReplyPublisher decisionReplyPublisher,
+    IPaymentSettlementPublisher settlementPublisher) : IOutboxEventDispatcher
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
@@ -15,6 +16,7 @@ public sealed class PaymentOutboxEventDispatcher(
         {
             nameof(PaymentDecided) => PublishPaymentDecidedAsync(message, cancellationToken),
             nameof(PaymentDecisionReplied) => PublishPaymentDecisionRepliedAsync(message, cancellationToken),
+            nameof(PaymentSettlementReplied) => PublishPaymentSettlementRepliedAsync(message, cancellationToken),
             _ => throw new JsonException($"Unsupported outbox event type '{message.EventType}'.")
         };
     }
@@ -27,6 +29,16 @@ public sealed class PaymentOutboxEventDispatcher(
         await paymentEventPublisher.PublishAsync(paymentDecided, cancellationToken);
 
         return new Dictionary<string, object?> { ["OrderId"] = paymentDecided.OrderId };
+    }
+
+    private async Task<IReadOnlyDictionary<string, object?>> PublishPaymentSettlementRepliedAsync(OutboxMessage message, CancellationToken cancellationToken)
+    {
+        var reply = JsonSerializer.Deserialize<PaymentSettlementReplied>(message.Payload, SerializerOptions)
+            ?? throw new JsonException("The outbox payload did not contain a PaymentSettlementReplied event.");
+
+        await settlementPublisher.PublishAsync(reply, cancellationToken);
+
+        return new Dictionary<string, object?> { ["OrderId"] = reply.OrderId, ["PaymentState"] = reply.State };
     }
 
     private async Task<IReadOnlyDictionary<string, object?>> PublishPaymentDecisionRepliedAsync(OutboxMessage message, CancellationToken cancellationToken)

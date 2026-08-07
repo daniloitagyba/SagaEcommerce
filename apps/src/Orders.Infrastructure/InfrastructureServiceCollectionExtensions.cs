@@ -68,6 +68,30 @@ public static class InfrastructureServiceCollectionExtensions
 
             return new ProducerBuilder<string, byte[]>(config).Build();
         });
+        // Milestone 69: a second producer, keyed string/string.
+        //
+        // OrderCreated is Avro, so the producer above is <string, byte[]>.
+        // The settlement commands the fulfilment API queues are plain JSON,
+        // and Confluent's IProducer is generic over its value type - so
+        // there is no single producer that can carry both. Registering only
+        // one of them compiles perfectly and then fails at runtime the
+        // moment the outbox dispatcher is constructed, which takes the
+        // *whole outbox* down with it, not just the new command.
+        services.AddSingleton<IProducer<string, string>>(serviceProvider =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<KafkaOptions>>().Value;
+            var config = new ProducerConfig
+            {
+                BootstrapServers = options.BootstrapServers,
+                ClientId = $"{options.ClientId}-commands-{instanceId}",
+                Acks = Acks.All,
+                EnableIdempotence = true,
+                MessageTimeoutMs = 10_000,
+                SocketTimeoutMs = 10_000
+            };
+
+            return new ProducerBuilder<string, string>(config).Build();
+        });
         services.AddSingleton<IAdminClient>(serviceProvider =>
         {
             var options = serviceProvider.GetRequiredService<IOptions<KafkaOptions>>().Value;
@@ -79,6 +103,13 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddOrdersRedis(configuration);
 
         services.AddScoped<IOrderRepository, Persistence.EfOrderRepository>();
+        services.AddScoped<ICouponRepository, Persistence.EfCouponRepository>();
+        services.AddScoped<ICustomerRepository, Persistence.EfCustomerRepository>();
+        services.AddScoped<IOrderStatusRepository, Persistence.EfOrderStatusRepository>();
+        services.AddScoped<IOrderReturnRepository, Persistence.EfOrderReturnRepository>();
+        services.Configure<Messaging.PaymentSettlementCommandOptions>(
+            configuration.GetSection(Messaging.PaymentSettlementCommandOptions.SectionName));
+        services.AddSingleton<Messaging.IPaymentSettlementCommandPublisher, Messaging.KafkaPaymentSettlementCommandPublisher>();
         services.AddScoped<IOrderSummaryRepository, Persistence.EfOrderSummaryRepository>();
         services.AddScoped<IOrderEventStoreRepository, Persistence.EfOrderEventStoreRepository>();
         services.AddSingleton<IOrderCache, RedisOrderCache>();

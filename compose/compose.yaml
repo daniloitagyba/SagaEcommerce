@@ -387,12 +387,20 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-requested.dlq.v1 --partitions 1 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.capture-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.void-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.settlement-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.settlement.dlq.v1 --partitions 1 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.refund-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.restock-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.restock-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-commit-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-commit-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-release-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-release-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.replenishment-needed.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation.dlq.v1 --partitions 1 --replication-factor 1 --config retention.ms=86400000
     networks:
       - backend
@@ -607,6 +615,12 @@ services:
       # not k3s-bridge. Override to the Compose-internal DNS name both are
       # already on the same network as.
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
+      # Milestone 66: checkout prices line items server-side against the
+      # catalog, so orders-api now needs to reach it. CatalogClientOptions
+      # defaults to localhost:5080, which resolves inside this container
+      # itself rather than to catalog-service - the same
+      # non-obvious-default trap the Kafka/Redis overrides above cover.
+      Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-1
 
   orders-api-2:
@@ -620,6 +634,7 @@ services:
       SchemaRegistry__Url: http://schema-registry:8081
       Redis__ConnectionString: redis:6379
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
+      Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-2
 
   orders-worker:
@@ -694,6 +709,11 @@ services:
       # localhost:9092-default gap as orders-worker's extra Kafka options
       # classes.
       PaymentDecisionRequest__BootstrapServers: kafka:9092
+      # Milestone 68: PaymentSettlementOptions has its own section and the
+      # same localhost:9092 default - the trap this compose file has now hit
+      # four times.
+      PaymentSettlement__BootstrapServers: kafka:9092
+      PaymentSettlement__ExpirySweepIntervalSeconds: "30"
       # Milestone 65: must match orders-worker's Saga__Mode above - see that
       # comment.
       Saga__Mode: Choreography
