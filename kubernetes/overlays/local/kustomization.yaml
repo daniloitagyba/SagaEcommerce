@@ -6,19 +6,19 @@ resources:
   - infrastructure-endpoints.yaml
   - connectivity-job.yaml
 images:
-  - name: distributed-ecommerce/orders-api
+  - name: saga-ecommerce/orders-api
     newTag: local
-  - name: distributed-ecommerce/orders-worker
+  - name: saga-ecommerce/orders-worker
     newTag: local
-  - name: distributed-ecommerce/payments-service
+  - name: saga-ecommerce/payments-service
     newTag: local
-  - name: distributed-ecommerce/catalog-service
+  - name: saga-ecommerce/catalog-service
     newTag: local
-  - name: distributed-ecommerce/inventory-service
+  - name: saga-ecommerce/inventory-service
     newTag: local
-  - name: distributed-ecommerce/cart-service
+  - name: saga-ecommerce/cart-service
     newTag: local
-  - name: distributed-ecommerce/storefront-service
+  - name: saga-ecommerce/storefront-service
     newTag: local
 patches:
   - target:

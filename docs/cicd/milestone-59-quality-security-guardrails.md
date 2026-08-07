@@ -100,7 +100,7 @@ bash scripts/memory-leak-check.sh orders-api
 docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect --source /repo --config /repo/.gitleaks.toml --redact
 
 # Vulnerable packages
-dotnet list apps/DistributedEcommerce.slnx package --vulnerable --include-transitive
+dotnet list apps/SagaEcommerce.slnx package --vulnerable --include-transitive
 
 # Complexity / module size
 docker run --rm -v "$PWD/apps/src:/src" python:3.12-slim sh -c "pip install --quiet lizard && lizard /src --languages csharp --CCN 20"

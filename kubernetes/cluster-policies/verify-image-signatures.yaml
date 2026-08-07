@@ -10,8 +10,8 @@
 # configuration, not an application manifest Argo CD reconciles.
 #
 # Scope, stated plainly: `imageReferences` below matches
-# `ghcr.io/daniloitagyba/distributed-ecommerce/*` - the CI-published images
-# - not `distributed-ecommerce/*:local`, which is what this lab's own K3s
+# `ghcr.io/daniloitagyba/saga-ecommerce/*` - the CI-published images
+# - not `saga-ecommerce/*:local`, which is what this lab's own K3s
 # overlay actually runs (kubernetes/overlays/local/kustomization.yaml,
 # imagePullPolicy: Never). That's deliberate: the local dev loop
 # (scripts/k3s-build-images.sh) builds and imports images straight into
@@ -22,7 +22,7 @@
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: verify-distributed-ecommerce-image-signatures
+  name: verify-saga-ecommerce-image-signatures
 spec:
   validationFailureAction: Enforce
   background: false
@@ -37,9 +37,9 @@ spec:
       verifyImages:
         - imageReferences:
             # Lowercase - Docker/OCI registry paths must be lowercase even
-            # though the GitHub repo itself is "DistributedEcommerce"
+            # though the GitHub repo itself is "SagaEcommerce"
             # (mixed case); see .github/workflows/ci.yml's IMAGE comment.
-            - "ghcr.io/daniloitagyba/distributed-ecommerce/*"
+            - "ghcr.io/daniloitagyba/saga-ecommerce/*"
           mutateDigest: true
           attestors:
             - count: 1
@@ -48,7 +48,7 @@ spec:
                     # Case-sensitive: this must match the GitHub repository's
                     # actual name exactly as GitHub reports it in the
                     # Actions OIDC token subject, unlike the image path above.
-                    subject: "https://github.com/daniloitagyba/DistributedEcommerce/.github/workflows/ci.yml@refs/heads/main"
+                    subject: "https://github.com/daniloitagyba/SagaEcommerce/.github/workflows/ci.yml@refs/heads/main"
                     issuer: "https://token.actions.githubusercontent.com"
                     rekor:
                       url: https://rekor.sigstore.dev

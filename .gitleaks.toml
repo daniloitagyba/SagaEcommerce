@@ -1,4 +1,4 @@
-title = "DistributedEcommerce gitleaks config"
+title = "SagaEcommerce gitleaks config"
 
 # Use gitleaks' default ruleset (secret patterns, entropy checks, known
 # provider key formats) and only add a narrow allowlist for strings this

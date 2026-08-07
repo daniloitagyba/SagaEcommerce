@@ -39,7 +39,7 @@ Orders.IntegrationTests      23/23
 Catalog.IntegrationTests      7/7  (including the fixed Product/ObjectId round-trip)
 ```
 
-132 tests, 0 failures. `dotnet build DistributedEcommerce.slnx` clean, 0 warnings (`TreatWarningsAsErrors=true`).
+132 tests, 0 failures. `dotnet build SagaEcommerce.slnx` clean, 0 warnings (`TreatWarningsAsErrors=true`).
 
 | Rule | Assertions | Status |
 | --- | --- | --- |

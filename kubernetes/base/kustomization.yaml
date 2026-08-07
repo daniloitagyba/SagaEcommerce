@@ -25,5 +25,5 @@ resources:
   - network-policies.yaml
 labels:
   - pairs:
-      app.kubernetes.io/part-of: distributed-ecommerce
+      app.kubernetes.io/part-of: saga-ecommerce
       app.kubernetes.io/managed-by: kustomize

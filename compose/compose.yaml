@@ -1,16 +1,18 @@
-# Deliberately NOT renamed to "distributed-ecommerce" along with the rest
-# of the project: this is Docker Compose's project name, used to prefix
-# every container/network/volume that doesn't have an explicit name
-# override - including the Postgres/Kafka/MongoDB data volumes already
-# holding this lab's live data. Changing it would make `docker compose`
-# look for differently-labeled containers and volumes than the ones
-# actually running, stranding the existing data behind old labels rather
-# than migrating it. A real rename of this would need a deliberate
-# stop-and-relabel procedure, not a text substitution.
+# Deliberately left as "local-distributed-lab" through both the earlier
+# rename to "distributed-ecommerce" and this one to "saga-ecommerce": this
+# is Docker Compose's project name, used to prefix every container/network/
+# volume that doesn't have an explicit name override - including the
+# Postgres/Kafka/MongoDB data volumes already holding this lab's live data.
+# Changing it would make `docker compose` look for differently-labeled
+# containers and volumes than the ones actually running, stranding the
+# existing data behind old labels rather than migrating it. A real rename
+# of this would need a deliberate stop-and-relabel procedure, not a text
+# substitution - see scripts/verify-compose-network-names.sh, the guard
+# this exact class of drift got a script for last time.
 name: local-distributed-lab
 
 x-api-common: &api-common
-  image: distributed-ecommerce/orders-api:milestone-7
+  image: saga-ecommerce/orders-api:milestone-7
   profiles: ["compose-apps"]
   restart: unless-stopped
   # Note: orders-api-1/orders-api-2 below each redefine their own
@@ -579,7 +581,7 @@ services:
 
   migrations:
     profiles: ["compose-apps"]
-    image: distributed-ecommerce/orders-api:milestone-7
+    image: saga-ecommerce/orders-api:milestone-7
     build:
       context: ..
       dockerfile: apps/src/Orders.Api/Dockerfile
@@ -639,7 +641,7 @@ services:
 
   orders-worker:
     profiles: ["compose-apps"]
-    image: distributed-ecommerce/orders-worker:milestone-7
+    image: saga-ecommerce/orders-worker:milestone-7
     build:
       context: ..
       dockerfile: apps/src/Orders.Worker/Dockerfile
@@ -688,7 +690,7 @@ services:
 
   payments-service:
     profiles: ["compose-apps"]
-    image: distributed-ecommerce/payments-service:milestone-7
+    image: saga-ecommerce/payments-service:milestone-7
     build:
       context: ..
       dockerfile: apps/src/Payments.Service/Dockerfile
@@ -730,7 +732,7 @@ services:
 
   catalog-service:
     profiles: ["compose-apps"]
-    image: distributed-ecommerce/catalog-service:milestone-42-by-sku
+    image: saga-ecommerce/catalog-service:milestone-42-by-sku
     build:
       context: ..
       dockerfile: apps/src/Catalog.Service/Dockerfile
@@ -752,7 +754,7 @@ services:
 
   inventory-service:
     profiles: ["compose-apps"]
-    image: distributed-ecommerce/inventory-service:milestone-41-inventory
+    image: saga-ecommerce/inventory-service:milestone-41-inventory
     build:
       context: ..
       dockerfile: apps/src/Inventory.Service/Dockerfile
@@ -782,7 +784,7 @@ services:
 
   cart-service:
     profiles: ["compose-apps"]
-    image: distributed-ecommerce/cart-service:milestone-42-cart-redis-timeout-fix
+    image: saga-ecommerce/cart-service:milestone-42-cart-redis-timeout-fix
     build:
       context: ..
       dockerfile: apps/src/Cart.Service/Dockerfile
@@ -803,7 +805,7 @@ services:
 
   storefront-service:
     profiles: ["compose-apps"]
-    image: distributed-ecommerce/storefront-service:milestone-45-storefront-token-fix
+    image: saga-ecommerce/storefront-service:milestone-45-storefront-token-fix
     build:
       context: ..
       dockerfile: apps/src/Storefront.Service/Dockerfile

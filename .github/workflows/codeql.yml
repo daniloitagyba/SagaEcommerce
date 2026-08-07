@@ -46,8 +46,8 @@ jobs:
 
       - name: build (CodeQL autobuild can't see multi-project .slnx solutions reliably)
         run: |
-          dotnet restore apps/DistributedEcommerce.slnx
-          dotnet build apps/DistributedEcommerce.slnx --no-restore --configuration Release
+          dotnet restore apps/SagaEcommerce.slnx
+          dotnet build apps/SagaEcommerce.slnx --no-restore --configuration Release
 
       - uses: github/codeql-action/analyze@v3
         with:

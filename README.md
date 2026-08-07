@@ -1,6 +1,6 @@
-# DistributedEcommerce
+# SagaEcommerce
 
-[![ci](https://github.com/daniloitagyba/DistributedEcommerce/actions/workflows/ci.yml/badge.svg)](https://github.com/daniloitagyba/DistributedEcommerce/actions/workflows/ci.yml)
+[![ci](https://github.com/daniloitagyba/SagaEcommerce/actions/workflows/ci.yml/badge.svg)](https://github.com/daniloitagyba/SagaEcommerce/actions/workflows/ci.yml)
 
 ![Architecture overview](docs/images/architecture-dracula.png)
 
@@ -111,9 +111,9 @@ e.g. `docker compose --profile cdc up --detach --wait`.
 
 ```bash
 cd apps
-dotnet restore DistributedEcommerce.slnx
-dotnet build DistributedEcommerce.slnx --no-restore
-dotnet test DistributedEcommerce.slnx --no-build
+dotnet restore SagaEcommerce.slnx
+dotnet build SagaEcommerce.slnx --no-restore
+dotnet test SagaEcommerce.slnx --no-build
 ```
 
 Integration tests spin up real, disposable Postgres/MongoDB/Redis/Kafka containers via Testcontainers — no shared state, no manual setup.

@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: catalog-seed
-          image: distributed-ecommerce/catalog-service:latest
+          image: saga-ecommerce/catalog-service:latest
           imagePullPolicy: IfNotPresent
           # Idempotent (CatalogSeeder no-ops if any category already
           # exists), safe to run on every sync like the migration Jobs.

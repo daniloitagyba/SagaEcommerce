@@ -13,7 +13,7 @@ metadata:
   name: postgres-compose
   labels:
     kubernetes.io/service-name: postgres
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: postgres
@@ -30,7 +30,7 @@ metadata:
   name: kafka-compose
   labels:
     kubernetes.io/service-name: kafka
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: kafka
@@ -50,7 +50,7 @@ metadata:
   name: otel-collector-compose
   labels:
     kubernetes.io/service-name: otel-collector
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: otlp-grpc
@@ -67,7 +67,7 @@ metadata:
   name: redis-compose
   labels:
     kubernetes.io/service-name: redis
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: redis
@@ -84,7 +84,7 @@ metadata:
   name: prometheus-compose
   labels:
     kubernetes.io/service-name: prometheus
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: prometheus
@@ -101,7 +101,7 @@ metadata:
   name: schema-registry-compose
   labels:
     kubernetes.io/service-name: schema-registry
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: schema-registry
@@ -118,7 +118,7 @@ metadata:
   name: keycloak-compose
   labels:
     kubernetes.io/service-name: keycloak
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: keycloak
@@ -135,7 +135,7 @@ metadata:
   name: minio-compose
   labels:
     kubernetes.io/service-name: minio
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: minio
@@ -152,7 +152,7 @@ metadata:
   name: pyroscope-compose
   labels:
     kubernetes.io/service-name: pyroscope
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: pyroscope
@@ -169,7 +169,7 @@ metadata:
   name: mongodb-compose
   labels:
     kubernetes.io/service-name: mongodb
-    endpointslice.kubernetes.io/managed-by: distributed-ecommerce
+    endpointslice.kubernetes.io/managed-by: saga-ecommerce
 addressType: IPv4
 ports:
   - name: mongodb

@@ -21,7 +21,7 @@ spec:
       labels:
         app.kubernetes.io/name: cart-service
         app.kubernetes.io/component: api
-        app.kubernetes.io/part-of: distributed-ecommerce
+        app.kubernetes.io/part-of: saga-ecommerce
       annotations:
         linkerd.io/inject: enabled
     spec:
@@ -48,7 +48,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cart-service
-          image: distributed-ecommerce/cart-service:latest
+          image: saga-ecommerce/cart-service:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: ASPNETCORE_ENVIRONMENT

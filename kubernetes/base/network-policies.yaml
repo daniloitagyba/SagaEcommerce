@@ -14,7 +14,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/part-of: distributed-ecommerce
+      app.kubernetes.io/part-of: saga-ecommerce
   policyTypes:
     - Ingress
   ingress:

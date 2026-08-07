@@ -42,7 +42,7 @@ access_token=$("$script_directory/keycloak-get-token.sh")
 
 k6_writable_directory=${K6_WRITABLE_DIRECTORY:-"/home/$(id -un)/snap/k6/common"}
 mkdir -p "$k6_writable_directory"
-temporary_summary_file=$(mktemp "$k6_writable_directory/distributed-ecommerce-hedged-summary.XXXXXX.json")
+temporary_summary_file=$(mktemp "$k6_writable_directory/saga-ecommerce-hedged-summary.XXXXXX.json")
 cleanup() {
   rm -f -- "$temporary_summary_file"
 }

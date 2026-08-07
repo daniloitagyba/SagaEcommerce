@@ -32,7 +32,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: inventory-seed
-          image: distributed-ecommerce/inventory-service:latest
+          image: saga-ecommerce/inventory-service:latest
           imagePullPolicy: IfNotPresent
           # Idempotent (InventorySeeder no-ops if any row already exists),
           # safe to run on every sync like the migration Jobs.

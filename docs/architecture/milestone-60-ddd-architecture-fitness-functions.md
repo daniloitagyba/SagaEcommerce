@@ -37,7 +37,7 @@ Passed!  - Failed:     0, Passed:    19, Skipped:     0, Total:    19, Duration:
 | Port implementations live in `Orders.Infrastructure` | 5 | pass |
 | Injected violation is actually caught | - | confirmed, then reverted |
 
-Full solution (`dotnet build DistributedEcommerce.slnx`) still builds clean with the new project registered in the `.slnx`.
+Full solution (`dotnet build SagaEcommerce.slnx`) still builds clean with the new project registered in the `.slnx`.
 
 ## Running it
 

@@ -25,7 +25,7 @@ docker compose --profile compose-apps build "${services[@]}"
 # milestone-42-by-sku), so it's read back from `compose config` rather than
 # assumed, and retagged to the one fixed tag the K3s overlay expects.
 built_images=$(docker compose --profile compose-apps config --format json |
-  jq -r '.services | to_entries[] | select(.value.image != null and (.value.image | startswith("distributed-ecommerce/"))) | "\(.key) \(.value.image)"')
+  jq -r '.services | to_entries[] | select(.value.image != null and (.value.image | startswith("saga-ecommerce/"))) | "\(.key) \(.value.image)"')
 
 images=()
 for service in "${services[@]}"; do
@@ -34,8 +34,8 @@ for service in "${services[@]}"; do
     echo "No built image found for service '$service' in compose config" >&2
     exit 1
   fi
-  docker image tag "$compose_image" "distributed-ecommerce/${service}:${local_tag}"
-  images+=("distributed-ecommerce/${service}:${local_tag}")
+  docker image tag "$compose_image" "saga-ecommerce/${service}:${local_tag}"
+  images+=("saga-ecommerce/${service}:${local_tag}")
 done
 
 docker image inspect "${images[@]}" >/dev/null
@@ -57,4 +57,4 @@ docker run --rm \
   rancher/k3s:v1.36.2-k3s1 \
   --address /run/k3s/containerd/containerd.sock \
   --namespace k8s.io images list --quiet |
-  grep --extended-regexp "distributed-ecommerce/($(IFS='|'; echo "${services[*]}")):${local_tag}"
+  grep --extended-regexp "saga-ecommerce/($(IFS='|'; echo "${services[*]}")):${local_tag}"

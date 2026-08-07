@@ -148,7 +148,7 @@ jq --null-input \
 
 k6_writable_directory=${K6_WRITABLE_DIRECTORY:-"/home/$(id -un)/snap/k6/common"}
 mkdir -p "$k6_writable_directory"
-temporary_summary_file=$(mktemp "$k6_writable_directory/distributed-ecommerce-summary.XXXXXX.json")
+temporary_summary_file=$(mktemp "$k6_writable_directory/saga-ecommerce-summary.XXXXXX.json")
 
 printf 'timestamp,pod,cpu,memory\n' >"$run_directory/resources.csv"
 (

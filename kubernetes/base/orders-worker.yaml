@@ -21,7 +21,7 @@ spec:
       labels:
         app.kubernetes.io/name: orders-worker
         app.kubernetes.io/component: worker
-        app.kubernetes.io/part-of: distributed-ecommerce
+        app.kubernetes.io/part-of: saga-ecommerce
       annotations:
         linkerd.io/inject: enabled
     spec:
@@ -48,7 +48,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: orders-worker
-          image: distributed-ecommerce/orders-worker:latest
+          image: saga-ecommerce/orders-worker:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: ASPNETCORE_ENVIRONMENT

@@ -44,10 +44,10 @@ jobs:
           global-json-file: global.json
 
       - name: restore
-        run: dotnet restore apps/DistributedEcommerce.slnx
+        run: dotnet restore apps/SagaEcommerce.slnx
 
       - name: list vulnerable packages (direct + transitive)
-        run: dotnet list apps/DistributedEcommerce.slnx package --vulnerable --include-transitive
+        run: dotnet list apps/SagaEcommerce.slnx package --vulnerable --include-transitive
 
   complexity-and-module-size:
     name: cyclomatic complexity and module size
@@ -89,14 +89,14 @@ jobs:
           global-json-file: global.json
 
       - name: restore
-        run: dotnet restore apps/DistributedEcommerce.slnx
+        run: dotnet restore apps/SagaEcommerce.slnx
 
       - name: build
-        run: dotnet build apps/DistributedEcommerce.slnx --no-restore --configuration Release
+        run: dotnet build apps/SagaEcommerce.slnx --no-restore --configuration Release
 
       - name: test
         run: |
-          dotnet test apps/DistributedEcommerce.slnx --no-build --configuration Release \
+          dotnet test apps/SagaEcommerce.slnx --no-build --configuration Release \
             --logger "trx;LogFileName=test-results.trx"
 
       - name: publish test results
@@ -185,10 +185,10 @@ jobs:
             project: Storefront.Service
     env:
       # Hardcoded lowercase rather than ghcr.io/${{ github.repository }}:
-      # the repo name is mixed-case (DistributedEcommerce) and Docker/OCI
+      # the repo name is mixed-case (SagaEcommerce) and Docker/OCI
       # registry paths must be lowercase - github.repository would produce
       # an invalid tag.
-      IMAGE: ghcr.io/daniloitagyba/distributed-ecommerce/${{ matrix.service }}
+      IMAGE: ghcr.io/daniloitagyba/saga-ecommerce/${{ matrix.service }}
     steps:
       - uses: actions/checkout@v4
 

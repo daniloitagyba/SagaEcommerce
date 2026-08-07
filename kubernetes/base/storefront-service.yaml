@@ -21,7 +21,7 @@ spec:
       labels:
         app.kubernetes.io/name: storefront-service
         app.kubernetes.io/component: frontend
-        app.kubernetes.io/part-of: distributed-ecommerce
+        app.kubernetes.io/part-of: saga-ecommerce
       annotations:
         linkerd.io/inject: enabled
     spec:
@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: storefront-service
-          image: distributed-ecommerce/storefront-service:latest
+          image: saga-ecommerce/storefront-service:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: ASPNETCORE_ENVIRONMENT
