@@ -1,16 +1,10 @@
 namespace BuildingBlocks;
 
 /// <summary>
-/// Milestone 68: how the shopper is paying, and - crucially - whether the
-/// two-phase authorize/capture flow applies at all.
-///
-/// This is not a decorative field. The methods differ in a way the domain
-/// has to respect: a card is <em>authorized</em> (the bank places a hold)
-/// and only later <em>captured</em> (the money actually moves), while Pix
-/// is an immediate transfer with no hold to place and nothing to capture
-/// later. Modelling both as "approved: true" - which is all Milestone 66
-/// had - collapses that distinction and makes it impossible to ever
-/// express "authorized but not yet charged".
+/// How the shopper is paying, and whether the two-phase authorize/capture
+/// flow applies at all: a card is <em>authorized</em> then later
+/// <em>captured</em>; Pix is an immediate transfer with nothing to capture.
+/// A single "approved: true" boolean can't express either distinction.
 /// </summary>
 public static class PaymentMethods
 {
@@ -21,12 +15,10 @@ public static class PaymentMethods
     public const string Pix = "Pix";
 
     /// <summary>
-    /// Milestone 73: a printed slip the shopper pays at a bank, days later
-    /// or never. Two-phase like a card in that the money has not moved yet,
-    /// but for the opposite reason - there is no hold on anybody's funds,
-    /// only an unpaid invoice. That is why it does not share Card's
-    /// <c>Authorized</c> state: calling an unpaid boleto "authorized" would
-    /// claim a guarantee that does not exist.
+    /// A printed slip the shopper pays at a bank, days later or never.
+    /// Two-phase like a card, but for the opposite reason - no hold exists,
+    /// only an unpaid invoice - which is why it doesn't share Card's
+    /// <c>Authorized</c> state.
     /// </summary>
     public const string Boleto = "Boleto";
 

@@ -9,13 +9,11 @@ public interface IBestsellersStore
 }
 
 /// <summary>
-/// Milestone 44: the payoff for choosing MongoDB over Redis for the
-/// catalog back in Milestone 40 - "most sold" is an ordered, frequently
-/// incremented, top-N read, exactly what a Redis sorted set is for.
-/// ZINCRBY, not a MongoDB aggregation pipeline or a read-modify-write
-/// counter row in Postgres. Best-effort and side-channel: a failure here
-/// must never fail the saga completion it's reacting to, so no resilience
-/// pipeline, no retry, no throw - see OrderSagaReplyConsumer's catch.
+/// Milestone 44: "most sold" is an ordered, frequently incremented, top-N
+/// read, exactly what a Redis sorted set (ZINCRBY) is for, not a MongoDB
+/// aggregation or a Postgres counter row. Best-effort and side-channel: a
+/// failure here must never fail the saga completion it's reacting to, so
+/// no resilience pipeline, no retry, no throw - see OrderSagaReplyConsumer's catch.
 /// </summary>
 public sealed class RedisBestsellersStore(IConnectionMultiplexer connectionMultiplexer) : IBestsellersStore
 {

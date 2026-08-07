@@ -13,13 +13,9 @@ public interface ICouponRepository
 
 /// <summary>
 /// Milestone 67: a checkout's claim on a coupon, reserved in the same
-/// transaction that persists the order.
-///
-/// Same database, so it can genuinely be one transaction - and it has to
-/// be. Reserving separately and then failing to insert the order would
-/// leak a redemption slot that nothing would ever give back, since the
-/// release path keys off the order reaching Cancelled and there would be
-/// no order to cancel.
+/// transaction that persists the order - it has to be, since reserving
+/// separately and then failing to insert the order would leak a slot the
+/// release path (keyed off the order reaching Cancelled) could never give back.
 /// </summary>
 public sealed record CouponReservation(string Code, Guid OrderId, string CustomerId, DateTimeOffset ReservedAt);
 

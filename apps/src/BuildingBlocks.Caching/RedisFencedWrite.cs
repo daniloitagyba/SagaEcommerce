@@ -4,23 +4,14 @@ namespace BuildingBlocks;
 
 /// <summary>
 /// Milestone 48: RedisOrderCache and RedisIdempotencyStore both take a
-/// Redis lock (LockTakeAsync/LockReleaseAsync) with a timeout before doing
-/// slow work (a Postgres read, order creation) and writing the result -
-/// the classic Redlock/Kleppmann hazard, since the lock has no fencing.
-/// If the holder is paused (GC, CPU contention, a slow dependency) longer
-/// than the lock's timeout, a second caller can acquire the same lock and
-/// write its own result; when the first, stale holder resumes, it writes
-/// too, with no idea it lost the lock, silently clobbering the second
-/// holder's newer value with stale data.
-///
-/// A fencing token closes this without needing the lock itself to know
-/// anything changed: every lock acquisition draws a strictly increasing
-/// ticket (<see cref="NextFenceTokenAsync"/>, a plain Redis INCR), and the
-/// actual write (<see cref="FencedSetAsync"/>) is a Lua script that
-/// refuses to apply if a write carrying a higher ticket has already been
-/// recorded - a stale holder's write is rejected at the point of write,
-/// which is the only place that can enforce it, not at the point of lock
-/// acquisition or release.
+/// timed Redis lock before slow work and writing the result - the classic
+/// Redlock/Kleppmann hazard, since a holder paused past the lock's timeout
+/// can resume and clobber a second holder's newer write with stale data.
+/// A fencing token closes this: every lock acquisition draws a strictly
+/// increasing ticket (<see cref="NextFenceTokenAsync"/>, a Redis INCR), and
+/// the write (<see cref="FencedSetAsync"/>) is a Lua script that rejects a
+/// write carrying a lower ticket than one already recorded - enforced at
+/// the point of write, the only place that can enforce it.
 /// </summary>
 public static class RedisFencedWrite
 {

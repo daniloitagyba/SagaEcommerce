@@ -1,20 +1,11 @@
 namespace Orders.Domain;
 
 /// <summary>
-/// Milestone 71: a customer, at last.
-///
-/// Until now <c>CustomerId</c> was a bare string threaded through every
-/// service - enough to group a payment history by, and not enough for
-/// anything else. No account age, so the risk rules could not tell a
-/// three-year customer from one created a minute ago. No address, so
-/// shipping was a flat fee and tax was a single global rate. No standing
-/// with the shop, so every promotion had to be a coupon somebody typed.
-///
-/// Auto-provisioned on first checkout rather than registered: this lab has
-/// no sign-up flow, and inventing one would add a CRUD surface without
-/// adding a distributed-systems concern. The first order a customer id
-/// places creates the record, which is also what makes AccountAge a real
-/// signal rather than a constant.
+/// Milestone 71: a customer, at last - until now <c>CustomerId</c> was a
+/// bare string, enough to group payment history by and not enough for
+/// account age, address, or standing with the shop. Auto-provisioned on
+/// first checkout rather than registered, since this lab has no sign-up
+/// flow and inventing one would add CRUD, not a distributed-systems concern.
 /// </summary>
 public sealed class Customer
 {
@@ -27,12 +18,7 @@ public sealed class Customer
     /// <summary>Bronze on arrival; earned upward from lifetime spend - see CustomerTiers.</summary>
     public string Tier { get; private set; } = CustomerTiers.Bronze;
 
-    /// <summary>
-    /// Counts only orders that actually completed. Cancelled and fully
-    /// refunded orders must not buy standing - otherwise a customer could
-    /// climb to Gold by placing and cancelling, which is the cheapest
-    /// possible way to earn a permanent discount.
-    /// </summary>
+    /// <summary>Counts only completed orders - cancelled or fully refunded ones must not buy standing.</summary>
     public decimal LifetimeSpend { get; private set; }
 
     public int CompletedOrderCount { get; private set; }
@@ -59,12 +45,10 @@ public sealed class Customer
     }
 
     /// <summary>
-    /// Reverses a completed order's contribution - a full refund should not
-    /// leave standing behind that the customer no longer paid for. Tier is
-    /// deliberately <em>not</em> demoted here: taking a discount away
-    /// retroactively is the kind of surprise that generates support
-    /// tickets, and every real loyalty programme reviews downward on a
-    /// schedule rather than on the instant.
+    /// Reverses a completed order's contribution after a full refund. Tier
+    /// is deliberately <em>not</em> demoted here - taking a discount away
+    /// retroactively generates support tickets; real loyalty programmes
+    /// review downward on a schedule, not on the instant.
     /// </summary>
     public void ReverseCompletedOrder(decimal amount)
     {

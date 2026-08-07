@@ -5,14 +5,11 @@ using Avro.Generic;
 namespace BuildingBlocks;
 
 /// <summary>
-/// The Avro wire contract for OrderCreated (Milestone 19), and the one place
-/// that converts between it and the C# record - keeping the producer and
-/// every consumer in agreement about the mapping instead of each hand-rolling
-/// their own. Guid/DateTimeOffset fields are encoded as strings rather than
-/// Avro's uuid/timestamp logical types, and amount as a decimal-formatted
-/// string rather than Avro's decimal logical type, to keep GenericRecord
-/// construction straightforward without adding byte-level encoding code for
-/// a lab-scale demonstration of schema registry mechanics.
+/// The Avro wire contract for OrderCreated (Milestone 19), and the one
+/// place that converts it to/from the C# record, keeping every consumer in
+/// agreement about the mapping. Guid/DateTimeOffset/decimal fields are
+/// encoded as strings rather than Avro's logical types, to keep
+/// GenericRecord construction simple for a lab-scale schema registry demo.
 /// </summary>
 public static class OrderCreatedAvroSchema
 {
@@ -92,12 +89,7 @@ public static class OrderCreatedAvroSchema
             ReadShippingPostalPrefix(record));
     }
 
-    /// <summary>
-    /// Defensive for the same reason ReadLines is: a message written by a
-    /// v1/v2 writer has no paymentMethod field at all, and treating its
-    /// absence as Pix is the safe reading - an instant charge rather than
-    /// an authorization no capture command will ever arrive for.
-    /// </summary>
+    /// <summary>A v1/v2 writer has no paymentMethod field; absence reads as Pix - an instant charge, not an authorization nobody will capture.</summary>
     private static string ReadPaymentMethod(GenericRecord record)
     {
         return record.TryGetValue("paymentMethod", out var value) && value is string method && method.Length > 0
@@ -105,11 +97,7 @@ public static class OrderCreatedAvroSchema
             : PaymentMethods.Pix;
     }
 
-    /// <summary>
-    /// Defensive for the same reason ReadPaymentMethod is. Absent means
-    /// "no address was given", which is exactly how an order created before
-    /// this field existed should be scored - unknown, not mismatched.
-    /// </summary>
+    /// <summary>Absent means "no address given" - an order predating this field should score as unknown, not mismatched.</summary>
     private static string ReadShippingPostalPrefix(GenericRecord record)
     {
         return record.TryGetValue("shippingPostalPrefix", out var value) && value is string prefix
@@ -129,13 +117,10 @@ public static class OrderCreatedAvroSchema
     }
 
     /// <summary>
-    /// A v1 producer's message carries no lines field at all. Avro fills it
-    /// from the schema default when read against v2, but a message written
-    /// by a v1 <em>writer schema</em> and deserialized before the registry
-    /// resolves the default would leave it absent - so this reads
-    /// defensively rather than indexing straight in. Same reason
-    /// OrderCreatedSchemaVersions.IsSupported accepts both versions:
-    /// during a rolling deploy, both are genuinely on the topic.
+    /// A v1 message carries no lines field; Avro should fill the default
+    /// when read against v2, but this reads defensively in case the
+    /// registry hasn't resolved it - both versions are genuinely on the
+    /// topic during a rolling deploy.
     /// </summary>
     private static IReadOnlyList<OrderCreatedLine> ReadLines(GenericRecord record)
     {

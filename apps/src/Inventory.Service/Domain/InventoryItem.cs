@@ -1,13 +1,9 @@
 namespace Inventory.Service.Domain;
 
 /// <summary>
-/// Deliberately no optimistic concurrency token and no caller-side row lock.
-/// TryReserve is a plain read-then-write mutation - safe only because
-/// Inventory.Service's Kafka consumer guarantees at most one in-flight
-/// request per Sku at a time (see InventoryContracts.cs). If two requests
-/// for the same Sku were ever processed concurrently against the same
-/// loaded instance, this would oversell; that is the exact scenario the
-/// partitioning is there to make impossible.
+/// Deliberately no optimistic concurrency token and no row lock - TryReserve
+/// is a plain read-then-write, safe only because the Kafka consumer
+/// guarantees at most one in-flight request per Sku (InventoryContracts.cs).
 /// </summary>
 public sealed class InventoryItem
 {
@@ -47,11 +43,7 @@ public sealed class InventoryItem
         return true;
     }
 
-    /// <summary>
-    /// Turns a temporary hold into a permanent deduction: the stock never
-    /// returns to Available. This is the saga's "everything downstream
-    /// succeeded" outcome for a reservation.
-    /// </summary>
+    /// <summary>Turns a temporary hold into a permanent deduction - the saga's "everything downstream succeeded" outcome.</summary>
     public bool TryCommit(int quantity, DateTimeOffset now)
     {
         if (ReservedQuantity < quantity)
@@ -65,13 +57,10 @@ public sealed class InventoryItem
     }
 
     /// <summary>
-    /// Milestone 70: puts returned units back on the shelf.
-    ///
-    /// Distinct from TryRelease, which hands back stock that was only ever
-    /// <em>held</em> - a reservation that never became a sale. A return is
-    /// the opposite: the sale happened, the reservation was committed and
-    /// the stock left inventory entirely, so there is no ReservedQuantity
-    /// to draw down. This is a pure increment, and it cannot fail.
+    /// Milestone 70: puts returned units back on the shelf. Distinct from
+    /// TryRelease, which hands back stock only ever <em>held</em> - a
+    /// return means the sale happened and stock already left inventory, so
+    /// there is no ReservedQuantity to draw down. A pure increment; cannot fail.
     /// </summary>
     public void Restock(int quantity, DateTimeOffset now)
     {
@@ -84,12 +73,7 @@ public sealed class InventoryItem
         UpdatedAt = now;
     }
 
-    /// <summary>
-    /// The saga's compensating transaction: gives held stock back to
-    /// Available. Called when a step downstream of the original reservation
-    /// (payment, in this lab) fails - the reservation itself was never the
-    /// problem, so it gets undone rather than left dangling.
-    /// </summary>
+    /// <summary>The saga's compensating transaction: gives held stock back when a downstream step (payment) fails.</summary>
     public bool TryRelease(int quantity, DateTimeOffset now)
     {
         if (ReservedQuantity < quantity)

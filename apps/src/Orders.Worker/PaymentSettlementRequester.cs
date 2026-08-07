@@ -9,28 +9,14 @@ namespace Orders.Worker;
 
 /// <summary>
 /// Milestone 68: asks Payments to finish what the authorization started -
-/// capture the money when the order is confirmed, or release the hold when
-/// it is cancelled.
+/// capture the money at Shipped (Milestone 69), or release the hold on
+/// cancellation.
 ///
 /// <para>
-/// <b>Where capture is triggered, and why it will move.</b> A real
-/// storefront captures at <em>shipment</em>, not at order confirmation -
-/// that is the whole point of holding an authorization. This lab's order
-/// currently ends its life at Confirmed, so that is where capture is
-/// requested; Milestone 69 adds the fulfillment states and moves the
-/// trigger to Shipped, which is a one-line change here. Triggering it now
-/// rather than leaving orders permanently uncaptured keeps the system
-/// correct end to end at every milestone, which matters more than the
-/// trigger being in its final place.
-/// </para>
-///
-/// <para>
-/// Fire-and-forget by design: a failure to publish is logged, not
-/// propagated. The order has already transitioned, and the authorization
-/// expiry sweeper on the Payments side is the backstop that guarantees an
-/// uncaptured hold cannot outlive its window - so a lost capture command
-/// degrades to "the customer was not charged", never to "the customer's
-/// money is held forever".
+/// Fire-and-forget by design: a publish failure is logged, not propagated.
+/// The order has already transitioned, and the authorization expiry
+/// sweeper on the Payments side is the backstop, so a lost capture command
+/// degrades to "the customer was not charged", never to money held forever.
 /// </para>
 /// </summary>
 public sealed class PaymentSettlementRequester(

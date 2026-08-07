@@ -6,12 +6,10 @@ using Microsoft.Extensions.Options;
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 22's explicit compensation half, extended in Milestone 43 from
-/// a single request/reply pair into the driver of a 4-step saga. Only one
-/// reply is ever outstanding per order at a time, so this one consumer
-/// subscribing to all four reply topics and dispatching by topic name is
-/// simpler than four separate consumer classes each only knowing how to
-/// advance one specific transition.
+/// Milestone 22's compensation half, extended in Milestone 43 into the
+/// driver of a 4-step saga. One consumer subscribing to all four reply
+/// topics and dispatching by topic name, since only one reply is ever
+/// outstanding per order at a time.
 ///
 /// State machine:
 ///   ReserveInventory  --(reserved)-->     DecidePayment   --(approved)--> CommitInventory --> done (Confirmed)
@@ -107,13 +105,10 @@ public sealed class OrderSagaReplyConsumer(
         {
             if (reply.Backordered)
             {
-                // Milestone 74: wait, don't give up. The saga row is left
-                // exactly where it is - still parked at ReserveInventory -
-                // so the eventual success reply from a backorder release
-                // (same reservationId, Reserved: true) advances it through
-                // TryAdvanceAsync below with no further changes needed here.
-                // Nothing has been charged yet: payment is decided one step
-                // later than this, so there is no hold to release either.
+                // Milestone 74: wait, don't give up. The saga row stays
+                // parked at ReserveInventory, so the eventual backorder
+                // release reply advances it through TryAdvanceAsync below
+                // with no further changes needed. Nothing was charged yet.
                 await orderStatusStore.TryTransitionAsync(
                     reply.OrderId, OrderStatuses.Backordered, reply.CorrelationId, cancellationToken);
                 await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
@@ -182,9 +177,7 @@ public sealed class OrderSagaReplyConsumer(
         }
         else
         {
-            // The compensating transaction: the reservation from step 1 was
-            // never the problem, payment was - so it gets undone rather than
-            // left dangling against the order it will now never fulfill.
+            // The compensating transaction: undo the step 1 reservation, since payment was the problem, not it.
             var advanced = await store.TryAdvanceAsync(reply.OrderId, SagaStep.DecidePayment, SagaStep.ReleaseInventory, now, cancellationToken);
             if (advanced is null)
             {
@@ -217,20 +210,15 @@ public sealed class OrderSagaReplyConsumer(
         var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
         SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, outcome, latencyMs, completed.CorrelationId);
 
-        // Payment was already approved by the time the saga reaches this
-        // step, so the order is genuinely confirmed either way - a failed
-        // inventory commit is not a reason to leave it stuck at Created.
+        // Payment was already approved, so the order is genuinely confirmed
+        // either way - a failed inventory commit isn't a reason to stay at Created.
         await orderStatusStore.TryConfirmAsync(reply.OrderId, completed.CorrelationId, cancellationToken);
 
         if (!reply.Committed)
         {
-            // Milestone 69: the ConfirmedButCommitFailed outcome above has
-            // been logged since Milestone 43 with nowhere to live - the
-            // order looked identical to a healthy one in every query and
-            // dashboard. It now moves to FulfillmentHold: the customer is
-            // owed something, but the stock it depends on was never
-            // actually deducted, so a human has to resolve it before this
-            // can be picked.
+            // Milestone 69: moves to FulfillmentHold - the customer is owed
+            // something, but the stock was never actually deducted, so a
+            // human has to resolve it before this can be picked.
             await orderStatusStore.TryTransitionAsync(
                 reply.OrderId, OrderStatuses.FulfillmentHold, completed.CorrelationId, cancellationToken);
         }

@@ -10,26 +10,15 @@ public sealed record RateLimitDecision(bool Allowed, int Count, int Limit);
 
 /// <summary>
 /// Milestone 38: a cluster-wide sliding-window-log rate limiter, contrasted
-/// with Milestone 11's per-pod in-memory token bucket. With 3 orders-api
-/// replicas, M11's limiter enforces its configured limit independently on
-/// each pod - the real, effective cluster-wide ceiling is (replica count *
-/// per-pod limit), not the configured number, and it silently changes
-/// every time the Rollout scales. This limiter shares state in Redis
-/// (a single sorted set per key, member = a per-request GUID, score = the
-/// request's timestamp) so the limit means what it says regardless of how
-/// many replicas are running. Sliding-window-log rather than a simpler
-/// fixed-window counter deliberately - fixed windows allow up to 2x burst
-/// right at a window boundary; a sorted set with ZREMRANGEBYSCORE avoids
-/// that by tracking exact request timestamps, at the cost of one sorted
-/// set entry per allowed request instead of a single counter.
-///
-/// Applied as a second, independent layer alongside (not replacing) M11's
-/// limiter - a fast local check catches obvious abuse without a Redis
-/// round-trip on every request; this is the authoritative cluster-wide cap.
-/// On Redis unavailability, fails OPEN (allows the request) rather than
-/// closed - the same philosophy as RedisOrderCache/RedisIdempotencyStore:
-/// this is defense-in-depth on top of the always-available local limiter,
-/// not the sole protection.
+/// with Milestone 11's per-pod in-memory token bucket - with 3 replicas,
+/// M11's limiter effectively enforces (replica count * per-pod limit), not
+/// the configured number. This shares state in Redis (a sorted set per key,
+/// member = per-request GUID, score = timestamp) so the limit means what
+/// it says. Sliding-window-log, not fixed-window, to avoid the up-to-2x
+/// burst a fixed window allows at its boundary. Applied alongside, not
+/// replacing, M11's limiter - a fast local check catches obvious abuse
+/// without a Redis round-trip; this is the authoritative cap. Fails OPEN
+/// on Redis unavailability, same as RedisOrderCache/RedisIdempotencyStore.
 /// </summary>
 public sealed class RedisSlidingWindowRateLimiter(
     IConnectionMultiplexer connectionMultiplexer,

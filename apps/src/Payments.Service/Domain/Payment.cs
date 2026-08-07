@@ -12,12 +12,7 @@ public sealed class Payment
 
     public Guid OrderId { get; private set; }
 
-    /// <summary>
-    /// Milestone 66: without this, "has this customer paid before?" and
-    /// "is this order out of character for them?" are unanswerable, and
-    /// the payment decision can only ever be a function of the amount in
-    /// front of it - which is exactly what it was until now.
-    /// </summary>
+    /// <summary>Lets the risk decision weigh this customer's history, not just the amount.</summary>
     public string CustomerId { get; private set; } = string.Empty;
 
     public decimal Amount { get; private set; }
@@ -25,11 +20,9 @@ public sealed class Payment
     public string Currency { get; private set; } = string.Empty;
 
     /// <summary>
-    /// The risk decision. Kept alongside <see cref="State"/> rather than
-    /// derived from it because the two answer different questions - "did
-    /// we agree to take this money?" and "where is the money now?" - and
-    /// the choreographed <c>PaymentDecided</c> contract has carried this
-    /// exact flag since Milestone 12.
+    /// The risk decision, kept alongside <see cref="State"/> rather than
+    /// derived from it - "did we agree to take this money?" and "where is
+    /// it now?" are different questions.
     /// </summary>
     public bool Approved { get; private set; }
 
@@ -41,10 +34,9 @@ public sealed class Payment
     public string Method { get; private set; } = string.Empty;
 
     /// <summary>
-    /// Milestone 73: where this order shipped, kept so the next order can
-    /// be compared against it. Stored on the payment rather than looked up
-    /// from Orders because Payments must be able to score a decision
-    /// without a synchronous call into another service's database.
+    /// Where this order shipped, so the next order can be compared against
+    /// it - stored here rather than looked up from Orders, since Payments
+    /// must score a decision without a synchronous cross-service call.
     /// </summary>
     public string ShippingPostalPrefix { get; private set; } = string.Empty;
 
@@ -61,21 +53,18 @@ public sealed class Payment
     public string? SettlementReason { get; private set; }
 
     /// <summary>
-    /// Milestone 70: how much of a captured payment has been given back.
-    ///
-    /// Cumulative rather than a boolean because returns are partial by
-    /// nature - a customer keeps the book and sends back two of three
-    /// shirts - so a payment can be refunded several times before it is
-    /// fully refunded.
+    /// How much of a captured payment has been given back. Cumulative, not
+    /// a boolean - returns are partial by nature, so a payment can be
+    /// refunded several times before it's fully refunded.
     /// </summary>
     public decimal RefundedAmount { get; private set; }
 
     public decimal RefundableAmount => Amount - RefundedAmount;
 
     /// <summary>
-    /// Milestone 68: replaces Decide. An approved card lands in
-    /// <c>Authorized</c> with a hold that expires; approved Pix goes
-    /// straight to <c>Captured</c> because there is no hold to place.
+    /// An approved card lands in <c>Authorized</c> with a hold that
+    /// expires; approved Pix goes straight to <c>Captured</c> since there's
+    /// no hold to place.
     /// </summary>
     public static Payment Authorize(
         Guid orderId,
@@ -111,20 +100,15 @@ public sealed class Payment
         };
     }
 
-    /// <summary>
-    /// Moves the money. Returns false when the payment is not in a state
-    /// money can move from - already captured, already voided, expired, or
-    /// declined outright - which makes a redelivered capture command a
-    /// no-op rather than a double charge.
-    /// </summary>
-    /// <summary>
-    /// Money is promised but not yet moved: a card hold, or an issued
-    /// boleto. Both are settled by the same commands, so every guard asks
-    /// this rather than naming one state and quietly excluding the other.
-    /// </summary>
+    /// <summary>Money promised but not yet moved: a card hold, or an issued boleto.</summary>
     private bool IsAwaitingSettlement =>
         State is PaymentStates.Authorized or PaymentStates.AwaitingPayment;
 
+    /// <summary>
+    /// Moves the money. False if the payment can't move from its current
+    /// state, so a redelivered capture command is a no-op, not a double
+    /// charge.
+    /// </summary>
     public bool TryCapture(DateTimeOffset now)
     {
         if (!IsAwaitingSettlement)
@@ -138,13 +122,9 @@ public sealed class Payment
     }
 
     /// <summary>
-    /// Milestone 70: gives back part (or all) of what was captured.
-    ///
-    /// Only a captured payment can be refunded - money that was never taken
-    /// cannot be returned, and an authorization that was voided or expired
-    /// was released rather than charged. The cumulative guard is what stops
-    /// a redelivered refund command, or a customer returning the same units
-    /// twice, from refunding more than was ever charged.
+    /// Gives back part or all of what was captured. The cumulative guard
+    /// stops a redelivered refund, or the same units returned twice, from
+    /// refunding more than was ever charged.
     /// </summary>
     public bool TryRefund(decimal amount, DateTimeOffset now)
     {

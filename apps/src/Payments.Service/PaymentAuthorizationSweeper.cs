@@ -8,37 +8,18 @@ using Payments.Service.Data;
 namespace Payments.Service;
 
 /// <summary>
-/// Milestone 68: releases card authorizations nobody ever captured.
-///
-/// An authorization is a hold on someone else's money. Placing one and then
-/// never resolving it - because Orders.Worker was down when the order
-/// shipped, or the capture command was lost, or the order simply sat
-/// unfulfilled - leaves the shopper's funds encumbered indefinitely. Real
-/// acquirers expire holds for exactly this reason; the sweeper is this
-/// lab's equivalent, and it is the reason splitting authorize from capture
-/// is worth modelling at all rather than charging outright.
+/// Milestone 68: releases card authorizations nobody ever captured, so a
+/// hold from a lost capture command or an unfulfilled order doesn't
+/// encumber the shopper's funds indefinitely - what real acquirers do too.
 ///
 /// <para>
-/// <b>Single-sweeper, without a Kubernetes Lease.</b> Orders.Worker's
-/// SagaTimeoutSweeper is gated on a Lease, and this looked like the same
-/// problem. It is not quite: that comment (see
-/// SagaOrchestrationStore.ClaimTimedOutSql) is explicit that leader
-/// election there is belt-and-suspenders and <c>FOR UPDATE SKIP LOCKED</c>
-/// is the actual correctness mechanism. SKIP LOCKED already makes
-/// concurrent sweeps <em>safe</em> here - each replica would claim a
-/// disjoint batch and block on nothing - so what is left to win is only
-/// the wasted polling of every replica querying every tick.
-/// </para>
-/// <para>
-/// A Postgres advisory lock buys exactly that and nothing more. Copying the
-/// Lease approach would have meant moving LeaderElectionService out of
-/// Orders.Worker, granting this service RBAC on Lease objects, and setting
-/// <c>automountServiceAccountToken: true</c> on a pod where Milestone 26
-/// deliberately turned it off - real security surface, to gate a loop whose
-/// correctness never depended on it. The advisory lock needs no new
-/// infrastructure, behaves identically under Compose and Kubernetes, and is
-/// released automatically when the connection drops, so a replica that dies
-/// mid-sweep does not park the lock.
+/// Uses a Postgres advisory lock rather than a Kubernetes Lease like
+/// Orders.Worker's SagaTimeoutSweeper: <c>FOR UPDATE SKIP LOCKED</c> already
+/// makes concurrent sweeps safe (each replica claims a disjoint batch), so
+/// the lock only needs to stop wasted polling, not guarantee correctness. A
+/// Lease would mean new RBAC and a service account token this pod
+/// deliberately doesn't carry (Milestone 26); the advisory lock needs no
+/// new infrastructure and releases itself if a replica dies mid-sweep.
 /// </para>
 /// </summary>
 public sealed class PaymentAuthorizationSweeper(

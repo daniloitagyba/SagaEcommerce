@@ -17,11 +17,9 @@ public sealed record ReturnOrderResult(
 
 /// <summary>
 /// Milestone 70: accepts a partial return and works out what it is worth.
-///
 /// The refund arithmetic lives in the domain (Order.TryReturn ->
-/// ReturnRefundCalculator) because it needs the order's own per-line
-/// charged totals, which nothing outside the aggregate should be
-/// recomputing.
+/// ReturnRefundCalculator), since it needs the order's own per-line
+/// charged totals, which nothing outside the aggregate should recompute.
 /// </summary>
 public sealed class ReturnOrderHandler(
     IOrderReturnRepository repository,

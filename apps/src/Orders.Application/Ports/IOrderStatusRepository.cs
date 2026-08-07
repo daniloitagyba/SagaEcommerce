@@ -15,11 +15,8 @@ public interface IOrderStatusRepository
 {
     /// <summary>
     /// Moves an order into <paramref name="targetStatus"/>, guarded on the
-    /// legal predecessors, and - in the same transaction - queues whatever
-    /// settlement command that status implies.
-    ///
-    /// Atomic on purpose: a capture command that outlived a rolled-back
-    /// "Shipped" would charge a customer for goods that never left.
+    /// legal predecessors, and queues the implied settlement command in the
+    /// same transaction - atomic, or a capture could outlive a rolled-back "Shipped".
     /// </summary>
     Task<OrderTransition> TryTransitionAsync(
         Guid orderId,

@@ -9,15 +9,11 @@ namespace Orders.Api.Endpoints;
 public sealed record AdvanceFulfillmentRequest(string? Status);
 
 /// <summary>
-/// Milestone 69: the warehouse's way in.
-///
-/// Fulfilment is driven by an external actor - a picker scanning a tote, a
-/// carrier's dispatch webhook, an ops user resolving a hold - so it gets an
-/// explicit endpoint rather than a timer that pretends orders ship
-/// themselves. Automating it on a schedule would have been less code and
-/// would have demonstrated nothing: the interesting part is that an
-/// illegal move is refused by the same compare-and-set that performs a
-/// legal one, not that a background loop can call a method.
+/// Milestone 69: the warehouse's way in. Fulfilment is driven by an
+/// external actor - a picker, a carrier webhook, an ops user - so it gets
+/// an explicit endpoint rather than a timer pretending orders ship
+/// themselves; the interesting part is that an illegal move is refused by
+/// the same compare-and-set that performs a legal one.
 /// </summary>
 public static class FulfillmentEndpoints
 {
@@ -68,18 +64,13 @@ public static class FulfillmentEndpoints
                 correlationId = httpContext.GetCorrelationId()
             }),
 
-            // 422, not 400: the request is well-formed and the status is a
-            // real one - it just is not reachable from where this order
-            // currently is. Telling the caller which states it *could* have
-            // come from turns a refusal into something actionable.
+            // 422, not 400: well-formed, but not reachable from here - listing valid targets makes the refusal actionable.
             AdvanceFulfillmentOutcome.IllegalTransition => Results.Problem(
                 detail: $"'{request.Status}' is not a status an order can be moved into. Valid targets: {string.Join(", ", OrderStatuses.TransitionableTargets)}.",
                 statusCode: StatusCodes.Status422UnprocessableEntity,
                 title: "Illegal Transition"),
 
-            // 409: the move is legal in general, but this order is not in a
-            // state it can be made from - already shipped, already
-            // cancelled, or another actor got there first.
+            // 409: legal in general, but this order isn't in a state it can be made from.
             AdvanceFulfillmentOutcome.NotApplicable => Results.Problem(
                 detail: $"This order cannot move to '{request.Status}' from its current state. It must first be in one of: {string.Join(", ", OrderStatuses.PredecessorsOf(request.Status))}.",
                 statusCode: StatusCodes.Status409Conflict,

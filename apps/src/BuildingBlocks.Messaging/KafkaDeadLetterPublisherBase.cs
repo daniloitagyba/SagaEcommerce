@@ -7,14 +7,10 @@ using Confluent.Kafka;
 namespace BuildingBlocks;
 
 // Shared shape behind every service's dead-letter publisher: build the
-// envelope, start a linked producer-kind Activity, copy correlation/trace/
-// redrive-count headers onto the dead-lettered message, and produce it to
-// the service's own dead-letter topic. TValue and encodePayload are the
-// only two things that differ per topic (byte[]/Avro topics base64-encode
-// the payload, JSON-text topics pass it through) - everything else
-// (topic name, activity name, the concrete public interface each
-// consumer depends on) stays a thin, service-owned subclass so DI
-// registrations and injection sites never change.
+// envelope, copy correlation/trace/redrive-count headers, and produce to
+// the dead-letter topic. TValue and encodePayload are the only things that
+// differ per topic (byte[]/Avro base64-encodes, JSON-text passes through) -
+// everything else stays a thin, service-owned subclass.
 public abstract class KafkaDeadLetterPublisherBase<TValue>(
     IProducer<string, string> producer,
     string deadLetterTopic,

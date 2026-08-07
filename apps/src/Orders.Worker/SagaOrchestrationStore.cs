@@ -20,19 +20,13 @@ public sealed record SagaOrchestrationRecord(
     string Currency);
 
 /// <summary>
-/// Milestone 36: Postgres-backed replacement for the Milestone 22
-/// in-memory SagaOrchestrationTracker (a ConcurrentDictionary that didn't
-/// survive a pod restart or KEDA scale-in). Mirrors OrderEventStoreAppender/
-/// OrderProjectionStore's raw-Npgsql style rather than going through EF -
-/// EF only owns this table's schema (see Orders.Domain.SagaOrchestrationState
-/// and the AddSagaOrchestrationStates migration).
-///
-/// Milestone 43: one row per order still holds at most one pending reply,
-/// but now the reply could be for any of the saga's steps. TryAdvanceAsync
-/// is the general-purpose "move to the next step" operation, gated on the
-/// row's CURRENT step matching what the caller expects - a stale or
-/// duplicate reply for a step the saga has already moved past is a no-op
-/// (returns null) rather than corrupting a later step's state.
+/// Milestone 36: Postgres-backed replacement for the in-memory
+/// SagaOrchestrationTracker that didn't survive a pod restart. Raw Npgsql,
+/// matching OrderEventStoreAppender/OrderProjectionStore - EF only owns
+/// this table's schema. Milestone 43: TryAdvanceAsync is the
+/// general-purpose "move to the next step" operation, gated on the row's
+/// CURRENT step matching what the caller expects, so a stale or duplicate
+/// reply for an already-passed step is a no-op rather than corrupting state.
 /// </summary>
 public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, ResiliencePipelineProvider<string> pipelineProvider)
 {
@@ -55,11 +49,9 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
         RETURNING correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, reservation_id, sku, quantity, amount, currency;
         """;
 
-    // FOR UPDATE SKIP LOCKED here is a belt-and-suspenders measure, not the
-    // primary correctness mechanism - leader election (LeaderElectionService)
-    // already ensures only one orders-worker replica actively sweeps at a
-    // time. It guards against the brief window during a leadership handoff
-    // where two replicas might both believe they're leading.
+    // FOR UPDATE SKIP LOCKED here is belt-and-suspenders, not the primary
+    // mechanism - leader election already ensures one active sweeper; this
+    // guards the brief window during a leadership handoff.
     private const string ClaimTimedOutSql = """
         DELETE FROM saga_orchestration_states
         WHERE order_id IN (

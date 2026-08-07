@@ -8,17 +8,10 @@ namespace BuildingBlocks;
 
 /// <summary>
 /// Guardrail: warns when the same query shape executes an unusual number
-/// of times within a single DbContext's lifetime - the runtime signature
-/// of an N+1 (fetch a list, then issue one more query per item instead of
-/// a single join/Include). EF Core already parameterizes literal values,
-/// so a query re-run with different arguments inside a loop produces
-/// identical `CommandText` every time - counting exact-text repeats,
-/// with no normalization needed, is what makes this cheap and reliable.
-///
-/// A fresh interceptor instance is created per DbContext instance (the
-/// `AddDbContext` options-configuring callback runs once per scope), so
-/// counts naturally reset per request/message - no cross-request state to
-/// manage or leak.
+/// of times within a DbContext's lifetime - the runtime signature of an
+/// N+1. EF Core already parameterizes literal values, so counting exact
+/// `CommandText` repeats needs no normalization. A fresh interceptor
+/// instance per DbContext means counts naturally reset per request.
 /// </summary>
 public sealed class NPlusOneDetectionInterceptor(ILogger logger, int threshold = 5) : DbCommandInterceptor
 {

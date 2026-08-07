@@ -8,15 +8,11 @@ using Orders.Worker;
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
-// Milestone 69: fail loudly at startup instead of silently at runtime.
-//
-// A missing DI registration used to surface only when something first
-// tried to resolve it - and when that something is the outbox dispatcher,
-// the failure is a background loop logging an exception every poll while
-// the service reports healthy and quietly stops publishing every event.
-// ValidateOnBuild turns that into a refusal to start. It is off by default
-// outside Development; the cost is a slower boot, which is the right trade
-// against an outbox that looks fine and delivers nothing.
+// Milestone 69: fail loudly at startup instead of silently at runtime. A
+// missing DI registration used to surface only when first resolved - if
+// that's the outbox dispatcher, it's a background loop logging an
+// exception every poll while the service reports healthy and delivers
+// nothing. ValidateOnBuild trades a slower boot for refusing to start instead.
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateOnBuild = true;
@@ -170,11 +166,8 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         [options.OrderCreatedTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
 });
-// Milestone 65: which saga(s) this instance actually answers to - see
-// SagaMode's own comment for why both sides needed to reach the same
-// reliability bar before this toggle could mean anything. Both is for
-// side-by-side comparison against identical traffic; Choreography stays
-// the default so anyone not opting in keeps today's behavior.
+// Milestone 65: which saga(s) this instance answers to - see SagaMode's
+// own comment. Both is for side-by-side comparison; Choreography is the default.
 var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Choreography);
 
 if (sagaMode is SagaMode.Choreography or SagaMode.Both)

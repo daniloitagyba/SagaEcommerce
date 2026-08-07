@@ -4,18 +4,11 @@ namespace Orders.Api.Contracts;
 public sealed record CreateOrderItemRequest(string? Sku, int Quantity);
 
 /// <summary>
-/// Accepts two shapes, deliberately, for the duration of an
-/// expand/contract migration:
-///
-/// - <c>{ customerId, items: [{ sku, quantity }], couponCode? }</c> is the
-///   real one. Prices come from the catalog server-side; the client never
-///   states what anything costs.
-/// - <c>{ customerId, amount, currency }</c> is the Milestone 7 shape,
-///   still posted by the k6 load scripts, the smoke tests, the Pact
-///   contracts and the README quickstart. Kept working so a pricing
-///   regression stays distinguishable from a migration mistake.
-///
-/// Sending items wins if both are present.
+/// Accepts two shapes for the duration of an expand/contract migration:
+/// <c>{ customerId, items, couponCode? }</c>, the real one, prices from the
+/// catalog server-side; and the Milestone 7 <c>{ customerId, amount,
+/// currency }</c> shape, still posted by k6, smoke tests, Pact and the
+/// README quickstart. Items wins if both are present.
 /// </summary>
 public sealed record CreateOrderRequest(
     string? CustomerId,

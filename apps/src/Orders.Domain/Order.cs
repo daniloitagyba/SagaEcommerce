@@ -14,11 +14,8 @@ public sealed class Order
 
     /// <summary>
     /// The grand total actually charged: Subtotal - DiscountTotal +
-    /// ShippingTotal + TaxTotal. Kept named "Amount" rather than renamed to
-    /// GrandTotal because it is the field the Avro contract, the read-model
-    /// projection, the event store and the cached order have all carried
-    /// since Milestone 7 - Milestone 66 changes how it is *derived*, not
-    /// what it means, so none of those had to change in lockstep.
+    /// ShippingTotal + TaxTotal. Named "Amount", not "GrandTotal", since
+    /// every consumer since Milestone 7 already carries that name.
     /// </summary>
     public decimal Amount { get; private set; }
 
@@ -41,16 +38,10 @@ public sealed class Order
     public string? CouponCode { get; private set; }
 
     /// <summary>
-    /// Milestone 68: "Card" or "Pix". Recorded on the order because it
-    /// decides whether Payments holds an authorization to capture at
-    /// shipment or charges outright.
-    ///
-    /// A plain string rather than a reference to BuildingBlocks'
-    /// PaymentMethods, deliberately: Orders.Domain does not reference the
-    /// messaging contracts, and having the domain depend on the wire
-    /// format would invert the layering the fitness functions exist to
-    /// protect. Status already works exactly this way - "Created" is a
-    /// literal here and in Orders.Worker's OrderStatusStore.
+    /// Milestone 68: "Card" or "Pix", deciding whether Payments holds an
+    /// authorization to capture at shipment or charges outright. A plain
+    /// string, not a BuildingBlocks.PaymentMethods reference - Orders.Domain
+    /// must not depend on the messaging contracts' wire format.
     /// </summary>
     public string PaymentMethod { get; private set; } = DefaultPaymentMethod;
 
@@ -70,11 +61,8 @@ public sealed class Order
 
     /// <summary>
     /// Milestone 70: builds a return for some of this order's units.
-    ///
-    /// Validation and the refund arithmetic live together here because they
-    /// share the same fact - how much of each line is still returnable -
-    /// and splitting them would mean reading it twice with a window in
-    /// between.
+    /// Validation and refund arithmetic share one pass over the same fact -
+    /// how much of each line is still returnable - so it's read only once.
     /// </summary>
     public (OrderReturn? Return, ReturnRejectionReason Rejection, string? OffendingSku) TryReturn(
         IReadOnlyList<(string Sku, int Quantity)> requestedItems,
@@ -85,9 +73,7 @@ public sealed class Order
 
         if (Status != "Delivered")
         {
-            // Nothing can come back that never arrived. A shipped-but-not-
-            // delivered order is still the carrier's problem, and an order
-            // that was cancelled was never charged in the first place.
+            // Nothing can come back that never arrived.
             return (null, ReturnRejectionReason.OrderNotDelivered, null);
         }
 
@@ -127,8 +113,7 @@ public sealed class Order
             returnLines.Add(OrderReturnLine.Create(sku, quantity, refund.Amount));
         }
 
-        // Only mutate once every line has been validated - a rejection must
-        // not leave half the order marked as returned.
+        // Mutate only after every line is validated - no half-returned order.
         for (var index = 0; index < requestedItems.Count; index++)
         {
             var (sku, quantity) = requestedItems[index];
@@ -140,14 +125,10 @@ public sealed class Order
     }
 
     /// <summary>
-    /// The Milestone 7 amount-only constructor. Milestone 66 kept it rather
-    /// than rewriting every caller: the k6 load scripts, smoke tests, Pact
-    /// contracts and the README's quickstart all POST {customerId, amount,
-    /// currency}, and breaking all of them at once would have made a pricing
-    /// regression indistinguishable from a migration mistake. An order
-    /// created this way has no lines and no breakdown - Subtotal is simply
-    /// the amount and everything else is zero, which is exactly what those
-    /// callers already meant.
+    /// The Milestone 7 amount-only constructor, kept so k6, Pact and the
+    /// README's quickstart - all still POSTing {customerId, amount,
+    /// currency} - don't break. Subtotal is just the amount; everything
+    /// else is zero.
     /// </summary>
     public static Order Create(string customerId, decimal amount, string currency, DateTimeOffset createdAt)
     {

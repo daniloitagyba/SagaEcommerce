@@ -30,11 +30,7 @@ public sealed class EfOrderStatusRepository(
             {
                 await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-                // Same guarded CAS as Orders.Worker's OrderStatusStore, for
-                // the same reason: `status = ANY(...)` decides both "is this
-                // move legal from where the row actually is?" and "am I the
-                // one making it?" in a single statement, so two operators
-                // racing to ship the same order cannot both win.
+                // Same guarded CAS as Orders.Worker's OrderStatusStore - `status = ANY(...)` so two operators racing to ship the same order can't both win.
                 var order = await dbContext.Orders
                     .Where(item => item.Id == orderId && allowedFrom.Contains(item.Status))
                     .Select(item => new { item.PaymentMethod })
@@ -42,10 +38,7 @@ public sealed class EfOrderStatusRepository(
 
                 if (order is null)
                 {
-                    // Distinguish "no such order" from "wrong state" - the
-                    // caller turns them into 404 and 409 respectively, and
-                    // conflating them would tell an operator their order
-                    // does not exist when it merely already shipped.
+                    // Distinguish "no such order" from "wrong state" - the caller turns them into 404 vs 409.
                     var exists = await dbContext.Orders.AnyAsync(item => item.Id == orderId, ct);
                     await transaction.RollbackAsync(ct);
                     return new OrderTransition(
@@ -67,23 +60,16 @@ public sealed class EfOrderStatusRepository(
                     return new OrderTransition(OrderTransitionOutcome.NotApplicable, null);
                 }
 
-                // Milestone 69: a cancellation here must give the coupon
-                // slot back, exactly as the saga-driven one does.
-                //
-                // Orders.Worker settles the redemption after its status
-                // commit; this path can do better because the coupon lives
-                // in the same database as the order, so the release rides
-                // the same transaction. A cancelled order that kept its
-                // redemption would spend a slot forever on an order that no
-                // longer exists.
+                // Milestone 69: a cancellation must give the coupon slot
+                // back, same as the saga-driven path - but this path can
+                // release it in the same transaction, since the coupon
+                // lives in the same database as the order.
                 if (targetStatus == OrderStatuses.Cancelled)
                 {
                     await ReleaseCouponAsync(orderId, ct);
                 }
 
-                // Queued in the same transaction as the status change: a
-                // capture command that outlived a rolled-back "Shipped"
-                // would charge a customer for goods that never left.
+                // Same transaction as the status change - a capture command outliving a rolled-back "Shipped" would charge for goods that never left.
                 if (settlementAction != OrderSettlementAction.None
                     && PaymentMethods.RequiresCapture(order.PaymentMethod))
                 {

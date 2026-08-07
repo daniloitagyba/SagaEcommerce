@@ -2,18 +2,12 @@ namespace BuildingBlocks;
 
 /// <summary>
 /// Milestone 41: reservation command/reply contracts for Inventory.Service.
-/// Plain JSON, not schema-registered - same rationale as Milestone 22's
-/// PaymentDecisionRequested/Replied: internal, transient request/reply
-/// messages, not a domain event other consumers evolve against.
-///
-/// InventoryReservationRequested must be produced keyed by Sku, not OrderId.
-/// Kafka guarantees exactly one consumer instance owns a given partition at
-/// a time, and the same key always maps to the same partition - so keying
-/// by Sku means every reservation request for a given SKU is handled
-/// strictly one-at-a-time by exactly one Inventory.Service replica. That
-/// partition ownership is the only thing preventing an oversell race
-/// between two requests for the same SKU; Inventory.Service deliberately
-/// does not also take a database row lock to enforce it.
+/// Plain JSON, not schema-registered - internal request/reply, not a domain
+/// event other consumers evolve against. Must be produced keyed by Sku, not
+/// OrderId: Kafka's per-partition ownership then makes every request for a
+/// given SKU handled strictly one-at-a-time, which is the only thing
+/// preventing an oversell race - Inventory.Service takes no database row
+/// lock to enforce it separately.
 /// </summary>
 public sealed record InventoryReservationRequested(
     Guid ReservationId,
@@ -32,24 +26,18 @@ public sealed record InventoryReservationReplied(
     string? Reason,
     string CorrelationId,
     DateTimeOffset DecidedAt,
-    // Milestone 74: distinguishes "the network cannot cover this, wait for
-    // a restock" from "the network cannot cover this, give up" - both are
-    // Reserved: false, but only the first should stop the saga from
-    // cancelling. A stale message from before this field existed
-    // deserializes it false, which resolves to the pre-existing behaviour:
-    // cancel outright, exactly as it always did.
+    // Milestone 74: distinguishes "wait for a restock" from "give up" -
+    // both are Reserved: false, but only the first stops the saga from
+    // cancelling. A stale message without this field deserializes it
+    // false, which is the pre-existing cancel-outright behaviour.
     bool Backordered = false);
 
 /// <summary>
-/// Milestone 43: the two ways a reservation can be settled once made -
-/// Commit turns a temporary hold into a permanent deduction (payment
-/// approved), Release gives the held stock back to Available (payment
-/// declined - this is the saga's compensating transaction). Both carry
-/// the SAME ReservationId as the original InventoryReservationRequested,
-/// not a new one: they act ON that reservation, not a new independent
-/// operation, and reusing the id lets the whole lifecycle be correlated
-/// in logs. Produced keyed by Sku for the same partition-ownership
-/// reason as the original reservation request.
+/// Milestone 43: how a reservation is settled - Commit makes the hold
+/// permanent (payment approved), Release gives it back (payment declined,
+/// the saga's compensating transaction). Both reuse the original
+/// ReservationId, not a new one, so the lifecycle correlates in logs, and
+/// are keyed by Sku for the same partition-ownership reason as the request.
 /// </summary>
 public sealed record InventoryReservationCommitRequested(
     Guid ReservationId,
@@ -88,21 +76,12 @@ public sealed record InventoryReservationReleaseReplied(
     DateTimeOffset DecidedAt);
 
 /// <summary>
-/// Milestone 73: a warehouse has fallen to or below its reorder point.
-///
-/// Until now <c>ReorderPoint</c> was a column nobody read - the model
-/// carried a number that implied stock gets replenished and then never
-/// acted on it. This is the signal a replenishment process would consume.
-/// Nothing in this lab does yet, and that is the honest state of it: the
-/// event is emitted, durably and transactionally, and the consumer is
-/// somebody else's milestone.
-///
-/// <para>
-/// Emitted on the <em>crossing</em>, not on every reservation that finds a
-/// warehouse already low. A shop selling briskly from a depleted warehouse
-/// would otherwise publish one of these per order, which is how a useful
-/// signal becomes a topic everyone filters out.
-/// </para>
+/// Milestone 73: a warehouse has fallen to or below its reorder point - the
+/// signal a replenishment process would consume, though nothing in this lab
+/// consumes it yet; the event is emitted durably, and the consumer is
+/// somebody else's milestone. Emitted on the <em>crossing</em>, not on
+/// every reservation that finds a warehouse already low, or a brisk-selling
+/// depleted warehouse would publish one per order.
 /// </summary>
 public sealed record WarehouseReplenishmentNeeded(
     string Sku,

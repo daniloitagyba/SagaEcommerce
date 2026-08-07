@@ -7,23 +7,16 @@ using Polly.Registry;
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 71: records a completed order against the customer and lets
-/// their standing climb.
-///
-/// Runs on <em>confirmation</em>, not on order creation - otherwise placing
-/// and cancelling orders would be the cheapest possible way to reach Gold
-/// and earn a permanent discount for nothing. Raw Npgsql, matching every
-/// other write this worker does against the orders database.
+/// Milestone 71: records a completed order and lets standing climb. Runs
+/// on <em>confirmation</em>, not creation, or placing and cancelling would
+/// be the cheapest route to Gold. Raw Npgsql, matching this worker's other writes.
 /// </summary>
 public sealed class CustomerTierStore(
     NpgsqlDataSource dataSource,
     ResiliencePipelineProvider<string> pipelineProvider,
     ILogger<CustomerTierStore> logger)
 {
-    // One statement: increment the totals and re-derive the tier from the
-    // new lifetime spend in the same UPDATE. Reading, computing in C# and
-    // writing back would let two concurrent confirmations each miss the
-    // other's contribution.
+    // One statement: increment and re-derive tier together, or two concurrent confirmations could each miss the other's contribution.
     private const string RecordSql = """
         UPDATE customers
         SET lifetime_spend = lifetime_spend + @amount,
@@ -72,10 +65,8 @@ public sealed class CustomerTierStore(
 }
 
 /// <summary>
-/// Mirrors Orders.Domain.CustomerTiers. Orders.Worker deliberately does not
-/// reference Orders.Domain (see CouponRedemptionState for the same
-/// reasoning), and the thresholds have to live somewhere this SQL can read
-/// them - so they are duplicated here with a test pinning the two together.
+/// Mirrors Orders.Domain.CustomerTiers - Orders.Worker deliberately doesn't
+/// reference Orders.Domain, so these are duplicated with a test pinning the two together.
 /// </summary>
 public static class CustomerTierThresholds
 {

@@ -23,13 +23,9 @@ public sealed record CreateOrderCommand(
     Orders.Domain.ShippingAddress? ShippingAddress = null)
 {
     /// <summary>
-    /// Milestone 66 runs both request shapes side by side rather than
-    /// cutting over at once - the expand half of an expand/contract
-    /// migration. The line-item shape is the real one; the amount-only
-    /// shape is what the k6 scripts, smoke tests, Pact contracts and the
-    /// README quickstart have posted since Milestone 7, and keeping them
-    /// working is what makes it possible to tell a pricing bug apart from
-    /// a migration bug while both exist.
+    /// Milestone 66 runs both request shapes side by side - the expand half
+    /// of an expand/contract migration - so a pricing bug stays
+    /// distinguishable from a migration bug while both are live.
     /// </summary>
     public bool IsLineItemCheckout => Items is { Count: > 0 };
 }

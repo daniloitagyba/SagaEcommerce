@@ -4,12 +4,10 @@ using System.Text;
 namespace Storefront.Service;
 
 /// <summary>
-/// Storefront.Service is a backend-for-frontend: the browser only ever
-/// talks to this one origin, avoiding CORS entirely and keeping Catalog/
-/// Cart/Orders' internal cluster addresses out of client-side code. Every
-/// route here is a thin, generic forward - the interesting logic (auth
-/// injection for orders-api) lives in ForwardOrderAsync specifically,
-/// since Catalog and Cart need no such thing.
+/// Storefront.Service is a backend-for-frontend: the browser only talks to
+/// this one origin, avoiding CORS and keeping internal cluster addresses
+/// out of client-side code. Every route is a thin, generic forward - the
+/// interesting logic (auth injection) lives in ForwardOrderAsync specifically.
 /// </summary>
 public static class ProxyEndpoints
 {

@@ -14,22 +14,12 @@ public sealed class InvalidSettlementRequestException(string message, Exception?
 
 /// <summary>
 /// Milestone 68: the second half of the two-phase payment flow - capturing
-/// an authorization Orders decided to charge, or voiding one it will never
-/// charge.
-///
-/// Until now a payment was a single decision: approved or not, and the
-/// money conceptually moved at that instant. That collapses the distinction
-/// every card network actually makes - a hold placed at checkout, and funds
-/// taken when the goods ship. Splitting it is what makes "authorized but
-/// not yet charged" a state the system can be in, which in turn is what
-/// makes an expiry sweeper meaningful (see PaymentAuthorizationSweeper) and
-/// what lets a cancelled order release the shopper's money instead of
-/// silently keeping it held.
-///
-/// Both operations are guarded inside the domain (Payment.TryCapture /
-/// TrySettleWithoutCapture only act from Authorized), so a redelivered
-/// command is a no-op rather than a double charge - the same reasoning as
-/// the inbox, applied to a state transition instead of a message id.
+/// an authorization Orders decided to charge, or voiding one it never will.
+/// Splits "approved" from "money moved", the distinction every card network
+/// makes, which is what makes an expiry sweeper meaningful (see
+/// PaymentAuthorizationSweeper). Both operations are guarded inside the
+/// domain, so a redelivered command is a no-op, not a double charge - the
+/// same reasoning as the inbox, applied to a state transition.
 /// </summary>
 public sealed class PaymentSettlementProcessor(
     IServiceScopeFactory scopeFactory,
@@ -76,10 +66,7 @@ public sealed class PaymentSettlementProcessor(
 
         if (payment is null)
         {
-            // Nothing to settle. Not an error worth retrying or dead-lettering:
-            // an order whose payment was never recorded (declined outright, or
-            // an amount-only order that never reached Payments) has no hold to
-            // release, and re-delivering this command will not create one.
+            // Nothing to settle, and not worth retrying: no recorded payment means no hold to release.
             await transaction.RollbackAsync(cancellationToken);
             PaymentSettlementLog.NoPaymentToSettle(logger, orderId);
             return MessageProcessingResult.Processed;
@@ -89,9 +76,7 @@ public sealed class PaymentSettlementProcessor(
         var changed = operation switch
         {
             SettlementOperation.Capture => payment.TryCapture(settledAt),
-            // Milestone 70: guarded cumulatively inside the domain, so a
-            // redelivered refund - or a second return of units already sent
-            // back - cannot refund more than was ever charged.
+            // Milestone 70: guarded cumulatively inside the domain, so a redelivered refund can't exceed what was ever charged.
             SettlementOperation.Refund => payment.TryRefund(refundAmount, settledAt),
             _ => payment.TrySettleWithoutCapture(PaymentStates.Voided, reason, settledAt)
         };

@@ -68,15 +68,7 @@ public static class InfrastructureServiceCollectionExtensions
 
             return new ProducerBuilder<string, byte[]>(config).Build();
         });
-        // Milestone 69: a second producer, keyed string/string.
-        //
-        // OrderCreated is Avro, so the producer above is <string, byte[]>.
-        // The settlement commands the fulfilment API queues are plain JSON,
-        // and Confluent's IProducer is generic over its value type - so
-        // there is no single producer that can carry both. Registering only
-        // one of them compiles perfectly and then fails at runtime the
-        // moment the outbox dispatcher is constructed, which takes the
-        // *whole outbox* down with it, not just the new command.
+        // Milestone 69: a second producer, keyed string/string - OrderCreated is Avro (byte[]), settlement commands are plain JSON, and IProducer can't carry both.
         services.AddSingleton<IProducer<string, string>>(serviceProvider =>
         {
             var options = serviceProvider.GetRequiredService<IOptions<KafkaOptions>>().Value;

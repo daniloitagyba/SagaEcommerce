@@ -1,26 +1,16 @@
 namespace Orders.Domain;
 
 /// <summary>
-/// Milestone 66: what the customer actually bought. Until now Order was
+/// Milestone 66: what the customer actually bought - before this, Order was
 /// amount-only (Milestone 7) and the saga faked a SKU by hashing the order
-/// id (SagaSkuMapper) - so "reserve inventory" reserved a product nobody
-/// ordered. Everything downstream that claims to be about a purchase
-/// (inventory reservation, bestseller tracking, the orchestrated saga's
-/// compensation) was operating on a stand-in until this type existed.
+/// id, so "reserve inventory" reserved a product nobody ordered.
 ///
-/// UnitPrice is snapshotted at checkout from the Catalog's current price,
-/// not carried over from whatever the cart cached when the item was added -
-/// the cart deliberately shows the price the shopper saw (see
-/// CartLineItem), and checkout is where that gets revalidated against
-/// reality. A shopper who left an item in the cart for a week pays today's
-/// price, and the order records what was actually charged.
-///
-/// LineDiscount is this line's prorated share of the order-level discounts,
-/// distributed with NodaMoney's Split so the shares always sum to exactly
-/// the order's DiscountTotal - never a cent more or less. Storing it per
-/// line (rather than only at the order level) is what makes partial
-/// refunds and per-item margin reporting possible later without
-/// re-deriving an allocation that may no longer reproduce.
+/// UnitPrice is snapshotted at checkout from Catalog's current price, not
+/// whatever the cart cached when the item was added - a shopper who left
+/// an item for a week pays today's price. LineDiscount is this line's
+/// prorated share of the order-level discount, stored per line so partial
+/// refunds and per-item margin reporting don't need to re-derive an
+/// allocation that may no longer reproduce.
 /// </summary>
 public sealed class OrderLine
 {
@@ -51,14 +41,7 @@ public sealed class OrderLine
     /// <summary>LineSubtotal - LineDiscount.</summary>
     public decimal LineTotal { get; private set; }
 
-    /// <summary>
-    /// Milestone 70: how many of this line's units have come back.
-    ///
-    /// Tracked per line rather than per return so "may this customer return
-    /// two more?" is answerable without replaying every prior return, and
-    /// so the refund calculator knows which per-unit shares are still
-    /// unclaimed.
-    /// </summary>
+    /// <summary>Milestone 70: how many of this line's units have come back - tracked per line so "may this customer return two more?" needs no replay.</summary>
     public int ReturnedQuantity { get; private set; }
 
     public int ReturnableQuantity => Quantity - ReturnedQuantity;

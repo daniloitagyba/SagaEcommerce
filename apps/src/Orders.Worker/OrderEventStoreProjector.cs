@@ -10,12 +10,10 @@ namespace Orders.Worker;
 
 /// <summary>
 /// Milestone 23: appends to the append-only order_events store - a second,
-/// independent consumer group on the same two topics the choreographed CQRS
-/// projector (Milestone 13) already reads, additive by the same principle
-/// Milestones 21 and 22 used. No inbox-based deduplication here (unlike the
-/// choreographed projector) - a deliberate scope boundary, documented rather
-/// than hidden: a redelivered message can append a duplicate event, which
-/// the fold in GetOrderHistoryHandler doesn't currently guard against either.
+/// additive consumer group on the same topics the choreographed CQRS
+/// projector already reads. No inbox dedup here, a deliberate scope
+/// boundary: a redelivered message can append a duplicate event, which the
+/// fold in GetOrderHistoryHandler doesn't guard against either.
 /// </summary>
 public sealed class OrderEventStoreProjector(
     IOptions<OrderEventStoreOptions> options,

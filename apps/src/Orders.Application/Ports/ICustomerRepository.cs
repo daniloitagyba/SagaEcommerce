@@ -4,13 +4,6 @@ namespace Orders.Application.Ports;
 
 public interface ICustomerRepository
 {
-    /// <summary>
-    /// Returns the customer, creating them on first sight.
-    ///
-    /// Auto-provisioning rather than a registration flow: this lab has no
-    /// sign-up, and the first order a customer id places is the honest
-    /// moment their account begins - which is what makes account age a real
-    /// risk signal rather than a constant.
-    /// </summary>
+    /// <summary>Returns the customer, creating them on first sight - this lab has no sign-up flow, so the first order is when the account begins.</summary>
     Task<Customer> GetOrCreateAsync(string customerId, CancellationToken cancellationToken);
 }

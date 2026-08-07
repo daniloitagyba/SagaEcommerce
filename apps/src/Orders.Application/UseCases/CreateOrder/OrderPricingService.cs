@@ -15,16 +15,10 @@ public sealed record PricedCheckout(
     string? CouponCode);
 
 /// <summary>
-/// Milestone 66: turns "SKU + quantity" into a priced order.
-///
-/// The catalog lookup happens here, server-side, and the request's own
-/// notion of price is never consulted - a client that posts
-/// {"sku":"SKU-ELEC-001","quantity":1} gets today's catalog price whether
-/// it likes it or not. Cart.Service deliberately snapshots the price the
-/// shopper saw when they added an item (see CartLineItem), which is the
-/// right behaviour for a cart and the wrong one for a charge; checkout is
-/// where that snapshot gets revalidated against reality, exactly as
-/// CartLineItem's own comment promised but nothing implemented until now.
+/// Milestone 66: turns "SKU + quantity" into a priced order. The catalog
+/// lookup happens here, server-side - a client posting a SKU and quantity
+/// gets today's catalog price regardless of what it thinks the price is,
+/// revalidating whatever Cart.Service snapshotted when the item was added.
 /// </summary>
 public sealed class OrderPricingService(
     ICatalogClient catalogClient,
@@ -52,10 +46,7 @@ public sealed class OrderPricingService(
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
-                // Without a price there is no order. Surfacing this as an
-                // infrastructure fault (503 + Retry-After) rather than a
-                // validation error matters: the request was perfectly
-                // valid and retrying it is the correct client behaviour.
+                // Without a price there is no order - surfaced as an infrastructure fault (503), not a validation error, since retrying is correct here.
                 throw new InfrastructureUnavailableException(
                     "Catalog.Service is currently unavailable, so the order cannot be priced.",
                     exception);
@@ -82,9 +73,7 @@ public sealed class OrderPricingService(
 
         if (currencyCodes.Count > 1)
         {
-            // A multi-currency order has no single total to charge. Better
-            // to reject it than to invent an exchange rate this lab has no
-            // business owning.
+            // A multi-currency order has no single total to charge - reject rather than invent an exchange rate.
             errors["Items"] = [$"All items must share one currency, but the catalog returned {string.Join(", ", currencyCodes)}."];
             return (null, errors);
         }
@@ -110,10 +99,7 @@ public sealed class OrderPricingService(
                 new Money(entry.Product.Price, currency)))
             .ToList();
 
-        // Milestone 67: resolve the coupon before pricing, never during.
-        // The subtotal needed for the minimum-order check is just the sum
-        // of the lines, which does not depend on the coupon - so this
-        // ordering costs nothing and keeps the rules engine free of I/O.
+        // Milestone 67: resolve the coupon before pricing, never during - keeps the rules engine free of I/O.
         ResolvedCoupon? resolvedCoupon = null;
         if (!string.IsNullOrWhiteSpace(command.CouponCode))
         {
@@ -126,11 +112,7 @@ public sealed class OrderPricingService(
 
             if (rejection != CouponRejectionReason.None)
             {
-                // A bad coupon fails the checkout instead of being silently
-                // dropped. Milestone 66 ignored unknown codes because a
-                // config typo was the only way to get one; now that coupons
-                // expire and run out, "why is this not applying?" is a
-                // question the shopper deserves an answer to.
+                // A bad coupon fails the checkout instead of being silently dropped - now that coupons expire and run out, the shopper deserves to know why.
                 errors[nameof(CreateOrderCommand.CouponCode)] =
                     [CouponEligibility.Describe(rejection, command.CouponCode.Trim().ToUpperInvariant())];
                 return (null, errors);
@@ -139,10 +121,7 @@ public sealed class OrderPricingService(
             resolvedCoupon = coupon;
         }
 
-        // Milestone 71: the customer's standing and the destination are
-        // resolved here for the same reason the coupon is - the rules stay
-        // a pure function of facts handed to them, never of a repository
-        // they could reach for mid-evaluation.
+        // Milestone 71: customer standing and destination resolved here too, so the rules stay pure functions of facts, never a repository lookup.
         var customer = await customerRepository.GetOrCreateAsync(command.CustomerId!, cancellationToken);
         var destination = command.ShippingAddress is { IsComplete: true } address
             ? new PricingDestination(address.Region, address.PostalPrefix)

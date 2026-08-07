@@ -7,50 +7,29 @@ using Polly.Registry;
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 67: settles a coupon redemption once the order it belongs to
-/// reaches a terminal state.
-///
-/// Reserving a slot at checkout and never giving it back would make every
-/// declined payment burn a redemption permanently - a coupon limited to
-/// 100 uses would be exhausted by 100 failed checkouts without a single
-/// sale. Release is what makes the redemption a saga participant rather
-/// than a fire-and-forget increment, and it is the mirror image of
-/// Inventory's reservation release.
-///
-/// Raw Npgsql rather than EF, matching OrderStatusStore/SagaOrchestrationStore
-/// in this project: EF owns the schema (see Orders.Domain.Coupon and the
-/// AddCouponLifecycle migration), the worker's hot paths do not go through it.
+/// Milestone 67: settles a coupon redemption once its order reaches a
+/// terminal state. Without release, every declined payment would burn a
+/// redemption permanently - a 100-use coupon exhausted by 100 failed
+/// checkouts, no sale. Raw Npgsql, not EF, matching OrderStatusStore /
+/// SagaOrchestrationStore: EF owns the schema, not the worker's hot paths.
 /// </summary>
 public sealed class CouponRedemptionStore(
     NpgsqlDataSource dataSource,
     ResiliencePipelineProvider<string> pipelineProvider,
     ILogger<CouponRedemptionStore> logger)
 {
-    // Both statements are guarded on state = 'Reserved', so a redelivered
-    // message or a second saga path settling the same order is a no-op
-    // rather than a double count. The decrement rides on the same
-    // condition, which is what stops a released slot being handed back
-    // twice.
+    // Guarded on state = 'Reserved', so a redelivered message or a second saga path is a no-op, not a double count.
     private const string ConfirmSql = """
         UPDATE coupon_redemptions
         SET state = @confirmed_state, settled_at = @settled_at
         WHERE code = @code AND order_id = @order_id AND state = @reserved_state;
         """;
 
-    // Milestone 69: releasable from Confirmed as well as Reserved.
-    //
-    // Milestone 67 guarded this on Reserved alone, which was correct while
-    // an order settled exactly once - it went Created -> Confirmed or
-    // Created -> Cancelled, never both. The fulfilment states break that
-    // assumption: an order can now be confirmed and cancelled afterwards,
-    // and the redemption would already have moved to Confirmed by then, so
-    // the release silently did nothing and the slot stayed spent for an
-    // order that no longer exists.
-    //
-    // Released is still excluded, which is what keeps a double release from
-    // handing the same slot back twice - redemption_count is incremented
-    // once at reservation and never touched by Confirmed, so exactly one
-    // decrement is owed regardless of which state it is released from.
+    // Milestone 69: releasable from Confirmed as well as Reserved, since
+    // fulfilment states let an order be confirmed and later cancelled - the
+    // Milestone 67 Reserved-only guard silently did nothing in that case,
+    // leaving the slot spent for an order that no longer exists. Released
+    // is still excluded, so a double release can't hand the slot back twice.
     private const string ReleaseSql = """
         WITH released AS (
             UPDATE coupon_redemptions

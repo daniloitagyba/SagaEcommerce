@@ -101,28 +101,19 @@ public enum ReturnRejectionReason
 }
 
 /// <summary>
-/// Milestone 70: works out what a partial return is worth.
-///
-/// This is where storing <see cref="OrderLine.LineDiscount"/> per line back
-/// in Milestone 66 pays for itself. Refunding a returned unit at its list
-/// price would hand back more than was ever charged - a shopper who used a
-/// 50% coupon and returns everything would be refunded twice what they
-/// paid. The refund has to come out of <see cref="OrderLine.LineTotal"/>,
-/// the amount net of that line's prorated discount, and that number only
-/// exists because it was computed and stored at checkout rather than
-/// re-derived now from rules that may have changed since.
+/// Milestone 70: works out what a partial return is worth, out of
+/// <see cref="OrderLine.LineTotal"/> - net of the line's prorated discount,
+/// stored at checkout - rather than list price, or a shopper who used a
+/// 50% coupon and returns everything would be refunded twice what they paid.
 /// </summary>
 public static class ReturnRefundCalculator
 {
     /// <summary>
-    /// Prices a partial return as a slice of the line's charged total.
-    ///
-    /// Dividing and rounding would break the invariant that matters most:
-    /// returning a line one unit at a time must refund exactly what
-    /// returning it all at once would. <paramref name="alreadyReturned"/>
-    /// moves the starting point along the cumulative curve, so successive
-    /// partial returns of the same line consume disjoint slices and can
-    /// never together exceed - or fall short of - the line's total.
+    /// Prices a partial return as a slice of the line's charged total, so
+    /// returning a line one unit at a time refunds exactly what returning
+    /// it all at once would. <paramref name="alreadyReturned"/> moves the
+    /// starting point along the cumulative curve, so successive partial
+    /// returns consume disjoint slices that never exceed the line's total.
     /// </summary>
     public static Money RefundForUnits(
         Money lineTotal,
@@ -136,14 +127,9 @@ public static class ReturnRefundCalculator
             return new Money(0m, currency);
         }
 
-        // The difference between two points on the cumulative curve, rather
-        // than summing materialised shares. Two bugs in NodaMoney's Split
-        // made that the wrong tool here, both found by the property test
-        // below: it throws outright for a share count of 1 (the commonest
-        // line there is), and for small amounts spread over many units it
-        // emits negative shares - Money(0.06).Split(11) yields ten 0.01s
-        // and a -0.04, so returning the first ten units would refund 0.10
-        // against a line charged 0.06.
+        // Difference between two points on the cumulative curve, not summed
+        // materialised shares - NodaMoney's Split throws for a share count
+        // of 1 and can emit negative shares for small amounts (see MoneyAllocation).
         var upToNow = MoneyAllocation.CumulativeFor(lineTotal, lineQuantity, alreadyReturned + returningNow, currency);
         var upToBefore = MoneyAllocation.CumulativeFor(lineTotal, lineQuantity, alreadyReturned, currency);
 

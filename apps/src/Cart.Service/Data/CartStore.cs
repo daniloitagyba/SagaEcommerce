@@ -8,24 +8,18 @@ using StackExchange.Redis;
 namespace Cart.Service.Data;
 
 /// <summary>
-/// Redis IS the system of record here, not a cache in front of one -
-/// there is no Postgres fallback and no cache-aside factory delegate like
-/// Orders.Api's RedisOrderCache. If this data is lost, the cart is simply
-/// gone; that is an acceptable trade for ephemeral, reconstructable,
-/// low-value state, unlike orders or payments. A cart is a single Redis
-/// Hash (field = Sku, value = JSON-encoded CartLineItem) so the whole
-/// cart can be read, and the whole cart's TTL refreshed, in one round trip.
+/// Redis IS the system of record here, not a cache in front of one - no
+/// Postgres fallback, no cache-aside factory like RedisOrderCache. If lost,
+/// the cart is simply gone, an acceptable trade for ephemeral, low-value
+/// state. A cart is a single Redis Hash (field = Sku, value = JSON) so it
+/// reads and refreshes its TTL in one round trip.
 ///
-/// Deliberately does NOT use BuildingBlocks' shared "redis" pipeline
-/// (ResilienceExtensions.RedisPipeline): that pipeline's 150ms timeout is
-/// tuned for RedisOrderCache's cache-aside use, where a timeout just means
-/// "fall back to Postgres" - fast failure is the right call when a
-/// fallback exists. Here there is no fallback, so the same aggressive
-/// timeout would just fail otherwise-successful requests under ordinary
-/// latency jitter (this is exactly what happened against a cold
-/// Testcontainers Redis on a loaded CI runner). CartResiliencePipeline
-/// keeps the circuit breaker but uses a timeout suited to being the only
-/// path to the data, not a fast-fail-and-degrade one.
+/// Deliberately does NOT use BuildingBlocks' shared "redis" pipeline: its
+/// 150ms timeout is tuned for cache-aside use, where a timeout just means
+/// "fall back to Postgres" - fast failure is wrong when there's no
+/// fallback, and the same aggressive timeout failed otherwise-successful
+/// requests against a cold Testcontainers Redis on a loaded CI runner.
+/// CartResiliencePipeline keeps the circuit breaker but uses a longer timeout.
 /// </summary>
 public sealed class CartStore(
     IConnectionMultiplexer connectionMultiplexer,

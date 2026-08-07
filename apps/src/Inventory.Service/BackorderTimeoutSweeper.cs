@@ -8,33 +8,21 @@ using Microsoft.Extensions.Options;
 namespace Inventory.Service;
 
 /// <summary>
-/// Milestone 74: gives up on a backorder nobody restocked in time.
-///
-/// Waiting is not free for the customer - an order parked in Backordered
-/// forever is a support ticket, not a courtesy. Unlike
-/// Payments.Service.PaymentAuthorizationSweeper, there is no money on hold
-/// to release here (payment is decided one saga step after reservation, so
-/// a backordered order was never charged) - what this sweeper releases is
-/// the customer's wait. It reuses InventoryReservationReplied with
-/// Backordered: false, which OrderSagaReplyConsumer already treats as a
-/// permanent refusal: no new saga-side code needed, this looks like an
-/// ordinary "insufficient stock" reply that happened to arrive late.
-///
-/// Same single-sweeper reasoning as PaymentAuthorizationSweeper: SKIP
-/// LOCKED already makes concurrent sweeps safe, so the advisory lock exists
-/// only to stop every replica polling every tick, not for correctness.
+/// Milestone 74: gives up on a backorder nobody restocked in time - an
+/// order parked in Backordered forever is a support ticket, not a courtesy.
+/// No money is on hold here (payment is decided one step after reservation)
+/// - what this releases is the customer's wait. Reuses
+/// InventoryReservationReplied with Backordered: false, which
+/// OrderSagaReplyConsumer already treats as a permanent refusal, so no new
+/// saga-side code is needed. Same single-sweeper reasoning as
+/// PaymentAuthorizationSweeper: the advisory lock only stops wasted polling.
 /// </summary>
 public sealed class BackorderTimeoutSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<BackorderOptions> options,
     ILogger<BackorderTimeoutSweeper> logger) : BackgroundService
 {
-    /// <summary>
-    /// Distinct from Payments' SweepLockKey by construction - advisory
-    /// locks are per-database, and this is a different database - but kept
-    /// numerically distinct too, so a grep for either value is unambiguous
-    /// about which service it belongs to.
-    /// </summary>
+    /// <summary>Kept numerically distinct from Payments' SweepLockKey so a grep for either value is unambiguous about which service it belongs to.</summary>
     private const long SweepLockKey = 7400_0001;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -57,9 +45,7 @@ public sealed class BackorderTimeoutSweeper(
             }
             catch (Exception exception)
             {
-                // A failed sweep must never take the host down - the
-                // backorders it did not time out this pass are still
-                // claimable next time.
+                // A failed sweep must never take the host down - backorders it missed this pass are still claimable next time.
                 BackorderSweeperLog.SweepFailed(logger, exception);
             }
         }

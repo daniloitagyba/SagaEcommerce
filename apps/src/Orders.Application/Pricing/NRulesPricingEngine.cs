@@ -8,23 +8,13 @@ namespace Orders.Application.Pricing;
 
 /// <summary>
 /// Milestone 66: prices an order by running the promotion rules, then
-/// assembling the result deterministically.
-///
-/// The split is deliberate. Promotions are what a rules engine is actually
-/// good at: independent, individually-authored, freely-combining rules
-/// whose interactions are the hard part - which is why they live in
-/// PromotionRules.cs as declarative rules. Shipping and tax are not
-/// promotions, they are arithmetic policy applied in a fixed order
-/// (tax on the discounted subtotal, never the gross one), so encoding
-/// their ordering as rule priorities would add fragility to buy nothing.
-/// Free shipping is the one genuine promotion among them and it <em>is</em>
-/// a rule - it just grants a marker fact this method reads.
-///
-/// The engine also owns the one invariant no individual rule can enforce:
-/// discounts are capped at the subtotal. Two rules each granting 60% is a
-/// perfectly reasonable thing for two independently-authored campaigns to
-/// do, and without the cap the order total goes negative - the single most
-/// valuable thing the property-based tests pin down.
+/// assembling the result deterministically. Promotions live in
+/// PromotionRules.cs as declarative rules - independent, freely-combining,
+/// which is what a rules engine is good at. Shipping and tax are fixed
+/// arithmetic policy instead (tax on the discounted subtotal), not rule
+/// priorities. This class also owns the one invariant no rule enforces
+/// alone: discounts capped at the subtotal, so two campaigns each granting
+/// 60% can't send the order total negative.
 /// </summary>
 public sealed class NRulesPricingEngine : IPricingEngine
 {
@@ -37,9 +27,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
 
         var repository = new RuleRepository();
         repository.Load(source => source.From(typeof(CouponPercentageRule).Assembly));
-        // Compiling the Rete network is expensive and the result is
-        // immutable and thread-safe, so it happens once per process here
-        // and every Price call gets a cheap session off it.
+        // Compiling the Rete network is expensive but thread-safe and immutable, so it happens once per process.
         _sessionFactory = repository.Compile();
     }
 
@@ -72,10 +60,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
 
         if (rawDiscountTotal > subtotal)
         {
-            // Keep the receipt honest: the itemised discounts must still
-            // add up to the total that was actually applied, so the excess
-            // is absorbed by shrinking the last one rather than left to
-            // contradict the summary.
+            // Keep the receipt honest: shrink the itemised discounts to match the capped total.
             discounts = CapDiscounts(discounts, subtotal, currency);
         }
 
@@ -112,13 +97,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
             lineDiscounts);
     }
 
-    /// <summary>
-    /// Milestone 71: shipping follows the destination.
-    ///
-    /// Falls back to the flat rate when no address was supplied at all -
-    /// the amount-only checkout shape has no destination, and refusing to
-    /// price it would break the expand/contract promise Milestone 66 made.
-    /// </summary>
+    /// <summary>Milestone 71: shipping follows the destination, falling back to the flat rate when the amount-only checkout shape supplies no address.</summary>
     private decimal ResolveShipping(PricingRequest request)
     {
         if (request.Destination is not { } destination || destination.PostalPrefix.Length == 0)
@@ -136,11 +115,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
             ? $"Shipping to {destination.Region} ({destination.PostalPrefix})"
             : "Standard shipping";
 
-    /// <summary>
-    /// Tax follows where the goods land, not where the shop is. With no
-    /// destination the global rate applies - which defaults to 0, exactly
-    /// as it did before addresses existed.
-    /// </summary>
+    /// <summary>Tax follows where the goods land, not the shop; no destination means the global rate (0 by default).</summary>
     private decimal ResolveTaxRate(PricingRequest request)
     {
         if (request.Destination is { } destination

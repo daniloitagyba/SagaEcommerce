@@ -5,16 +5,10 @@ namespace Orders.Application.UseCases.CreateOrder;
 
 /// <summary>
 /// Milestone 66 replaced a hand-rolled Dictionary-building validator with
-/// FluentValidation. The trigger was the request growing a conditional
-/// shape: it now arrives either as line items (where Amount and Currency
-/// are computed server-side from the catalog) or in the legacy amount-only
-/// form (where the client must supply them), plus per-item rules needing
-/// indexed error keys like Items[2].Quantity. Expressing "these rules
-/// apply only in this shape" is precisely what the hand-rolled version had
-/// started to reimplement.
-///
-/// The static Validate/Normalize surface is kept deliberately so no caller
-/// outside this file had to change.
+/// FluentValidation, once the request grew a conditional shape (line items
+/// vs. the legacy amount-only form) plus per-item rules needing indexed
+/// error keys like Items[2].Quantity. The static Validate/Normalize
+/// surface is kept so no caller outside this file had to change.
 /// </summary>
 public sealed class CreateOrderCommandRules : AbstractValidator<CreateOrderCommand>
 {
@@ -55,10 +49,7 @@ public sealed class CreateOrderCommandRules : AbstractValidator<CreateOrderComma
                 .MaximumLength(64).WithMessage("CouponCode must not exceed 64 characters.")
                 .When(command => !string.IsNullOrWhiteSpace(command.CouponCode));
 
-            // Milestone 68: an unrecognised method is rejected rather than
-            // quietly falling back to Pix - silently charging by a
-            // different method than the shopper picked is worse than
-            // refusing the order.
+            // Milestone 68: an unrecognised method is rejected, not silently defaulted to Pix - charging differently than requested is worse than refusing.
             RuleFor(command => command.PaymentMethod!)
                 .Must(BuildingBlocks.PaymentMethods.IsSupported)
                 .WithMessage($"PaymentMethod must be one of: {BuildingBlocks.PaymentMethods.Card}, {BuildingBlocks.PaymentMethods.Pix}, {BuildingBlocks.PaymentMethods.Boleto}.")

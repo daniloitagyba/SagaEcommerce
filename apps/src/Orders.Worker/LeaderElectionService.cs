@@ -21,15 +21,12 @@ public sealed class LeaderElectionOptions
 }
 
 /// <summary>
-/// Milestone 36: Kubernetes Lease-based leader election (k8s.LeaderElection,
-/// the C# port of client-go's leaderelection package) so that exactly one
+/// Milestone 36: Kubernetes Lease-based leader election so exactly one
 /// orders-worker replica actively runs SagaTimeoutSweeper at a time, rather
 /// than every KEDA-scaled replica redundantly polling. Requires
-/// automountServiceAccountToken: true on this pod (previously false, a
-/// Milestone 26 hardening default) - InClusterConfig() needs the projected
-/// ServiceAccount token to authenticate to the API server. Scoped tightly:
-/// RBAC grants this ServiceAccount access to nothing but Lease objects in
-/// this one namespace.
+/// automountServiceAccountToken: true on this pod (a Milestone 26 hardening
+/// default flipped back on), scoped tightly: RBAC grants nothing but Lease
+/// objects in this one namespace.
 /// </summary>
 public sealed class LeaderElectionService(
     IOptions<LeaderElectionOptions> options,
@@ -47,18 +44,12 @@ public sealed class LeaderElectionService(
         var retryPeriod = TimeSpan.FromSeconds(_options.RetryPeriodSeconds);
         LeaderElectionServiceLog.Starting(logger, _identity, _options.LeaseName);
 
-        // RunUntilLeadershipLostAsync completes once leadership is lost and,
-        // unlike client-go's Go original, does not retry acquisition on its
-        // own - this outer loop keeps re-attempting for the pod's lifetime.
-        // Building the Kubernetes client (InClusterConfig, inside the try
-        // below) can fail exactly the same way leadership itself can - it
-        // throws outright when there's no ServiceAccount token to load,
-        // which is normal and expected outside a real cluster - so it gets
-        // the same catch-log-retry treatment instead of running unguarded,
-        // where the exception would go unhandled and (with this host's
-        // BackgroundServiceExceptionBehavior=StopHost) take the whole
-        // process down over what is, for this service, a routine and
-        // permanently-recoverable-on-the-next-retry condition.
+        // RunUntilLeadershipLostAsync doesn't retry acquisition on its own,
+        // so this outer loop keeps re-attempting for the pod's lifetime.
+        // Building the Kubernetes client can fail the same way (no
+        // ServiceAccount token outside a real cluster), so it gets the same
+        // catch-log-retry treatment instead of taking the whole process
+        // down via BackgroundServiceExceptionBehavior=StopHost.
         while (!stoppingToken.IsCancellationRequested)
         {
             try

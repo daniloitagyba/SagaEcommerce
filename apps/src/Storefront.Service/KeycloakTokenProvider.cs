@@ -16,13 +16,10 @@ public sealed class KeycloakOptions
 
 /// <summary>
 /// The whole reason Storefront.Service exists as a real backend rather
-/// than the static files being served directly by nginx: orders-api-clients
-/// is a confidential client (client_credentials grant, secret required) -
-/// see scripts/keycloak-configure-realm.sh. That secret can never reach
-/// the browser. This provider fetches and caches the token server-side,
-/// refreshing shortly before it expires, so the checkout proxy endpoint
-/// can attach a valid Authorization header without the client ever
-/// knowing Keycloak exists.
+/// than static files served by nginx: orders-api-clients is a confidential
+/// client (secret required, scripts/keycloak-configure-realm.sh) whose
+/// secret can never reach the browser. Fetches and caches the token
+/// server-side, refreshing shortly before it expires.
 /// </summary>
 public sealed class KeycloakTokenProvider(
     HttpClient httpClient,

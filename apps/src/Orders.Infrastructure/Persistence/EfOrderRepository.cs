@@ -21,13 +21,10 @@ public sealed class EfOrderRepository(
         CouponReservation? couponReservation,
         CancellationToken cancellationToken)
     {
-        // A lost redemption race is reported back out of the pipeline as a
-        // value, not thrown through it. The Postgres pipeline's retry has no
-        // ShouldHandle predicate, so it retries every exception and feeds
-        // the circuit breaker with each one - throwing here would mean an
-        // exhausted coupon got retried twice for nothing and, in a burst,
-        // could trip the breaker for every other Postgres caller. The
-        // failure is real but it is a business outcome, not a fault.
+        // A lost redemption race is reported as a value, not thrown - the
+        // Postgres pipeline retries every exception with no ShouldHandle
+        // predicate, so throwing here would retry an exhausted coupon for
+        // nothing and could trip the breaker for every other caller.
         string? redemptionFailure = null;
 
         try
@@ -64,23 +61,13 @@ public sealed class EfOrderRepository(
     }
 
     /// <summary>
-    /// Milestone 67: claims a redemption slot atomically.
-    ///
-    /// The guarded UPDATE is what actually closes the race - checking the
-    /// count and then incrementing it would let N concurrent checkouts all
-    /// read the same count and all pass a limit of 1. Postgres evaluates
-    /// the WHERE and applies the increment as one operation, so exactly one
-    /// of them affects a row and the rest see zero. Identical in shape to
-    /// OrderStatusStore's status CAS and to Inventory's stock reservation:
-    /// the guard lives in the WHERE clause, never in application code.
-    ///
-    /// The per-customer limit rides on a side effect of that same
-    /// statement: an UPDATE takes a row lock on the coupon held until
-    /// commit, so by the time this transaction counts that customer's
-    /// existing redemptions, every competing redemption of the same coupon
-    /// is blocked behind it. No second lock statement, and contention stays
-    /// scoped to one coupon - the same way inventory contention is scoped
-    /// to one SKU rather than the whole catalogue.
+    /// Milestone 67: claims a redemption slot atomically. The guarded
+    /// UPDATE closes the race - checking then incrementing would let N
+    /// concurrent checkouts all read the same count and all pass a limit of
+    /// 1 - same shape as OrderStatusStore's CAS and Inventory's reservation.
+    /// The per-customer limit rides on that UPDATE's row lock: held until
+    /// commit, so every competing redemption of the same coupon is blocked
+    /// behind it by the time this transaction counts existing redemptions.
     /// </summary>
     /// <returns>Null when the slot was claimed; otherwise why it could not be.</returns>
     private async Task<string?> TryReserveCouponAsync(CouponReservation reservation, CancellationToken cancellationToken)
@@ -117,9 +104,7 @@ public sealed class EfOrderRepository(
 
         if (maxPerCustomer is { } limit && customerRedemptions >= limit)
         {
-            // The caller rolls back, undoing the increment above - the slot
-            // is never left claimed by a checkout that turned out to be
-            // ineligible.
+            // The caller rolls back, undoing the increment above.
             return "this customer has already redeemed it the maximum number of times";
         }
 
@@ -137,9 +122,7 @@ public sealed class EfOrderRepository(
     {
         try
         {
-            // Milestone 66: Include is required, not an optimisation - the
-            // order's pricing breakdown is unreadable without its lines,
-            // and AsNoTracking means EF will not lazily fill them in later.
+            // Milestone 66: Include is required, not an optimisation - AsNoTracking means EF won't lazily fill the lines in later.
             return await _pipeline.ExecuteAsync(
                 async ct => await dbContext.Orders
                     .AsNoTracking()

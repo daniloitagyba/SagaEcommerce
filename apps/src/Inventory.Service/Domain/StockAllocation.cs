@@ -20,12 +20,7 @@ public sealed class WarehouseStock
 
     public int ReservedQuantity { get; private set; }
 
-    /// <summary>
-    /// Below this, the warehouse should be replenished. Reporting only -
-    /// nothing in this lab acts on it, but it is the number a replenishment
-    /// job would read, and leaving it out would make the model quietly
-    /// claim stock levels need no management.
-    /// </summary>
+    /// <summary>Below this, the warehouse should be replenished. Reporting only - nothing here acts on it yet.</summary>
     public int ReorderPoint { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -98,12 +93,8 @@ public sealed record StockAllocationLine(string WarehouseCode, int Quantity);
 
 /// <summary>
 /// Which warehouses a reservation actually drew from, recorded so commit
-/// and release can undo precisely what reserve did.
-///
-/// Without this, a reservation spanning two warehouses could only be
-/// released by guessing - and guessing wrong moves stock between buildings
-/// on paper, which is the kind of discrepancy nobody notices until a
-/// stocktake.
+/// and release can undo precisely what reserve did - without it, a
+/// reservation spanning two warehouses could only be released by guessing.
 /// </summary>
 public sealed class ReservationAllocation
 {
@@ -136,21 +127,15 @@ public sealed class ReservationAllocation
 }
 
 /// <summary>
-/// Milestone 72: decides which warehouses fulfil a reservation.
-///
-/// Pure, and deliberately so - the interesting part is the allocation
-/// policy, and a policy that can only be exercised against a live database
-/// is a policy nobody property-tests. Given the same availability it always
-/// produces the same plan, which also means two replicas reasoning about
-/// the same stock reach the same answer.
+/// Milestone 72: decides which warehouses fulfil a reservation. Pure, so
+/// the allocation policy is property-testable and two replicas reasoning
+/// about the same stock reach the same answer.
 ///
 /// <para>
-/// The policy is <b>fewest warehouses first</b>: prefer a single warehouse
-/// that can cover the whole order, and only split when none can. Splitting
-/// is not free - it means two parcels, two shipping costs and two chances
-/// for one leg to go missing - so it is a fallback rather than the default.
-/// Ties break on the warehouse's configured priority and then its code, so
-/// the result never depends on dictionary ordering.
+/// Policy is <b>fewest warehouses first</b>: prefer a single warehouse that
+/// covers the whole order, and only split - two parcels, two shipping
+/// costs, two chances to fail - when none can. Ties break on priority then
+/// warehouse code, so the result never depends on dictionary ordering.
 /// </para>
 /// </summary>
 public static class StockAllocator
@@ -177,10 +162,7 @@ public static class StockAllocator
 
         if (ordered.Sum(candidate => (long)candidate.Available) < requestedQuantity)
         {
-            // Not enough anywhere. Reporting this rather than allocating
-            // what exists is deliberate: the saga's reservation step is
-            // all-or-nothing, and a partial reservation would confirm an
-            // order the warehouse cannot actually fill.
+            // Not enough anywhere - the saga's reservation step is all-or-nothing.
             return Plan.Unfulfillable;
         }
 

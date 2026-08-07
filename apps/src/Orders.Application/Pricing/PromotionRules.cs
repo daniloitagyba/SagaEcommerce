@@ -7,30 +7,21 @@ using Orders.Domain.Pricing;
 namespace Orders.Application.Pricing;
 
 /// <summary>
-/// The policy facts the rules match against, inserted into the session
-/// alongside the request. Carrying the policy as a fact (rather than
-/// closing over an options object) is what lets a rule's condition depend
-/// on configuration - "is this coupon code one we actually issue?" is a
-/// data question, not a code question.
+/// The policy facts the rules match against, inserted as a fact rather than
+/// closed over so a rule's condition can depend on configuration.
 /// </summary>
 public sealed record PromotionPolicy(PricingOptions Options);
 
 /// <summary>
-/// Marker fact: a rule decided this order ships free. The engine looks for
-/// it instead of recomputing the threshold, so "free shipping" stays a
-/// promotion decision that a future rule (loyalty tier, campaign week)
-/// can also grant for entirely different reasons.
+/// Marker fact: a rule decided this order ships free, so other rules
+/// (loyalty tier, campaign week) can grant it too without recomputing it.
 /// </summary>
 public sealed record FreeShippingGranted(string Reason);
 
 /// <summary>
-/// A percentage-off coupon the shopper presented.
-///
-/// Milestone 67 moved coupons out of configuration and into the database,
-/// where they have validity windows and redemption limits. By the time
-/// this rule sees one it has already been looked up, checked and found
-/// eligible (see CouponEligibility) - so the rule's only job is arithmetic,
-/// and it stays a pure function of the facts in the session.
+/// A percentage-off coupon the shopper presented, already looked up and
+/// validated (see CouponEligibility) by the time this rule sees it - its
+/// only job here is the arithmetic.
 /// </summary>
 public sealed class CouponPercentageRule : Rule
 {
@@ -38,8 +29,7 @@ public sealed class CouponPercentageRule : Rule
     {
         PricingRequest request = null!;
 
-        // `!= null` rather than `is not null`: NRules compiles conditions
-        // into expression trees, which cannot contain pattern matching.
+        // `!= null`, not `is not null`: NRules compiles conditions into expression trees.
         When()
             .Match(() => request, r => r.Coupon != null);
 
@@ -59,10 +49,8 @@ public sealed class CouponPercentageRule : Rule
 }
 
 /// <summary>
-/// A category-wide promotion. Uses NRules' Collect aggregate to gather
-/// every line in the discounted category - the kind of "all facts matching
-/// a shape" query that reads as one declarative clause here and turns into
-/// a nested group-by loop when written by hand.
+/// A category-wide promotion, using NRules' Collect aggregate to gather
+/// every line in the discounted category as one declarative clause.
 /// </summary>
 public sealed class CategoryDiscountRule : Rule
 {
@@ -142,16 +130,9 @@ public sealed class BulkQuantityRule : Rule
 }
 
 /// <summary>
-/// Milestone 71: a standing discount for customers who have earned it.
-///
-/// The fifth independently-authored rule, and the one that shows the
-/// engine was worth having: it stacks with the coupon, the category
-/// promotion and the volume discount without any of the four knowing the
-/// others exist - and the cap the engine applies is what keeps the four of
-/// them together from ever exceeding the order's value.
-///
-/// Unlike every other discount here, this one is not something the shopper
-/// asks for. It applies because of who they are.
+/// Milestone 71: a standing discount for customers who have earned it -
+/// not requested like the others, but stacked with them the same way, with
+/// the engine's cap keeping all four from exceeding the order's value.
 /// </summary>
 public sealed class LoyaltyTierRule : Rule
 {

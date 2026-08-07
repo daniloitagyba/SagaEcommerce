@@ -19,18 +19,10 @@ internal static partial class StorefrontLog
 }
 
 /// <summary>
-/// Milestone 54: this lab's first genuine BFF fan-out - every other
-/// Storefront.Service endpoint besides checkout (ProxyEndpoints) is a 1:1
-/// reverse proxy. GET /api/storefront/products/{sku} calls Catalog and
-/// Inventory in parallel and waits for both, which means its own tail
-/// latency is at least as bad as whichever of the two is having a slow
-/// moment - see ProductSummaryOptions for why the Inventory leg can be
-/// hedged.
-///
-/// Milestone 66 added the second: POST /api/storefront/checkout, which
-/// turns a cart into an order. See CheckoutAsync's own comment for why
-/// that particular orchestration belongs here rather than being pushed
-/// onto the browser.
+/// This lab's genuine BFF fan-out - every other Storefront.Service
+/// endpoint (ProxyEndpoints) is a 1:1 reverse proxy. GetProductSummaryAsync
+/// calls Catalog and Inventory in parallel (see ProductSummaryOptions for
+/// why Inventory is hedged); CheckoutAsync turns a cart into an order.
 /// </summary>
 public static class StorefrontEndpoints
 {
@@ -60,15 +52,10 @@ public static class StorefrontEndpoints
             ? GetHedgedJsonOrNullAsync(inventoryClient, $"/inventory/{Uri.EscapeDataString(sku)}", hedgeDelayMs, cancellationToken)
             : GetJsonOrNullAsync(inventoryClient, $"/inventory/{Uri.EscapeDataString(sku)}", cancellationToken);
 
-        // Milestone 64: awaited separately, not via Task.WhenAll - Inventory
-        // is an enrichment of an otherwise-complete Catalog response, not a
-        // second required source. Task.WhenAll propagates whichever task
-        // faults first and fails the whole request even when Catalog (the
-        // side that actually determines whether this SKU exists) answered
-        // fine - the exact opposite of what a BFF fanning out to several
-        // backends should do on a partial failure. Both legs are still
-        // always awaited to completion here, regardless of which one
-        // faults first, so neither is ever left unobserved.
+        // Awaited separately, not via Task.WhenAll: Inventory only enriches
+        // an otherwise-complete Catalog response, and WhenAll would fail
+        // the whole request if Inventory faults even though Catalog (which
+        // determines whether the SKU exists) answered fine.
         object? product;
         bool catalogUnavailable;
         try
@@ -114,18 +101,12 @@ public static class StorefrontEndpoints
 
     /// <summary>
     /// Fires the primary request; if it hasn't answered within
-    /// <paramref name="hedgeDelayMs"/>, fires a second, independent request
-    /// to the same logical backend (the K8s Service load-balances new
-    /// connections across replicas, so a hedge has a real chance of
-    /// landing on a different, non-lagging pod) and takes whichever
-    /// finishes first. The loser is cancelled, not left to run to
-    /// completion in the background - Milestone 54 measured this matters,
-    /// not just tidiness: under a sustained tail of slow responses,
-    /// uncancelled losers pile up and contend for the same HttpClient's
-    /// connection pool, inflating p99/max even as hedging correctly
-    /// improves p95. Safe to cancel here because this is a read-only
-    /// GET - cancelling a write mid-flight would risk aborting one the
-    /// server is still going to act on, which this endpoint never does.
+    /// <paramref name="hedgeDelayMs"/>, fires a second one at the same
+    /// backend (the K8s Service load-balances new connections, so it has a
+    /// real chance of landing on a different pod) and takes whichever
+    /// finishes first. The loser is cancelled rather than left running -
+    /// measured to matter, since uncancelled losers pile up and contend for
+    /// the same connection pool. Safe here because it's a read-only GET.
     /// </summary>
     private static async Task<object?> GetHedgedJsonOrNullAsync(
         HttpClient client,
@@ -173,21 +154,13 @@ public static class StorefrontEndpoints
     internal sealed record CheckoutOrderItem(string Sku, int Quantity);
 
     /// <summary>
-    /// Milestone 66 gave Orders.Api a real checkout - line items priced
-    /// server-side against the live catalog - but Cart.Service and
-    /// Orders.Api still know nothing of each other; nothing turns "what's
-    /// in this shopper's cart" into that call. This is that orchestration,
-    /// and it belongs in the BFF rather than the browser for the same
-    /// reason ForwardOrderAsync injects the Keycloak token here rather
-    /// than shipping a client secret to the client: the browser should
-    /// never need to know Orders.Api requires auth, or that turning a cart
-    /// into an order is two separate backend calls at all.
-    ///
-    /// The ordering of those two calls is deliberate, not incidental: the
-    /// cart is cleared only after Orders.Api has genuinely accepted the
-    /// order. Clearing it first and having the order call then fail would
-    /// strand the shopper with an empty cart and nothing purchased - the
-    /// one outcome worse than a failed checkout.
+    /// Cart.Service and Orders.Api know nothing of each other; this turns
+    /// "what's in this shopper's cart" into Orders.Api's checkout call,
+    /// injecting the Keycloak token here so the browser never needs to know
+    /// Orders.Api requires auth. The cart is cleared only after Orders.Api
+    /// accepts the order - clearing it first and having the order call
+    /// then fail would strand the shopper with an empty cart and nothing
+    /// purchased.
     /// </summary>
     internal static async Task CheckoutAsync(
         CheckoutRequest request,
@@ -259,10 +232,9 @@ public static class StorefrontEndpoints
 
         if (response.IsSuccessStatusCode)
         {
-            // Buffered so the order id can be read here for the log line
-            // below and the body can still be relayed to the client
-            // afterwards, untouched - HttpContent only supports reading
-            // its stream once unless it has been buffered first.
+            // Buffered so the order id can be read for the log line below
+            // and the body still relayed to the client afterwards - a
+            // stream can only be read once otherwise.
             await response.Content.LoadIntoBufferAsync(cancellationToken);
             var orderId = await TryReadOrderIdAsync(response, cancellationToken);
 
@@ -274,18 +246,14 @@ public static class StorefrontEndpoints
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
-                // The order is real and already accepted - a failure to
-                // clear the cart afterwards must never be reported as a
-                // checkout failure, or the shopper will think they were
-                // not charged.
+                // The order already succeeded - a failure to clear the cart
+                // afterwards must never read back as a checkout failure.
                 StorefrontLog.CartClearFailedAfterCheckout(logger, request.CartId, orderId ?? "unknown", exception);
             }
         }
 
-        // Whatever Orders.Api decided - created, idempotent replay,
-        // validation failure, or infrastructure unavailable - is relayed
-        // to the client exactly as it came back, same as every other
-        // route in ProxyEndpoints.
+        // Relayed to the client exactly as Orders.Api answered, same as
+        // every route in ProxyEndpoints.
         await ProxyEndpoints.WriteResponseAsync(httpContext, response, cancellationToken);
     }
 

@@ -5,22 +5,14 @@ using Microsoft.EntityFrameworkCore;
 namespace Inventory.Service;
 
 /// <summary>
-/// Milestone 72: applies an allocation plan to the warehouse network.
+/// Applies an allocation plan to the warehouse network. Reserve draws the
+/// plan and records it; commit and release replay exactly what reserve
+/// recorded rather than guessing which building the stock came from.
 ///
-/// Reserve draws the plan and records it; commit and release replay exactly
-/// what reserve recorded, rather than guessing which building the stock
-/// came from. Guessing wrong moves stock between warehouses on paper, which
-/// is the kind of discrepancy nobody notices until a stocktake.
-///
-/// <para>
-/// No row locking, and none needed: Inventory.Service consumes reservation
-/// commands partitioned by SKU (Milestone 41), so two requests for the same
-/// SKU are never processed concurrently in the first place. That guarantee
-/// is what lets the allocator read availability, decide, and write without
-/// the read going stale in between - the same reasoning
-/// <see cref="InventoryItem"/> has relied on since it was written, now
-/// spanning several rows instead of one.
-/// </para>
+/// No row locking needed: Inventory.Service consumes reservation commands
+/// partitioned by SKU, so two requests for the same SKU are never processed
+/// concurrently - the same guarantee <see cref="InventoryItem"/> has always
+/// relied on, now spanning several rows instead of one.
 /// </summary>
 public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
 {
@@ -115,14 +107,9 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
     }
 
     /// <summary>
-    /// Milestone 74: the whole decide-then-mutate reservation - network and
-    /// aggregate together - factored out from
-    /// InventoryReservationMessageProcessor.ProcessAsync so the backorder
-    /// release path can retry the exact same decision after a restock
-    /// rather than re-deriving it. Two call sites separately chaining
-    /// "check, then mutate" is exactly how Milestone 72's bug happened the
-    /// first time: one of them drifts, and a warehouse ends up holding a
-    /// reservation for an order that was told no.
+    /// The whole decide-then-mutate reservation - network and aggregate
+    /// together - shared by the normal reserve path and backorder release
+    /// so neither can drift from the other's decision.
     /// </summary>
     public async Task<ReservationDecision> TryReserveAsync(
         Guid reservationId,

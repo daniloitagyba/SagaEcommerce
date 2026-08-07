@@ -25,11 +25,9 @@ public sealed record OrderHistoryResult(OrderSnapshot? Snapshot, IReadOnlyList<O
 /// <summary>
 /// Milestone 23: reconstructs Order state by folding over the append-only
 /// event log rather than reading a current-state row - the event store is
-/// the source of truth here, current-state projections (the `orders` table
-/// itself, `order_summaries`) are just one read-optimized view of it.
-/// Temporal queries ("state as of time T") and the full audit trail
-/// (every event returned alongside the fold) are free consequences of that,
-/// not separately-built features.
+/// the source of truth, and current-state projections are just one
+/// read-optimized view of it. Temporal queries and the full audit trail
+/// are free consequences of that, not separately-built features.
 /// </summary>
 public sealed class GetOrderHistoryHandler(IOrderEventStoreRepository repository)
 {

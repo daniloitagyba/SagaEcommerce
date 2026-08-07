@@ -11,13 +11,10 @@ public interface ICatalogClient
 }
 
 /// <summary>
-/// Shared by Cart.Service (Milestone 42 - a synchronous product snapshot to
-/// price a cart line item) and Orders.Worker (Milestone 44 - a category
-/// slug lookup for category-scoped bestseller tracking), both calling
-/// Catalog.Service's GET /products/by-sku/{sku}. Orders.Worker tolerates
-/// this client's absence - see BestsellersStore's "best-effort" note; a
-/// Catalog outage degrades bestseller tracking to global-only, not a
-/// failed saga.
+/// Shared by Cart.Service (pricing a cart line) and Orders.Worker
+/// (category lookup for bestseller tracking), both calling GET
+/// /products/by-sku/{sku}. Orders.Worker tolerates this client's absence -
+/// see BestsellersStore - degrading to global-only tracking, not a failed saga.
 /// </summary>
 public sealed class CatalogClient(HttpClient httpClient) : ICatalogClient
 {

@@ -2,20 +2,12 @@ namespace Orders.Domain;
 
 /// <summary>
 /// Milestone 67: a coupon with a life, replacing Milestone 66's
-/// configuration dictionary of code -> percentage.
-///
-/// That dictionary had no notion of a coupon being <em>used</em>. HALFOFF
-/// took 50% off, and nothing anywhere counted how many times, by whom, or
-/// until when - so a single leaked code could be redeemed indefinitely by
-/// anyone. Promotion abuse is the ordinary consequence of that in real
-/// storefronts, and it is the one gap in this lab's domain that was an
-/// outright defect rather than a missing feature.
-///
-/// The interesting part is not the columns, though: enforcing
-/// MaxTotalRedemptions under concurrent checkout is the same class of
-/// distributed problem as reserving stock, and gets the same treatment -
-/// an atomic guarded UPDATE rather than read-then-write, and a redemption
-/// that participates in the saga so a cancelled order gives its slot back.
+/// configuration dictionary that had no notion of a coupon being
+/// <em>used</em> - a leaked code could be redeemed indefinitely by anyone.
+/// Enforcing MaxTotalRedemptions under concurrent checkout is the same
+/// class of distributed problem as reserving stock, and gets the same
+/// treatment: an atomic guarded UPDATE, and a redemption that participates
+/// in the saga so a cancelled order gives its slot back.
 /// </summary>
 public sealed class Coupon
 {
@@ -132,17 +124,11 @@ public sealed record CouponSnapshot(
 public static class CouponEligibility
 {
     /// <summary>
-    /// Pure, so it can be reasoned about and property-tested without a
-    /// database - the same rule the pricing engine already follows.
-    ///
-    /// This is an advisory check: it runs before the order is priced, and
-    /// the limits it reads can be taken by a concurrent checkout between
-    /// here and the actual reservation. That race is closed at reservation
-    /// time by an atomic guarded UPDATE, not here. Checking twice is
-    /// deliberate - this pass exists to give the shopper a specific reason
-    /// ("expired", "below the minimum") instead of a bare failure, and to
-    /// avoid claiming a redemption slot for an order that was never going
-    /// to qualify.
+    /// Pure and advisory: runs before pricing, so the limits it reads can
+    /// still be taken by a concurrent checkout before the actual
+    /// reservation closes that race with an atomic guarded UPDATE. This
+    /// pass exists to give the shopper a specific reason instead of a bare
+    /// failure, and to avoid claiming a slot for an order that won't qualify.
     /// </summary>
     public static CouponRejectionReason Evaluate(
         CouponSnapshot? coupon,

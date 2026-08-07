@@ -4,13 +4,10 @@ using System.Text.Json;
 using BuildingBlocks;
 using Confluent.Kafka;
 
-// Milestone 62: the five dead-letter topics in this system (see
-// KafkaOptions/OrderProjectionOptions/PaymentResultKafkaOptions/
-// PaymentsKafkaOptions/InventoryKafkaOptions) have been write-only since
-// they were introduced - publishers exist, nothing ever consumes them. This
-// is a generic, standalone tool (no dependency on any one service) because
-// every publisher writes the exact same DeadLetterEnvelope JSON shape and
-// header set, so one tool can inspect or redrive any of the five.
+// Milestone 62: the five dead-letter topics have been write-only since they
+// were introduced - publishers exist, nothing consumes them. Generic and
+// standalone, not tied to any one service, since every publisher writes
+// the same DeadLetterEnvelope JSON shape and header set.
 if (args.Length == 0 || (args[0] != "inspect" && args[0] != "redrive"))
 {
     Console.Error.WriteLine("Usage: DlqRedriveTool <inspect|redrive> --bootstrap-servers <host:port> --topic <dlq-topic> [--max-redrives N] [--dry-run] [--idle-seconds N] [--key-filter <substring>]");
@@ -121,8 +118,7 @@ static async Task<int> RedriveAsync(ToolOptions options)
             if (options.KeyFilter is not null
                 && (envelope.OriginalKey is null || !envelope.OriginalKey.Contains(options.KeyFilter, StringComparison.Ordinal)))
             {
-                // Not committed - a filtered run is a scoped, surgical pass,
-                // not a verdict on every other message sitting in the topic.
+                // Not committed - a filtered run is a scoped pass, not a verdict on the rest of the topic.
                 filteredOut++;
                 continue;
             }
@@ -152,11 +148,7 @@ static async Task<int> RedriveAsync(ToolOptions options)
 
             if (envelope.OriginalKey is null)
             {
-                // Every producer in this system keys its messages (Sku or
-                // OrderId) - a null key here would silently change partition
-                // routing on redrive (round-robin instead of the original
-                // hash), which is exactly the ordering guarantee this tool
-                // exists to respect. Flag it instead of guessing.
+                // Every producer keys its messages; a null key here would silently break the ordering guarantee on redrive. Flag it instead of guessing.
                 Console.WriteLine($"SKIP (null original key, cannot safely re-key): originalTopic={envelope.OriginalTopic}");
                 skippedOverCap++;
                 continue;
@@ -183,9 +175,7 @@ static async Task<int> RedriveAsync(ToolOptions options)
         }
         catch (Exception exception)
         {
-            // One malformed envelope shouldn't sink an entire batch redrive
-            // - not-yet-committed here, so it's picked up again (and can
-            // fail again) on the next run rather than silently vanishing.
+            // One malformed envelope shouldn't sink the batch - not committed, so it's retried next run, not lost.
             errored++;
             Console.WriteLine($"ERROR decoding/redriving offset {consumeResult.TopicPartitionOffset}: {exception.Message}");
         }
@@ -199,15 +189,11 @@ static async Task<int> RedriveAsync(ToolOptions options)
     return 0;
 }
 
-// Not every *DeadLetterPublisher in this repo agrees on the wire format:
-// the three Orders.Worker publishers and Payments.Service's both base64-
-// encode consumeResult.Message.Value because their consumers are
-// ConsumeResult<string, byte[]> (some of those topics carry Avro).
-// Inventory.Service's consumers are plain ConsumeResult<string, string>,
-// so its publisher stores the raw JSON text directly - no base64 involved
-// at all (Milestone 62 discovered this the hard way: FromBase64String
-// throwing on an Inventory dead letter, mid-redrive). Try base64 first,
-// fall back to raw UTF-8 bytes rather than assuming one convention.
+// Not every *DeadLetterPublisher agrees on the wire format: Orders.Worker
+// and Payments.Service base64-encode the payload (their consumers read
+// byte[], some topics carry Avro); Inventory.Service's are plain string
+// consumers and store raw JSON instead. Try base64 first, fall back to raw
+// UTF-8 rather than assuming one convention.
 static byte[] DecodeOriginalPayload(string originalPayload)
 {
     try
@@ -235,11 +221,10 @@ static IConsumer<string, string> BuildConsumer(string bootstrapServers, string g
     return new ConsumerBuilder<string, string>(config).Build();
 }
 
-// Drains whatever is currently sitting in the topic and stops - a DLQ tool
-// is an operator-triggered, point-in-time action, not a long-running
-// consumer. Idle-seconds consecutive empty polls is the "caught up" signal
-// rather than precomputing watermark offsets, since the tool has no
-// partition assignment to query them against until the first poll runs.
+// Drains what's currently in the topic and stops - a point-in-time
+// operator action, not a long-running consumer. Idle-seconds of empty
+// polls is the "caught up" signal, since there's no partition assignment
+// to query watermark offsets against before the first poll.
 static async IAsyncEnumerable<ConsumeResult<string, string>> DrainAsync(IConsumer<string, string> consumer, int idleSeconds)
 {
     var idlePolls = 0;
@@ -286,11 +271,9 @@ static void CopyHeader(Headers source, Headers destination, string key)
 
 internal sealed record ToolOptions(string? BootstrapServers, string? Topic, int MaxRedrives, bool DryRun, int IdleSeconds, string? KeyFilter);
 
-// Mirrors the wire shape every *DeadLetterPublisher in this repo produces
-// (see BuildingBlocks/MessagingHeaders.cs and e.g. Orders.Worker's
-// KafkaDeadLetterPublisher) - deliberately a standalone copy rather than a
-// project reference, since this tool has no business depending on any one
-// service's assembly.
+// Mirrors the wire shape every *DeadLetterPublisher produces - a
+// standalone copy, not a project reference, since this tool has no
+// business depending on any one service's assembly.
 internal sealed record DeadLetterEnvelopeView(
     Guid DeadLetterId,
     string OriginalTopic,

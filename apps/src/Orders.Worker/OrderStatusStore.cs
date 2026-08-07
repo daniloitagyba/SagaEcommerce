@@ -25,20 +25,12 @@ public sealed class OrderStatusStore(
     CustomerTierStore customerTierStore,
     ResiliencePipelineProvider<string> pipelineProvider)
 {
-    // Milestone 69: guarded on the whole set of legal predecessors rather
-    // than one hardcoded state.
-    //
-    // `status = ANY(@allowed_from)` is what lets a single statement express
-    // "cancel this, from wherever it legitimately is" now that an order can
-    // be cancelled from four different states. The alternative - a round
-    // trip per candidate, or read-then-write - reintroduces exactly the
-    // race the CAS exists to remove.
-    //
-    // RETURNING carries what the follow-up actions need (Milestone 67/68):
-    // the compare-and-set already decides whether this caller is the one
-    // that moved the order, so returning from the same statement means the
-    // coupon settlement and the payment capture/void fire for exactly the
-    // winner - a loser gets no row and cannot double-count either.
+    // Milestone 69: `status = ANY(@allowed_from)` guards the whole set of
+    // legal predecessors in one statement, since an order can now be
+    // cancelled from four different states - read-then-write would
+    // reintroduce the race the CAS exists to remove. RETURNING carries what
+    // the follow-up actions need, so they fire for exactly the winner of
+    // the compare-and-set and a loser cannot double-count.
     private const string UpdateSql = """
         UPDATE orders
         SET status = @status
@@ -112,11 +104,9 @@ public sealed class OrderStatusStore(
     }
 
     /// <summary>
-    /// Runs after the status commit rather than inside it: the order's own
-    /// state is the thing that must not be lost, and a redemption left
-    /// Reserved (or an uncaptured authorization) is a recoverable
-    /// discrepancy rather than a wrong order. Failing inside would roll
-    /// back a transition the rest of the saga has already acted on.
+    /// Runs after the status commit, not inside it: a redemption left
+    /// Reserved is a recoverable discrepancy, but rolling back the order's
+    /// own transition would undo something the rest of the saga already acted on.
     /// </summary>
     private async Task RunSideEffectsAsync(
         Guid orderId,
@@ -128,9 +118,8 @@ public sealed class OrderStatusStore(
         decimal amount,
         CancellationToken cancellationToken)
     {
-        // Milestone 71: standing is earned on confirmation, not on order
-        // creation - otherwise placing and cancelling would be the cheapest
-        // route to a permanent member discount.
+        // Milestone 71: standing is earned on confirmation, not creation, or
+        // placing and cancelling would be the cheapest route to a discount.
         if (targetStatus == OrderStatuses.Confirmed && customerId is not null)
         {
             await customerTierStore.RecordCompletedOrderAsync(customerId, amount, cancellationToken);
@@ -148,19 +137,14 @@ public sealed class OrderStatusStore(
             }
         }
 
-        // Only a card leaves money on hold, so only a card has anything to
-        // capture or release. Asking Payments to settle a Pix payment would
-        // be answered "already Captured" - harmless, but a message per order
-        // to achieve nothing.
+        // Only a card leaves money on hold; asking Payments to settle a Pix
+        // payment is harmless but achieves nothing.
         if (paymentMethod is null || !PaymentMethods.RequiresCapture(paymentMethod))
         {
             return;
         }
 
-        // Milestone 69 moved capture from Confirmed to Shipped, which is
-        // where it belongs: the whole point of holding an authorization is
-        // to take the money when the goods actually leave. Milestone 68
-        // triggered it at Confirmed only because Shipped did not exist yet.
+        // Milestone 69 moved capture from Confirmed to Shipped - the whole point of a hold is taking the money when the goods actually leave.
         if (targetStatus == OrderStatuses.Shipped)
         {
             await settlementRequester.RequestCaptureAsync(orderId, correlationId, cancellationToken);

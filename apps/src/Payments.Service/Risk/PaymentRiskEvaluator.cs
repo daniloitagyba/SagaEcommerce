@@ -15,22 +15,11 @@ public sealed record RiskAssessment(int Score, bool Approved, IReadOnlyList<Risk
 
 /// <summary>
 /// Milestone 66: replaces "decline anything over 1000" with a scored set of
-/// signals.
-///
-/// The old rule was a deterministic stub, and it made the payment step a
-/// pure function of one number - which meant no amount of saga machinery
-/// around it was ever exercising a decision that could depend on anything
-/// else. These signals are the ones a real processor actually starts with,
-/// and crucially they depend on <em>state</em>: what this customer has
-/// bought before, and how fast they are buying right now. That makes the
-/// payment step genuinely stateful, which in turn makes the inbox
-/// deduplication on both saga paths matter for a reason beyond tidiness -
-/// a replayed message that re-ran this evaluation would see its own
-/// earlier write in the history and could reach a different answer.
-///
-/// Scored rather than boolean because signals compound: a first purchase
-/// is unremarkable, and a large first purchase from an account placing its
-/// third order in five minutes is not.
+/// signals that depend on state - this customer's history and buying pace -
+/// which is what makes the payment step genuinely stateful and gives the
+/// inbox deduplication on both saga paths a reason beyond tidiness: a
+/// replayed message would otherwise see its own earlier write and could
+/// reach a different answer. Scored, not boolean, because signals compound.
 /// </summary>
 public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<PaymentRiskOptions> options)
 {
@@ -60,10 +49,7 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
                 _options.HighValueScore));
         }
 
-        // An unknown customer is treated as unknown rather than as a new
-        // one: a decision request that lost its CustomerId (see
-        // PaymentDecisionRequested) should not be scored as a first
-        // purchase for every order that hits it.
+        // An unknown customer stays unknown, not scored as a first purchase - it may just be a request that lost its CustomerId.
         if (string.IsNullOrWhiteSpace(customerId))
         {
             return Assess(signals);
@@ -91,9 +77,7 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
                 _options.VelocityScore));
         }
 
-        // An account that first appeared minutes ago and is already placing
-        // another order is not a returning customer. FIRST_PURCHASE cannot
-        // express this - by definition it has already stopped firing.
+        // An account that appeared minutes ago and is already ordering again isn't returning - FIRST_PURCHASE has already stopped firing by then.
         var firstSeen = history.Min(payment => payment.DecidedAt);
         if (now - firstSeen < TimeSpan.FromMinutes(_options.NewAccountWindowMinutes))
         {
@@ -103,11 +87,7 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
                 _options.NewAccountScore));
         }
 
-        // Only meaningful against a customer who has shipped somewhere
-        // before: an unknown destination, or a customer with none on
-        // record, is missing information rather than evidence. Scoring
-        // absence as mismatch would flag every order placed without an
-        // address - which, before Milestone 71, was all of them.
+        // Only meaningful against a customer with a shipping history - scoring absence as mismatch would flag every address-less order.
         if (shippingPostalPrefix.Length > 0)
         {
             var knownPrefixes = history

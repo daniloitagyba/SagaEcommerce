@@ -51,9 +51,7 @@ public sealed class RedisOrderCache(
         var lockTimeout = TimeSpan.FromMilliseconds(_options.LockTimeoutMilliseconds);
         var acquiredLock = await database.LockTakeAsync(lockKey, LockToken, lockTimeout);
 
-        // Milestone 48: drawn once per acquisition, strictly increasing,
-        // independent of the lock itself - see RedisFencedWrite for why the
-        // lock's own timeout can't be trusted to prevent a stale write.
+        // Milestone 48: drawn once per acquisition, independent of the lock itself - see RedisFencedWrite for why the lock's own timeout isn't enough.
         var fenceToken = acquiredLock ? await database.NextFenceTokenAsync(OrderCacheKeys.FenceSequenceKey(id)) : 0;
 
         if (!acquiredLock)
@@ -84,10 +82,7 @@ public sealed class RedisOrderCache(
                     cacheKey, fenceToken, payload, TimeSpan.FromSeconds(_options.TimeToLiveSeconds));
                 if (!applied)
                 {
-                    // This holder's lock had already expired and been
-                    // re-acquired by someone with a newer token by the time
-                    // this write landed - discarding it, not overwriting
-                    // whatever the newer holder already wrote.
+                    // This holder's lock expired and was re-acquired with a newer token before this write landed - discard, don't overwrite.
                     OrdersTelemetry.RecordFencedWriteRejected("order-cache");
                 }
             }
@@ -112,20 +107,10 @@ public sealed class RedisOrderCache(
         return JsonSerializer.Deserialize<CachedOrder>((string)value!, SerializerOptions);
     }
     /// <summary>
-    /// Deletes the cached value only - deliberately not the fence sequence.
-    ///
-    /// The sequence (Milestone 48) is a monotonic INCR, and the next reader
-    /// draws a token strictly higher than any already recorded, so the
-    /// stale <c>:fence</c> entry left behind cannot reject the refill.
-    /// Deleting the sequence would be the actively dangerous choice: it
-    /// restarts at 1, so a paused writer still holding token N could land
-    /// after the delete and then reject every subsequent refill as "older"
-    /// until the TTL expires - the precise stale-holder hazard fencing
-    /// exists to prevent, reintroduced by over-cleaning.
-    ///
-    /// Matches what Orders.Worker's RedisOrderCacheInvalidator has always
-    /// done; this port needed it too once the fulfilment API started
-    /// changing status outside the worker.
+    /// Deletes the cached value only, deliberately not the fence sequence -
+    /// deleting it would restart the counter at 1, letting a paused writer
+    /// still holding an old token reject every subsequent refill as
+    /// "older" until the TTL expires, the exact hazard fencing prevents.
     /// </summary>
     public async Task InvalidateAsync(Guid id, CancellationToken cancellationToken)
     {

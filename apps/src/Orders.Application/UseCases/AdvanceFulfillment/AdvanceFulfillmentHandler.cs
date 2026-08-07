@@ -16,14 +16,10 @@ public sealed record AdvanceFulfillmentResult(AdvanceFulfillmentOutcome Outcome,
 
 /// <summary>
 /// Milestone 69: moves an order through the fulfilment states an external
-/// actor drives - a picker, a carrier webhook, an ops user resolving a
-/// hold.
-///
-/// Legality is decided from the transition table before touching the
-/// database, so an unknown or unreachable target is refused without a round
-/// trip. Whether the order is actually <em>in</em> a state the move can be
-/// made from is decided by the compare-and-set itself, because that is the
-/// only answer that cannot be raced.
+/// actor drives. Legality is decided from the transition table before
+/// touching the database; whether the order is actually <em>in</em> a
+/// state the move can be made from is decided by the compare-and-set
+/// itself, the only answer that cannot be raced.
 /// </summary>
 public sealed class AdvanceFulfillmentHandler(
     IOrderStatusRepository repository,
@@ -55,10 +51,7 @@ public sealed class AdvanceFulfillmentHandler(
         switch (transition.Outcome)
         {
             case OrderTransitionOutcome.Advanced:
-                // Without this the order keeps reporting its old status for
-                // the whole cache TTL - shipped and delivered orders would
-                // still read as Confirmed, which is exactly what the first
-                // end-to-end run of this endpoint showed.
+                // Without this the order keeps reporting its old status for the whole cache TTL.
                 await orderCache.InvalidateAsync(orderId, cancellationToken);
                 FulfillmentLog.Advanced(logger, orderId, normalized, correlationId);
                 return new AdvanceFulfillmentResult(AdvanceFulfillmentOutcome.Advanced, normalized);

@@ -15,19 +15,14 @@ public sealed class InvalidPaymentDecisionRequestException(string message, Excep
     : Exception(message, innerException);
 
 /// <summary>
-/// Milestone 65 (Saga:Mode leveling): the orchestrated flow's counterpart to
+/// Milestone 65: the orchestrated flow's counterpart to
 /// PaymentMessageProcessor, brought to the same reliability bar - inbox
-/// dedup, a persisted Payment row, and an outbox-published reply instead of
-/// PaymentDecisionRequestHandler's old direct produce. The only genuine
-/// difference from choreography left standing is what it reacts to (an
-/// explicit request instead of autonomously deciding on OrderCreated), not
-/// how carefully it does it - that's what makes the orchestration-vs-
-/// choreography comparison legitimate now instead of hardened-vs-not.
-///
-/// PaymentDecisionRequested has no EventId of its own (Milestone 22: a
-/// transient request/reply message, not a domain event) - OrderId serves as
-/// the inbox dedup key instead, valid because the orchestrator only ever
-/// has one decision request outstanding per order at a time.
+/// dedup, a persisted Payment row, an outbox-published reply. The only
+/// genuine difference from choreography left is what it reacts to (an
+/// explicit request vs. autonomously deciding on OrderCreated), which is
+/// what makes the comparison legitimate. PaymentDecisionRequested has no
+/// EventId of its own, so OrderId serves as the inbox dedup key instead,
+/// valid since only one decision request is ever outstanding per order.
 /// </summary>
 public sealed class PaymentDecisionRequestProcessor(
     IServiceScopeFactory scopeFactory,
@@ -90,10 +85,7 @@ public sealed class PaymentDecisionRequestProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        // Milestone 66: the same scored risk rules the choreographed path
-        // runs - keeping the two saga paths genuinely comparable, which is
-        // what Milestone 65 set out to establish and what would quietly
-        // regress if only one side gained real decision logic.
+        // Milestone 66: the same scored risk rules the choreographed path runs, keeping the two saga paths genuinely comparable.
         var riskEvaluator = serviceScope.ServiceProvider.GetRequiredService<PaymentRiskEvaluator>();
         var assessment = await riskEvaluator.EvaluateAsync(
             request.CustomerId,
