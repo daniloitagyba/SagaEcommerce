@@ -164,4 +164,52 @@ public class PricingEngineTests
             breakdown.DiscountTotal,
             breakdown.LineDiscounts.Aggregate(new Money(0m, Brl), (running, share) => running + share));
     }
+
+    // Milestone 66's property tests found this by generating 10,000 random
+    // orders (CsCheck seed 53LlaLK3rYz2): NRules refuses to insert a fact
+    // that already compares equal to one already in its working memory
+    // (System.ArgumentException: "Facts for insert already exist"). Before
+    // PricingLine and AppliedDiscount switched to identity equality, either
+    // of the two tests below crashed pricing outright instead of returning
+    // a breakdown - a real cart shape, not a contrived one.
+
+    [Fact]
+    public void TwoIdenticalLinesPriceIndependentlyRatherThanCrashing()
+    {
+        // The same SKU, quantity and price added as two separate lines -
+        // e.g. a cart that never merged a duplicate add. Before the fix,
+        // inserting the second PricingLine fact threw immediately: two
+        // structurally-identical lines looked like the same fact twice.
+        var breakdown = BuildEngine().Price(Request(
+            null,
+            Line("SKU-025", "clearance", 10, 100.00m),
+            Line("SKU-025", "clearance", 10, 100.00m)));
+
+        Assert.Equal(new Money(2000m, Brl), breakdown.Subtotal);
+        Assert.Equal(2, breakdown.LineDiscounts.Count);
+    }
+
+    [Fact]
+    public void TwoBulkDiscountsThatRoundToTheSameAmountBothApply()
+    {
+        // Same SKU and quantity (so BulkQuantityRule's Code and Description
+        // match for both), unit prices one centavo apart so the 8% bulk
+        // discount rounds to the identical centavo for both lines
+        // (2284.20 * 0.08 = 182.736 -> 182.74; 2284.30 * 0.08 = 182.744 ->
+        // 182.74). Two AppliedDiscount facts that print identically are
+        // still two separate grants, one per line - value equality made
+        // the second look like a duplicate of the first.
+        var options = new PricingOptions { BulkQuantityThreshold = 5, BulkDiscountPercentage = 8m, FlatShippingAmount = 0m };
+
+        var breakdown = BuildEngine(options).Price(Request(
+            null,
+            Line("SKU-025", "clearance", 10, 228.42m),
+            Line("SKU-025", "clearance", 10, 228.43m)));
+
+        Assert.Equal(2, breakdown.Discounts.Count);
+        Assert.Equal(new Money(365.48m, Brl), breakdown.DiscountTotal);
+        Assert.Equal(
+            breakdown.DiscountTotal,
+            breakdown.Discounts.Aggregate(new Money(0m, Brl), (running, d) => running + d.Amount));
+    }
 }

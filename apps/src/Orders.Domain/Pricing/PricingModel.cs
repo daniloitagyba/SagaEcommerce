@@ -6,6 +6,17 @@ namespace Orders.Domain.Pricing;
 /// A line as the pricing engine sees it: the SKU, its category (several
 /// promotions target a category rather than a specific product), how many,
 /// and the unit price read from the live catalog at checkout.
+///
+/// Equality is identity, not the record default of value equality - this
+/// type is inserted into an NRules working memory as a fact, one per line,
+/// and NRules refuses to insert a fact that already compares equal to one
+/// already in the session (System.ArgumentException: "Facts for insert
+/// already exist"). Two order lines that happen to name the same SKU,
+/// quantity and price - a real cart shape, not a contrived one - would
+/// otherwise crash pricing entirely on the second insert. They are still
+/// two separate lines on the order regardless of whether their fields
+/// match, which is exactly what reference equality says and value equality
+/// does not.
 /// </summary>
 public sealed record PricingLine(
     string Sku,
@@ -15,6 +26,10 @@ public sealed record PricingLine(
     Money UnitPrice)
 {
     public Money LineSubtotal => UnitPrice * Quantity;
+
+    public bool Equals(PricingLine? other) => ReferenceEquals(this, other);
+
+    public override int GetHashCode() => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
 }
 
 /// <summary>
@@ -65,8 +80,24 @@ public sealed record PricingRequest(
 /// collapsed into a single number so the customer (and support) can see
 /// <em>why</em> the total came down - "10% coupon SAVE10" and "5% off
 /// electronics" are separate lines on the receipt, not one opaque figure.
+///
+/// Equality is identity, for the same reason as PricingLine: this is
+/// inserted into NRules working memory by a rule's action, and two
+/// independently-authored rules (or the same rule firing for two different
+/// lines) can legitimately produce a Code, Description and Amount that all
+/// happen to match - two lines of the same SKU and quantity earn the same
+/// bulk-discount Code/Description, and their Amounts can round to the same
+/// centavo even when the underlying subtotals differ. Value equality would
+/// make the second grant look like a duplicate of the first and NRules
+/// would refuse to insert it, silently dropping (or crashing on) a
+/// discount the customer actually earned.
 /// </summary>
-public sealed record AppliedDiscount(string Code, string Description, Money Amount);
+public sealed record AppliedDiscount(string Code, string Description, Money Amount)
+{
+    public bool Equals(AppliedDiscount? other) => ReferenceEquals(this, other);
+
+    public override int GetHashCode() => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
+}
 
 /// <summary>
 /// A charge added rather than deducted - shipping and tax. Same reasoning
