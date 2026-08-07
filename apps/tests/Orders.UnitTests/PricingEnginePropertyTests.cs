@@ -8,31 +8,19 @@ namespace Orders.UnitTests;
 
 /// <summary>
 /// Milestone 66: the pricing invariants, checked against generated orders
-/// rather than hand-picked ones.
-///
-/// Every other test in this repository asserts on examples somebody thought
-/// of. Pricing is the first piece of logic here where the dangerous cases
-/// are the ones nobody thinks of: independently-authored campaigns that
-/// happen to stack past 100%, a discount that will not divide evenly across
-/// its lines, a coupon on a zero-value order. CsCheck generates those
-/// combinations and, when a property fails, shrinks the counterexample down
-/// to the smallest order that still breaks it - which is the actual reason
-/// to reach for property-based testing over another dozen [Fact]s.
-///
-/// The properties below are the ones that must hold for <em>any</em> order
-/// and any combination of promotions, no matter what a future campaign
-/// does. A new rule that violates one of them is a bug in the rule, and
-/// this is the test that will say so.
+/// rather than hand-picked ones - the dangerous cases here are the ones
+/// nobody thinks of (campaigns stacking past 100%, a discount that won't
+/// divide evenly, a coupon on a zero-value order). CsCheck generates those
+/// combinations and shrinks a failure to the smallest order that still
+/// breaks it. These properties must hold for <em>any</em> order and
+/// promotion combination, no matter what a future campaign does.
 /// </summary>
 public class PricingEnginePropertyTests
 {
     private static readonly Currency Brl = Currency.FromCode("BRL");
     private static readonly string[] Categories = ["electronics", "books", "clothing", "home", "clearance"];
-    // Milestone 67: the engine only ever sees coupons that were already
-    // resolved and found eligible, so the generator produces resolved
-    // percentages (or none) rather than codes. Whether a code exists, has
-    // expired or has run out is decided before pricing - see
-    // CouponEligibilityTests.
+    // Milestone 67: the engine only ever sees already-resolved, eligible
+    // coupons, so the generator produces percentages, not codes - see CouponEligibilityTests.
     private static readonly ResolvedCoupon?[] Coupons =
     [
         null,
@@ -41,9 +29,7 @@ public class PricingEnginePropertyTests
         new ResolvedCoupon("HALFOFF", "50% coupon", 50m)
     ];
 
-    // Prices and quantities are generated in the ranges a real storefront
-    // sees, but the *combinations* are left entirely to the generator -
-    // including the ones that stack several promotions onto one order.
+    // Prices and quantities stay in realistic ranges; the *combinations* are left entirely to the generator.
     private static readonly Gen<PricingLine> GenLine =
         from skuIndex in Gen.Int[1, 40]
         from category in Gen.OneOfConst(Categories)
@@ -71,8 +57,7 @@ public class PricingEnginePropertyTests
     [Fact]
     public void GrandTotalIsNeverNegative()
     {
-        // The invariant that motivated the discount cap: two campaigns can
-        // each be individually sane and jointly exceed the order's value.
+        // The invariant that motivated the discount cap: two sane campaigns can jointly exceed the order's value.
         GenRequest.Sample(
             request => Engine.Price(request).GrandTotal >= Zero,
             iter: 10_000);
@@ -93,9 +78,7 @@ public class PricingEnginePropertyTests
     [Fact]
     public void PerLineDiscountsSumToExactlyTheOrderDiscount()
     {
-        // The centavo property. Naive proportional rounding fails this for
-        // any discount that does not divide evenly across its lines, and
-        // the failure is invisible until someone reconciles a refund.
+        // The centavo property - naive proportional rounding fails this whenever a discount doesn't divide evenly across its lines.
         GenRequest.Sample(
             request =>
             {
@@ -108,8 +91,7 @@ public class PricingEnginePropertyTests
     [Fact]
     public void ItemisedDiscountsSumToTheDiscountTotal()
     {
-        // What the customer sees on the receipt has to add up to what was
-        // actually deducted - including after the cap trims an entry.
+        // The receipt has to add up to what was actually deducted, even after the cap trims an entry.
         GenRequest.Sample(
             request =>
             {
@@ -155,8 +137,7 @@ public class PricingEnginePropertyTests
     [Fact]
     public void PricingIsDeterministic()
     {
-        // Rule engines evaluate in an order that is not obvious from the
-        // source; this pins that the *result* does not depend on it.
+        // Rule engines evaluate in a non-obvious order; this pins that the *result* doesn't depend on it.
         GenRequest.Sample(
             request =>
             {
@@ -172,12 +153,9 @@ public class PricingEnginePropertyTests
     [Fact]
     public void PresentingACouponNeverCostsTheShopperMore()
     {
-        // Monotonicity: whatever the other campaigns do, adding a valid
-        // coupon must not push the total up. This is the property that
-        // would catch a future rule keying off CouponCode to *add* a
-        // charge, or free shipping being computed on the discounted
-        // subtotal (where a coupon could drop the order below the
-        // threshold and silently add 19.90 of shipping).
+        // Monotonicity: adding a valid coupon must never push the total up
+        // - catches a future rule that adds a charge off CouponCode, or
+        // free shipping computed on the discounted subtotal.
         var gen =
             from lines in GenLine.List[1, 6]
             from coupon in Gen.OneOfConst(
@@ -199,16 +177,11 @@ public class PricingEnginePropertyTests
     [Fact]
     public void NoLineEverReceivesANegativeDiscountShare()
     {
-        // The property Milestone 66 should have had and did not.
-        //
-        // Its allocation was validated by measuring that the shares always
-        // sum back to the discount total - which they did, including when
-        // one of them was negative. NodaMoney's Split emits a negative
-        // share for roughly 1 in 200k weighted allocations, and a negative
-        // discount share is a line whose discount *raises* its price.
-        // Milestone 70 hit the same defect head-on in the refund
-        // calculation and replaced Split on both paths; this is the check
-        // that would have caught it the first time.
+        // The property Milestone 66 should have had and did not: NodaMoney's
+        // Split emits a negative share for roughly 1 in 200k weighted
+        // allocations, which is a line whose discount *raises* its price.
+        // Milestone 70 hit the same defect in refunds and replaced Split on
+        // both paths; this is the check that would have caught it first.
         GenRequest.Sample(
             request =>
             {
@@ -224,10 +197,7 @@ public class PricingEnginePropertyTests
     [Fact]
     public void NoLineIsEverDiscountedBelowFree()
     {
-        // The consequence that actually reaches a customer: a line's share
-        // of the discount must never exceed what that line costs, or its
-        // net would be negative and the order would owe the shopper money
-        // for buying it.
+        // A line's discount share must never exceed what that line costs, or its net goes negative.
         GenRequest.Sample(
             request =>
             {

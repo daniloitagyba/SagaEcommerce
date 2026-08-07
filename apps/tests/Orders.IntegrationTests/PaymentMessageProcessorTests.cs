@@ -23,14 +23,10 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
         .WithPassword("test-password-not-a-secret")
         .Build();
 
-    // Confluent.SchemaRegistry 2.15.0 ships no mock/in-memory client, and
-    // ISchemaRegistryClient has 24+ members - hand-rolling a fake risks
-    // subtly wrong behavior around schema IDs. Redpanda bundles a
-    // Confluent-compatible schema registry in the same single container as
-    // its Kafka-API broker, so this gets a real, ephemeral, hermetic
-    // registry per test run instead of depending on a specific host's
-    // always-on Karapace instance (the previous approach, fine on a single
-    // personal server but unreachable from CI runners).
+    // Confluent.SchemaRegistry ships no mock client, and ISchemaRegistryClient
+    // has 24+ members - hand-rolling a fake risks subtly wrong schema-ID
+    // behavior. Redpanda bundles a Confluent-compatible registry alongside
+    // its broker, so this gets a real, ephemeral registry per test run.
     private readonly RedpandaContainer _redpanda =
         new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v26.2.1").Build();
     private CachedSchemaRegistryClient _schemaRegistryClient = null!;
@@ -46,8 +42,7 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
 
         var services = new ServiceCollection();
         services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
-        // Milestone 66: the processor resolves the risk evaluator per
-        // message from its own scope, so it has to be registered here too.
+        // Milestone 66: the processor resolves the risk evaluator per message from its own scope, so it must be registered here too.
         services.Configure<PaymentRiskOptions>(_ => { });
         services.AddScoped<PaymentRiskEvaluator>();
         _serviceProvider = services.BuildServiceProvider();
@@ -69,11 +64,8 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
     }
 
     // Milestone 66 replaced the bare amount threshold with a scored risk
-    // policy, and these two cases land the same way for a better reason:
-    // 49.90 from an unseen customer scores FIRST_PURCHASE(20), under the
-    // 60 decline threshold; 5000.00 scores HIGH_VALUE(50) +
-    // FIRST_PURCHASE(20) = 70, over it. The outcome is unchanged, so this
-    // still guards the same behaviour it always did.
+    // policy: 49.90 scores FIRST_PURCHASE(20), under 60; 5000.00 scores
+    // HIGH_VALUE(50)+FIRST_PURCHASE(20)=70, over it. Same outcome, better reason.
     [Theory]
     [InlineData(49.90, true)]
     [InlineData(5000.00, false)]

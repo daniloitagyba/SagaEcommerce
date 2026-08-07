@@ -6,20 +6,13 @@ using PactNet.Matchers;
 namespace Orders.ContractTests;
 
 /// <summary>
-/// Milestone 29: consumer-driven contract testing for Orders.Api's
-/// synchronous REST surface - complementing, not duplicating, Milestone
-/// 19's Avro/Schema Registry contracts for the asynchronous Kafka side.
-/// This architecture has no internal service-to-service HTTP calls
-/// (Orders.Worker and Payments.Service coordinate purely through Kafka,
-/// confirmed in Milestone 24's investigation), so the contract worth
-/// protecting is the one real synchronous boundary: whatever calls
-/// POST/GET /orders directly (this project's own scripts today; a future
-/// frontend or mobile client tomorrow).
-///
-/// This half generates the contract (a "pact") by exercising a mock server
-/// built from the expected interactions - it never touches a real
-/// Orders.Api. OrdersApiProviderTests verifies that contract against the
-/// real, deployed service.
+/// Milestone 29: consumer-driven contract testing for Orders.Api's REST
+/// surface, complementing Milestone 19's Avro contracts for the Kafka
+/// side. Orders.Worker and Payments.Service coordinate purely through
+/// Kafka, so the one real synchronous boundary worth protecting is
+/// whatever calls POST/GET /orders directly. This half generates the
+/// contract ("pact") against a mock server, never a real Orders.Api;
+/// OrdersApiProviderTests verifies it against the real, deployed service.
 /// </summary>
 public sealed class OrdersApiConsumerTests
 {
@@ -79,14 +72,10 @@ public sealed class OrdersApiConsumerTests
         });
     }
 
-    // Deliberately tests the not-found shape rather than "an order exists,
-    // read it back" - the latter needs Pact's provider-state fixture
-    // machinery (a callback endpoint Orders.Api would set up test data in
-    // response to, purely for this test's benefit) to line up a real order
-    // id with the request path baked into the recorded interaction. Not
-    // worth adding test-only surface area to the API for. A random,
-    // never-created id 404ing is itself a real, worthwhile contract - and
-    // needs no fixture at all, live or hermetic.
+    // Tests the not-found shape, not "read back an existing order" - the
+    // latter needs Pact's provider-state fixture machinery to line up a
+    // real order id, not worth the test-only API surface. A random,
+    // never-created id 404ing is itself a worthwhile contract, no fixture needed.
     [Fact]
     public async Task GetOrderWhenTheOrderDoesNotExistReturnsNotFound()
     {

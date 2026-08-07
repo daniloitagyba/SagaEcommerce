@@ -39,16 +39,13 @@ public sealed class RedisIdempotencyStoreTests : IAsyncLifetime
     {
         var store = new RedisIdempotencyStore(_connectionMultiplexer!, _pipelineProvider, Options.Create(new IdempotencyOptions()));
 
-        // ResilienceExtensions.RedisPipeline times this store's Redis calls out at 150ms -
-        // deliberately tight for production, where a slow Redis is itself worth failing fast
-        // on. Against a real Testcontainers Redis sharing a noisy CI runner with several other
-        // integration test assemblies (see ci.yml's coverage-step comment for the same class of
-        // issue), an ordinary sub-millisecond round trip can occasionally get scheduled past
-        // that window, and the store degrades exactly as designed: bypass and re-run the
-        // factory. That degradation is correct behavior under a genuinely slow Redis - here the
-        // slowness is CI scheduler jitter impersonating one. Retried with a fresh key each
-        // attempt, rather than loosening the timeout, so a real regression in replay still
-        // fails every attempt and the test still fails.
+        // The 150ms Redis timeout is deliberately tight for production; on
+        // a noisy CI runner sharing Testcontainers Redis with other test
+        // assemblies, a round trip can occasionally miss that window and
+        // the store degrades exactly as designed (bypass, re-run the
+        // factory) - CI jitter impersonating a slow Redis. Retried with a
+        // fresh key each attempt, not a looser timeout, so a real
+        // regression in replay still fails every attempt.
         for (var attempt = 1; attempt <= 3; attempt++)
         {
             var idempotencyKey = Guid.NewGuid().ToString();

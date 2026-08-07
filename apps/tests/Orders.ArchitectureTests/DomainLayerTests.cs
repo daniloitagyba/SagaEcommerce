@@ -41,11 +41,9 @@ public class DomainLayerTests
     public void DomainDoesNotDependOnTheRulesEngine()
     {
         // Milestone 66: Orders.Domain owns the pricing model and the
-        // IPricingEngine contract; Orders.Application owns how the rules
-        // are evaluated. Without this, the easiest way to add a promotion
-        // is to drop an NRules Rule class next to the model it prices -
-        // which would make the domain unusable (and untestable) without a
-        // Rete network compiled behind it.
+        // IPricingEngine contract; Orders.Application owns rule evaluation.
+        // Without this, dropping an NRules Rule next to the model would
+        // make the domain unusable without a Rete network compiled behind it.
         var result = Types.InAssembly(DomainAssembly)
             .ShouldNot()
             .HaveDependencyOnAny("NRules", "FluentValidation")
@@ -57,9 +55,7 @@ public class DomainLayerTests
     [Fact]
     public void ThePricingModelIsReachableFromTheDomain()
     {
-        // Guards the rule above from passing trivially: if the pricing
-        // model were moved out of Orders.Domain wholesale, "the domain has
-        // no NRules dependency" would still hold while meaning nothing.
+        // Guards the rule above from passing trivially if the pricing model were moved out of Orders.Domain entirely.
         var pricingTypes = Types.InAssembly(DomainAssembly)
             .That()
             .ResideInNamespace("Orders.Domain.Pricing")

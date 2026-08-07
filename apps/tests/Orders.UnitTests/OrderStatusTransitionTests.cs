@@ -4,14 +4,10 @@ using CsCheck;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 69: the order lifecycle as a table.
-///
-/// Before this, "which moves are legal" was not a question the code could
-/// answer - each transition was a hardcoded pair inside OrderStatusStore,
-/// and the CAS's <c>WHERE status = @expected</c> answered the narrower
-/// "is it in exactly this state?". The difference only shows up once a
-/// status has more than one legal predecessor, which is exactly what the
-/// fulfilment states introduce.
+/// Milestone 69: the order lifecycle as a table. Before this, "which moves
+/// are legal" wasn't answerable in code - each transition was a hardcoded
+/// pair inside OrderStatusStore, which only worked while a status had one
+/// legal predecessor, until the fulfilment states introduced more.
 /// </summary>
 public class OrderStatusTransitionTests
 {
@@ -26,9 +22,7 @@ public class OrderStatusTransitionTests
     [InlineData(OrderStatuses.Shipped, OrderStatuses.Delivered)]
     [InlineData(OrderStatuses.FulfillmentHold, OrderStatuses.Picking)]
     [InlineData(OrderStatuses.FulfillmentHold, OrderStatuses.Cancelled)]
-    // Milestone 74: the saga parks an order here when the network cannot
-    // cover it, and can either clear it (Confirmed, once a restock arrives)
-    // or give up on it (Cancelled, on timeout).
+    // Milestone 74: parked here when the network can't cover it - cleared on restock (Confirmed) or given up on timeout (Cancelled).
     [InlineData(OrderStatuses.Created, OrderStatuses.Backordered)]
     [InlineData(OrderStatuses.Backordered, OrderStatuses.Confirmed)]
     [InlineData(OrderStatuses.Backordered, OrderStatuses.Cancelled)]
@@ -46,8 +40,7 @@ public class OrderStatusTransitionTests
     [InlineData(OrderStatuses.Shipped, OrderStatuses.Picking)]
     [InlineData(OrderStatuses.Delivered, OrderStatuses.Shipped)]
     [InlineData(OrderStatuses.Confirmed, OrderStatuses.Created)]
-    // Backordered is reached only from Created, and only the saga's own
-    // reservation reply puts an order there - not the fulfilment states.
+    // Backordered is reached only from Created, only by the saga's own reservation reply.
     [InlineData(OrderStatuses.Confirmed, OrderStatuses.Backordered)]
     [InlineData(OrderStatuses.Backordered, OrderStatuses.Picking)]
     [InlineData(OrderStatuses.Backordered, OrderStatuses.Shipped)]
@@ -59,9 +52,7 @@ public class OrderStatusTransitionTests
     [Fact]
     public void AShippedOrderCannotBeCancelled()
     {
-        // The one that costs real money if it is wrong: cancelling after
-        // dispatch would void an authorization for goods already in a van.
-        // A shipped order is reversed by a *return*, not a cancellation.
+        // Cancelling after dispatch would void a hold for goods already in a van - reversed by a *return*, not a cancellation.
         Assert.False(OrderStatuses.CanTransition(OrderStatuses.Shipped, OrderStatuses.Cancelled));
         Assert.False(OrderStatuses.CanTransition(OrderStatuses.Delivered, OrderStatuses.Cancelled));
     }
@@ -69,9 +60,7 @@ public class OrderStatusTransitionTests
     [Fact]
     public void NothingEscapesATerminalState()
     {
-        // Milestone 70 took Delivered off this list: it is the happy ending,
-        // but a delivered order can still be returned, so it is not the end
-        // of the row's life. Cancelled and Returned are.
+        // Milestone 70 took Delivered off this list - a delivered order can still be returned, so it isn't the row's end of life.
         foreach (var terminal in new[] { OrderStatuses.Cancelled, OrderStatuses.Returned })
         {
             Assert.True(OrderStatuses.IsTerminal(terminal));
@@ -88,8 +77,7 @@ public class OrderStatusTransitionTests
     {
         Assert.True(OrderStatuses.CanTransition(OrderStatuses.Delivered, OrderStatuses.Returned));
 
-        // Nothing that never arrived can come back, and a cancelled order
-        // was never charged in the first place.
+        // Nothing that never arrived can come back.
         foreach (var notDelivered in new[]
                  {
                      OrderStatuses.Created, OrderStatuses.Confirmed, OrderStatuses.Picking,
@@ -104,8 +92,7 @@ public class OrderStatusTransitionTests
     [Fact]
     public void CreatedIsOnlyEverSetAtConstructionNeverTransitionedInto()
     {
-        // Nothing may move an order back to Created - it is the state an
-        // order is born in, not one it can return to.
+        // Created is the state an order is born in, not one it can return to.
         Assert.Empty(OrderStatuses.PredecessorsOf(OrderStatuses.Created));
         Assert.DoesNotContain(OrderStatuses.Created, OrderStatuses.TransitionableTargets);
     }
@@ -116,23 +103,20 @@ public class OrderStatusTransitionTests
         Assert.Equal(OrderSettlementAction.Capture, OrderStatuses.SettlementActionFor(OrderStatuses.Shipped));
         Assert.Equal(OrderSettlementAction.Void, OrderStatuses.SettlementActionFor(OrderStatuses.Cancelled));
 
-        // Milestone 68 captured at Confirmed because Shipped did not exist.
-        // It must not any more - that is the whole point of the hold.
+        // Milestone 68 captured at Confirmed because Shipped didn't exist - must not any more, the whole point of the hold.
         Assert.Equal(OrderSettlementAction.None, OrderStatuses.SettlementActionFor(OrderStatuses.Confirmed));
         Assert.Equal(OrderSettlementAction.None, OrderStatuses.SettlementActionFor(OrderStatuses.Picking));
         Assert.Equal(OrderSettlementAction.None, OrderStatuses.SettlementActionFor(OrderStatuses.Delivered));
         Assert.Equal(OrderSettlementAction.None, OrderStatuses.SettlementActionFor(OrderStatuses.FulfillmentHold));
 
-        // No money has moved yet at Backordered - payment is decided one
-        // saga step later than reservation - so there is nothing to void.
+        // No money has moved yet at Backordered - payment is decided one step later than reservation.
         Assert.Equal(OrderSettlementAction.None, OrderStatuses.SettlementActionFor(OrderStatuses.Backordered));
     }
 
     [Fact]
     public void EveryReachableStatusIsKnownAndEveryPredecessorIsReal()
     {
-        // Guards the table against a typo'd status silently creating an
-        // unreachable state or a predecessor that does not exist.
+        // Guards the table against a typo'd status creating an unreachable state or a nonexistent predecessor.
         foreach (var target in OrderStatuses.TransitionableTargets)
         {
             Assert.True(OrderStatuses.IsKnown(target), $"'{target}' is a transition target but not a known status.");
@@ -145,11 +129,10 @@ public class OrderStatusTransitionTests
     [Fact]
     public void MoneyIsOnlyEverSettledOnceAlongAnyPath()
     {
-        // The property that matters across the whole lifecycle: walking any
-        // legal sequence of transitions must never ask to capture and void
-        // the same order, nor do either twice. Payment.TryCapture guards
-        // this at the domain level too, but a lifecycle that *asks* for
-        // both is a design error the guard would merely hide.
+        // Walking any legal sequence of transitions must never ask to
+        // capture and void the same order, nor do either twice -
+        // Payment.TryCapture guards this too, but asking for both is a
+        // design error the guard would merely hide.
         var allStatuses = new[]
         {
             OrderStatuses.Confirmed, OrderStatuses.Picking, OrderStatuses.Shipped,

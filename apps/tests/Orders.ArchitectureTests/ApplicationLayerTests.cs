@@ -31,15 +31,10 @@ public class ApplicationLayerTests
     [InlineData("Microsoft.AspNetCore")]
     public void ApplicationDoesNotDependOnAnyInfrastructureFramework(string frameworkNamespace)
     {
-        // Orders.Application references BuildingBlocks.Contracts (event
-        // records, cache-key builders) and BuildingBlocks.Observability
-        // only - split from the former monolithic BuildingBlocks
-        // specifically so neither EF Core/Npgsql nor StackExchange.Redis
-        // is reachable here at all, not even transitively. This is the
-        // real guardrail: nothing stops a use case handler from reaching
-        // for IDatabase/DbContext directly instead of going through an
-        // Orders.Application.Ports interface, so the fitness function
-        // still matters even though it now also holds by construction.
+        // Orders.Application references only BuildingBlocks.Contracts and
+        // BuildingBlocks.Observability - nothing stops a use case handler
+        // from reaching for IDatabase/DbContext directly instead of an
+        // Orders.Application.Ports interface, so this still matters.
         var result = Types.InAssembly(ApplicationAssembly)
             .ShouldNot()
             .HaveDependencyOn(frameworkNamespace)
@@ -77,8 +72,7 @@ public class ApplicationLayerTests
             .GetTypes()
             .ToList();
 
-        // A rule with nothing to check passes trivially - guard against a
-        // rename/removal silently making this test meaningless.
+        // A rule with nothing to check passes trivially - guard against a rename silently making this test meaningless.
         Assert.NotEmpty(implementors);
 
         var result = Types.InAssembly(InfrastructureAssembly)

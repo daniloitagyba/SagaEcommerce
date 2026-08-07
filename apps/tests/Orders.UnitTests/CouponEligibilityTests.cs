@@ -4,16 +4,11 @@ using Orders.Domain;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 67: the coupon rules that Milestone 66 simply did not have.
-///
-/// A coupon used to be a config entry mapping a code to a percentage,
-/// which meant it could never expire, never run out, and never be
-/// restricted - HALFOFF took 50% off for anyone, any number of times,
-/// forever. These are the checks that close that.
-///
-/// The evaluation is a pure function on purpose, so the whole rule set is
-/// testable without a database and property-testable over arbitrary
-/// inputs - the same discipline the pricing engine follows.
+/// Milestone 67: the coupon rules Milestone 66 didn't have - a coupon used
+/// to be a config entry mapping a code to a percentage, so it could never
+/// expire, run out, or be restricted. Evaluation is a pure function, so
+/// the whole rule set is testable without a database, the same discipline
+/// the pricing engine follows.
 /// </summary>
 public class CouponEligibilityTests
 {
@@ -48,9 +43,7 @@ public class CouponEligibilityTests
     [Fact]
     public void AnUnknownCodeIsRejectedRatherThanSilentlyIgnored()
     {
-        // Milestone 66 dropped unknown codes silently, which was defensible
-        // when a config typo was the only way to produce one. Now that
-        // codes expire and run out, the shopper needs to know why.
+        // Milestone 66 dropped unknown codes silently, defensible when a typo was the only way to produce one - not any more.
         Assert.Equal(
             CouponRejectionReason.NotFound,
             CouponEligibility.Evaluate(null, subtotal: 100m, customerRedemptionCount: 0, Now));
@@ -85,8 +78,7 @@ public class CouponEligibilityTests
         Assert.Equal(
             CouponRejectionReason.Expired,
             CouponEligibility.Evaluate(coupon, subtotal: 100m, customerRedemptionCount: 0, atExpiry));
-        // ...and the instant it opens is already valid, so the two
-        // boundaries cannot both reject or both accept.
+        // ...and the instant it opens is already valid.
         Assert.Equal(
             CouponRejectionReason.None,
             CouponEligibility.Evaluate(coupon, subtotal: 100m, customerRedemptionCount: 0, coupon.ValidFrom));
@@ -138,11 +130,7 @@ public class CouponEligibilityTests
     [Fact]
     public void ACouponWithALimitIsNeverAcceptedPastIt()
     {
-        // The property that actually matters: no combination of subtotal,
-        // window or per-customer history may let a coupon be accepted once
-        // its total redemptions have reached the cap. A future rule that
-        // added an exception ("VIPs bypass the limit") would fail here,
-        // which is the point.
+        // No combination of subtotal, window or history may accept a coupon past its total redemption cap - a future "VIPs bypass" rule fails here.
         var gen =
             from maxTotal in Gen.Int[1, 50]
             from redeemed in Gen.Int[0, 80]

@@ -39,13 +39,9 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
         var item = InventoryItem.Create("SKU-TEST-001", 10, DateTimeOffset.UtcNow);
         item.TryReserve(4, DateTimeOffset.UtcNow);
         dbContext.InventoryItems.Add(item);
-        // See InventoryReservationMessageProcessorTests for why this is
-        // needed: CommitAndReleaseReuseTheSameReservationIdWithoutInboxCollision
-        // exercises the reserve path too, which since Milestone 72 refuses
-        // outright when there is no warehouse network to allocate from.
-        // The 6 available here mirrors the item's own Available after the
-        // 4 already reserved above - aggregate and network start in
-        // agreement, same as the M72 seed migration keeps them on deploy.
+        // Needed since Milestone 72 refuses reservation outright with no
+        // warehouse network - the 6 here mirrors the item's own Available
+        // after the 4 already reserved, keeping aggregate and network in agreement.
         dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-TEST-001", "WH-TEST", 6, reorderPoint: 0, DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync();
     }
@@ -103,10 +99,7 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
     [Fact]
     public async Task CommitAndReleaseReuseTheSameReservationIdWithoutInboxCollision()
     {
-        // Commit and Release use a DIFFERENT inbox consumer_name suffix than
-        // Reserve specifically so that reusing the original ReservationId
-        // (by design - see InventoryContracts.cs) doesn't get mistaken for
-        // a duplicate of the original Reserve request.
+        // Commit and Release use a different inbox consumer_name suffix than Reserve, so reusing the ReservationId isn't mistaken for a duplicate.
         var processor = CreateProcessor();
         var reservationId = Guid.NewGuid();
 

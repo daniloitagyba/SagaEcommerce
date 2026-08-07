@@ -4,13 +4,10 @@ using Inventory.Service.Domain;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 72: the multi-warehouse allocation policy.
-///
-/// The policy is the interesting part of splitting stock across buildings -
-/// not the extra table - so it is a pure function, which is what makes it
-/// property-testable at all. The properties below are the ones that must
-/// hold for any stock configuration, because getting them wrong means
-/// either overselling or shipping an order in more parcels than it needed.
+/// Milestone 72: the multi-warehouse allocation policy - a pure function,
+/// which is what makes it property-testable. These properties must hold
+/// for any stock configuration; getting them wrong means overselling or
+/// shipping in more parcels than needed.
 /// </summary>
 public class StockAllocatorTests
 {
@@ -20,11 +17,7 @@ public class StockAllocatorTests
     [Fact]
     public void OneWarehouseThatCanCoverTheOrderShipsItWhole()
     {
-        // Both hold enough and share a priority, so the tie breaks on the
-        // warehouse code - "WH-RJ" before "WH-SP". Asserting WH-SP because
-        // it happens to be listed first is exactly the input-order
-        // dependence AllocationIsDeterministicRegardlessOfInputOrder
-        // forbids, and this test originally made that mistake.
+        // Both hold enough and share a priority, so the tie breaks on warehouse code - "WH-RJ" before "WH-SP", not input order.
         var plan = StockAllocator.Allocate([Warehouse("WH-SP", 10), Warehouse("WH-RJ", 10)], 4);
 
         Assert.True(plan.Fulfillable);
@@ -36,9 +29,7 @@ public class StockAllocatorTests
     [Fact]
     public void PriorityDecidesWhichSingleWarehouseNotSize()
     {
-        // WH-RJ holds more, but WH-SP has the better priority and can still
-        // cover the order - splitting to the bigger pile would be a worse
-        // outcome for no reason.
+        // WH-RJ holds more, but WH-SP has the better priority and can still cover the order.
         var plan = StockAllocator.Allocate(
             [Warehouse("WH-RJ", 100, priority: 2), Warehouse("WH-SP", 10, priority: 1)], 5);
 
@@ -61,9 +52,7 @@ public class StockAllocatorTests
     [Fact]
     public void NotEnoughAnywhereIsRefusedRatherThanPartiallyAllocated()
     {
-        // All-or-nothing on purpose: the saga's reservation step confirms an
-        // order, and a partial reservation would confirm one the warehouse
-        // cannot actually fill.
+        // All-or-nothing: a partial reservation would confirm an order the warehouse can't actually fill.
         var plan = StockAllocator.Allocate([Warehouse("WH-SP", 2), Warehouse("WH-RJ", 3)], 6);
 
         Assert.False(plan.Fulfillable);
@@ -83,9 +72,7 @@ public class StockAllocatorTests
     [Fact]
     public void AllocationIsDeterministicRegardlessOfInputOrder()
     {
-        // Two replicas reasoning about the same stock must reach the same
-        // plan, so ties may never be broken by whatever order the rows came
-        // back in.
+        // Two replicas must reach the same plan; ties can't depend on row order.
         var forwards = StockAllocator.Allocate(
             [Warehouse("WH-A", 3, 1), Warehouse("WH-B", 3, 1), Warehouse("WH-C", 3, 1)], 7);
         var backwards = StockAllocator.Allocate(
@@ -99,10 +86,7 @@ public class StockAllocatorTests
     [Fact]
     public void APlanNeverAllocatesMoreThanAWarehouseHasAndAlwaysSumsToTheRequest()
     {
-        // The two properties that prevent overselling: no warehouse is ever
-        // asked for more than it holds, and the plan covers exactly what was
-        // requested - never less (a short shipment) and never more (stock
-        // conjured from nowhere).
+        // Prevents overselling: no warehouse is asked for more than it holds, and the plan covers exactly what was requested.
         var gen =
             from stocks in Gen.Int[0, 20].Array[1, 5]
             from requested in Gen.Int[1, 60]
@@ -119,8 +103,7 @@ public class StockAllocatorTests
 
                 if (!plan.Fulfillable)
                 {
-                    // Refusal is only legitimate when the network genuinely
-                    // cannot cover the request.
+                    // Refusal is only legitimate when the network genuinely can't cover the request.
                     return input.stocks.Sum() < input.requested;
                 }
 
@@ -149,8 +132,7 @@ public class StockAllocatorTests
     [Fact]
     public void ItNeverSplitsWhenASingleWarehouseCouldHaveCoveredTheOrder()
     {
-        // Splitting means two parcels, two shipping costs and two chances
-        // for a leg to go missing. It has to be a fallback, never a habit.
+        // Splitting means two parcels and two chances for a leg to go missing - a fallback, never a habit.
         var gen =
             from stocks in Gen.Int[0, 20].Array[1, 5]
             from requested in Gen.Int[1, 20]
@@ -208,11 +190,8 @@ public class StockAllocatorTests
     [Fact]
     public void ReplenishmentIsSignalledOnTheCrossingNotOnEveryLowReservation()
     {
-        // Milestone 73. The reservation that takes a warehouse below its
-        // reorder point is news; the next twenty orders finding it already
-        // low are not. Emitting on every one is how a useful signal becomes
-        // a topic everyone filters out, so the crossing is what the
-        // allocation store samples for.
+        // Milestone 73: the reservation that crosses the reorder point is
+        // news; the next twenty orders finding it already low are not.
         var now = DateTimeOffset.UtcNow;
         var stock = WarehouseStock.Create("SKU-1", "WH-SP", available: 10, reorderPoint: 5, now);
 

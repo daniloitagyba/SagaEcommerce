@@ -56,8 +56,7 @@ public sealed class BackorderTests : IAsyncLifetime
     {
         var processor = CreateProcessor();
 
-        // Only 3 available; asking for 5 cannot be covered by anything on
-        // the shelf right now, but nothing says it never will be.
+        // Only 3 available; asking for 5 can't be covered now, but nothing says it never will be.
         var result = await processor.ProcessAsync(CreateReserveConsumeResult(Guid.NewGuid(), "SKU-TEST-001", 5), CancellationToken.None);
 
         Assert.Equal(MessageProcessingResult.Processed, result);
@@ -73,8 +72,7 @@ public sealed class BackorderTests : IAsyncLifetime
         Assert.True(reply.Backordered);
         Assert.Equal("insufficient stock", reply.Reason);
 
-        // Nothing was drawn down - a backorder is a promise to try again,
-        // not a partial reservation.
+        // Nothing was drawn down - a backorder is a promise to try again, not a partial reservation.
         var item = await dbContext.InventoryItems.SingleAsync(i => i.Sku == "SKU-TEST-001");
         Assert.Equal(3, item.AvailableQuantity);
         Assert.Equal(0, item.ReservedQuantity);
@@ -83,9 +81,7 @@ public sealed class BackorderTests : IAsyncLifetime
     [Fact]
     public async Task AnUnknownSkuFailsOutrightRatherThanBackordering()
     {
-        // Nothing will ever restock a SKU that does not exist - recording a
-        // backorder for it would wait forever for a restock that can never
-        // come.
+        // Nothing will ever restock a SKU that doesn't exist.
         var processor = CreateProcessor();
 
         var result = await processor.ProcessAsync(CreateReserveConsumeResult(Guid.NewGuid(), "SKU-DOES-NOT-EXIST", 1), CancellationToken.None);
@@ -124,9 +120,7 @@ public sealed class BackorderTests : IAsyncLifetime
         Assert.Empty(dbContext.Backorders);
 
         var replies = await AllRepliesAsync(dbContext);
-        // Two replies share this reservationId on purpose - the first
-        // "wait" and the eventual "yes" - so the release is identified by
-        // Reserved: true, not by the id alone.
+        // Two replies share this reservationId (the "wait" and the eventual "yes"), so release is identified by Reserved: true, not the id alone.
         var released = Assert.Single(replies, r => r.ReservationId == reservationId && r.Reserved);
         Assert.Null(released.Reason);
         Assert.False(released.Backordered);
@@ -166,23 +160,17 @@ public sealed class BackorderTests : IAsyncLifetime
         var firstReservationId = Guid.NewGuid();
         var secondReservationId = Guid.NewGuid();
 
-        // Deplete the shelf completely first, so both requests below are
-        // genuinely backordered rather than one of them succeeding outright
-        // against whatever was left.
+        // Deplete the shelf first, so both requests below are genuinely backordered, not succeeding against leftover stock.
         await processor.ProcessAsync(CreateReserveConsumeResult(Guid.NewGuid(), "SKU-TEST-001", 3), CancellationToken.None);
 
-        // First in line asks for 5, which the restock below still will not
-        // cover. Second asks for only 1 - trivially fulfillable in
-        // isolation once that restock lands - but arrived later, so
-        // serving it while the first still waits would be skipping the
-        // line just because it is smaller.
+        // First asks for 5, which the restock below still won't cover.
+        // Second asks for only 1 and arrived later - serving it first would
+        // be skipping the line just because it's smaller.
         await processor.ProcessAsync(CreateReserveConsumeResult(firstReservationId, "SKU-TEST-001", 5), CancellationToken.None);
         await Task.Delay(10); // RequestedAt must strictly order the two.
         await processor.ProcessAsync(CreateReserveConsumeResult(secondReservationId, "SKU-TEST-001", 1), CancellationToken.None);
 
-        // Only 1 comes back - covers the second backorder alone, nowhere
-        // near the first's 5. The loop must stop at the first rather than
-        // notice the second would fit.
+        // Only 1 comes back - covers the second alone, nowhere near the first's 5. The loop must stop at the first, not skip ahead.
         await processor.ProcessRestockAsync(CreateRestockConsumeResult(Guid.NewGuid(), "SKU-TEST-001", 1), CancellationToken.None);
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -194,14 +182,11 @@ public sealed class BackorderTests : IAsyncLifetime
             stillWaiting.OrderBy(id => id));
 
         var replies = await AllRepliesAsync(dbContext);
-        // Only the two backorders matter here - the earlier "deplete the
-        // shelf" reservation legitimately succeeded and shows up too.
+        // Only the two backorders matter here - the earlier "deplete the shelf" reservation legitimately succeeded too.
         Assert.DoesNotContain(replies, r => r.ReservationId == firstReservationId && r.Reserved);
         Assert.DoesNotContain(replies, r => r.ReservationId == secondReservationId && r.Reserved);
 
-        // Untouched: neither backorder was released, so the restocked unit
-        // is still sitting in Available. Reserved is 3 from the initial
-        // "deplete the shelf" reservation above, not from either backorder.
+        // Untouched: neither backorder released, so the restocked unit sits in Available. Reserved is 3 from the initial "deplete" reservation.
         var item = await dbContext.InventoryItems.SingleAsync(i => i.Sku == "SKU-TEST-001");
         Assert.Equal(1, item.AvailableQuantity);
         Assert.Equal(3, item.ReservedQuantity);

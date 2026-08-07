@@ -4,17 +4,11 @@ using Payments.Service.Domain;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 68: the authorize/capture state machine.
-///
-/// Until now a payment was one boolean - approved or not - and the money
-/// conceptually moved at that instant. That collapses the distinction every
-/// card network makes between a hold placed at checkout and funds taken
-/// when the goods ship, and it is what made "authorized but not yet
-/// charged" an unrepresentable state.
-///
-/// The guards below are what keep a redelivered capture command from
-/// charging twice: the same reasoning as the inbox, applied to a state
-/// transition instead of a message id.
+/// Milestone 68: the authorize/capture state machine, splitting "approved"
+/// (was one boolean before) from "money moved", so a hold placed at
+/// checkout and funds taken at shipment become distinct states. The guards
+/// below keep a redelivered capture command from charging twice - the same
+/// reasoning as the inbox, applied to a state transition.
 /// </summary>
 public class PaymentAuthorizationTests
 {
@@ -38,9 +32,7 @@ public class PaymentAuthorizationTests
     [Fact]
     public void AnApprovedPixIsCapturedOutrightWithNoHoldToExpire()
     {
-        // Pix is an instant transfer: there is no hold to place and nothing
-        // to capture later, so modelling it as Authorized would create an
-        // authorization no capture command would ever legitimately settle.
+        // Pix is instant: modelling it as Authorized would create a hold no capture command would ever settle.
         var payment = Authorize(PaymentMethods.Pix);
 
         Assert.Equal(PaymentStates.Captured, payment.State);
@@ -71,8 +63,7 @@ public class PaymentAuthorizationTests
         Assert.Equal(PaymentStates.Captured, payment.State);
         Assert.Equal(capturedAt, payment.SettledAt);
 
-        // The invariant that matters most: a redelivered capture command
-        // must not charge the customer a second time.
+        // A redelivered capture command must not charge the customer a second time.
         Assert.False(payment.TryCapture(Now.AddMinutes(6)));
         Assert.Equal(capturedAt, payment.SettledAt);
     }
@@ -100,9 +91,7 @@ public class PaymentAuthorizationTests
         payment.TryCapture(Now.AddMinutes(1));
 
         Assert.False(payment.TrySettleWithoutCapture(PaymentStates.Voided, "order cancelled", Now.AddMinutes(2)));
-        // This is the case the expiry sweeper depends on: a payment captured
-        // between the sweeper's claim and its update is left alone rather
-        // than being expired out from under a charge that already happened.
+        // The expiry sweeper depends on this: a payment captured between the sweeper's claim and update is left alone, not expired.
         Assert.False(payment.TrySettleWithoutCapture(PaymentStates.Expired, "window elapsed", Now.AddHours(2)));
         Assert.Equal(PaymentStates.Captured, payment.State);
     }
@@ -110,9 +99,7 @@ public class PaymentAuthorizationTests
     [Fact]
     public void APixPaymentIsAlreadySettledSoCaptureIsANoOp()
     {
-        // Orders only sends a capture command for methods that require one,
-        // but the domain guard is what makes that an optimisation rather
-        // than a correctness requirement.
+        // Orders only sends capture for methods that need it, but the domain guard is what makes that an optimisation, not a requirement.
         var payment = Authorize(PaymentMethods.Pix);
 
         Assert.False(payment.TryCapture(Now.AddMinutes(1)));
@@ -133,10 +120,7 @@ public class PaymentAuthorizationTests
     [Fact]
     public void AnApprovedBoletoWaitsForPaymentRatherThanHoldingMoney()
     {
-        // Milestone 73. It is deliberately not Authorized: nothing is held.
-        // The shopper has a slip and may simply never pay it, which is a
-        // different fact about the world than a bank reserving funds, and
-        // the state name has to say which one happened.
+        // Milestone 73: deliberately not Authorized - nothing is held, the shopper has a slip and may never pay it.
         var payment = Authorize(PaymentMethods.Boleto);
 
         Assert.Equal(PaymentStates.AwaitingPayment, payment.State);

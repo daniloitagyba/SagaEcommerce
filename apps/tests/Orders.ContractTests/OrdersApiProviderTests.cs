@@ -4,20 +4,13 @@ namespace Orders.ContractTests;
 
 /// <summary>
 /// Verifies the pact OrdersApiConsumerTests generated against a real,
-/// running Orders.Api - deliberately not hermetic, and deliberately not
-/// wired into `dotnet test`'s default CI run: GitHub Actions runners have
-/// no route to this lab's server (the same class of problem Milestone 25
-/// hit and fixed for the schema registry - but here, unlike that one,
-/// hermetic replacement isn't the right answer, because the entire point
-/// of provider verification is checking the *real* deployed service, not
-/// a stand-in for it). Run explicitly, against a live deployment, with a
-/// real bearer token - see docs/cicd/milestone-29-contract-testing.md.
-///
-/// Requires ORDERS_API_URL and ACCESS_TOKEN; does nothing (not a failure)
-/// when they're unset, so this project stays safe to include in the
-/// default `dotnet test` run without ever silently skipping real CI
-/// coverage - "not configured" and "verification failed" are visibly
-/// different outcomes.
+/// running Orders.Api - deliberately not hermetic, since the whole point
+/// of provider verification is checking the *real* deployed service.
+/// GitHub Actions runners have no route to this lab's server, so it's run
+/// explicitly against a live deployment - see
+/// docs/cicd/milestone-29-contract-testing.md. Requires ORDERS_API_URL and
+/// ACCESS_TOKEN; does nothing (not a failure) when unset, so "not
+/// configured" and "verification failed" stay visibly different outcomes.
 /// </summary>
 public sealed class OrdersApiProviderTests
 {
@@ -37,10 +30,7 @@ public sealed class OrdersApiProviderTests
 
         var pactPath = Path.Combine("..", "..", "..", "..", "..", "pacts", "OrdersClient-OrdersApi.json");
 
-        // The recorded interactions carry a fake "Bearer contract-test-token"
-        // (a Match.Regex example value, not a real credential) - a custom
-        // header override is what makes replaying them against the real,
-        // auth-enforcing Orders.Api (Milestone 26) actually authenticate.
+        // Recorded interactions carry a fake bearer token; the header override makes replaying them against the real, auth-enforcing Orders.Api work.
         new PactVerifier("OrdersApi")
             .WithHttpEndpoint(new Uri(providerUrl))
             .WithFileSource(new FileInfo(pactPath))

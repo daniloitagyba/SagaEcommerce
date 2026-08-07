@@ -6,17 +6,12 @@ using BuildingBlocks;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 66 adds a lines array to OrderCreated. The Schema Registry
-/// will reject an incompatible change at publish time, but that check only
-/// covers the schemas - it says nothing about whether this codebase's own
-/// reader/writer actually survives the mixed-version window a rolling
-/// deploy creates, when v1 producers and v2 consumers (and the reverse)
-/// are both live on the same topic.
-///
-/// These tests encode both halves of that window by round-tripping through
-/// real Avro binary encoding with deliberately mismatched reader/writer
-/// schemas, which is the only way to prove the default actually does its
-/// job rather than assuming it.
+/// Milestone 66 adds a lines array to OrderCreated. Schema Registry rejects
+/// an incompatible change at publish time, but that says nothing about
+/// whether this codebase's reader/writer survives the mixed-version window
+/// a rolling deploy creates. These tests encode both halves of that window
+/// by round-tripping real Avro binary encoding with deliberately mismatched
+/// reader/writer schemas, proving the default actually works.
 /// </summary>
 public class OrderCreatedSchemaEvolutionTests
 {
@@ -72,10 +67,7 @@ public class OrderCreatedSchemaEvolutionTests
     [Fact]
     public void AV2ConsumerReadsAV1ProducersMessage()
     {
-        // The rolling-deploy case that matters most: consumers upgrade
-        // first, so a new consumer must handle messages a not-yet-upgraded
-        // producer is still writing. The lines field must materialise from
-        // the schema default rather than throwing.
+        // Consumers upgrade first, so a new consumer must handle a not-yet-upgraded producer's messages - lines must materialise from the default.
         var payload = Encode(BuildV1Record(), V1Schema);
 
         var decoded = Decode(payload, V1Schema, V2Schema);
@@ -91,10 +83,7 @@ public class OrderCreatedSchemaEvolutionTests
     [Fact]
     public void AV1ConsumerReadsAV2ProducersMessageIgnoringTheLines()
     {
-        // The other half of the window: a producer already writing lines
-        // while a consumer still runs the old schema. Avro drops the
-        // unknown field; the consumer keeps working on amount alone,
-        // which is exactly what it did before this milestone.
+        // The other half: a producer writing lines while a consumer still runs the old schema. Avro drops the unknown field.
         var orderCreated = new OrderCreated(
             Guid.NewGuid(),
             Guid.NewGuid(),
@@ -133,10 +122,7 @@ public class OrderCreatedSchemaEvolutionTests
         var payload = Encode(OrderCreatedAvroSchema.ToGenericRecord(orderCreated), V2Schema);
         var decoded = OrderCreatedAvroSchema.FromGenericRecord(Decode(payload, V2Schema, V2Schema));
 
-        // The constant, not a literal: this asserts "whatever the current
-        // writer emits", which is what a round-trip test is actually about.
-        // Pinning the number here is what made this fail when Milestone 68
-        // moved the default to v3.
+        // The constant, not a literal - asserts "whatever the current writer emits", which caught the shift when Milestone 68 moved the default to v3.
         Assert.Equal(OrderCreatedSchemaVersions.WithShippingPrefix, decoded.SchemaVersion);
         Assert.True(decoded.HasLineItems);
         Assert.Collection(
@@ -168,11 +154,7 @@ public class OrderCreatedSchemaEvolutionTests
     [Fact]
     public void AV3ConsumerReadsAV1ProducersMessageAsAnInstantPix()
     {
-        // Milestone 68 repeats Milestone 66's evolution for paymentMethod.
-        // The default matters more than usual here: reading a missing method
-        // as Card would leave an authorization on a payment that was
-        // actually charged outright, and no capture command would ever
-        // arrive to settle it. Pix is the safe reading.
+        // Reading a missing method as Card would leave an authorization on a payment charged outright, with no capture command ever arriving.
         var payload = Encode(BuildV1Record(), V1Schema);
 
         var orderCreated = OrderCreatedAvroSchema.FromGenericRecord(Decode(payload, V1Schema, V2Schema));
@@ -206,10 +188,7 @@ public class OrderCreatedSchemaEvolutionTests
     [Fact]
     public void AV4ConsumerReadsAV1ProducersMessageAsHavingNoKnownAddress()
     {
-        // Milestone 73. The default has to be "unknown", not "somewhere" -
-        // the ADDRESS_MISMATCH risk signal only fires against a customer
-        // with a shipping history, and an empty prefix is how an order that
-        // predates the field says it has nothing to compare.
+        // Milestone 73: the default has to be "unknown", not "somewhere" - an empty prefix says a pre-field order has nothing to compare.
         var payload = Encode(BuildV1Record(), V1Schema);
 
         var orderCreated = OrderCreatedAvroSchema.FromGenericRecord(Decode(payload, V1Schema, V2Schema));

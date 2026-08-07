@@ -12,14 +12,11 @@ namespace Storefront.UnitTests;
 
 /// <summary>
 /// Milestone 66: StorefrontEndpoints.CheckoutAsync turns "what's in this
-/// cart" into an order, and is the one place in this service where getting
-/// the sequencing wrong has a real consequence - clear the cart before the
-/// order is confirmed and a shopper loses their cart for nothing; report a
-/// cart-clear failure as a checkout failure and a shopper who was actually
-/// charged sees an error. Both are exercised directly here rather than
-/// through the HTTP layer, since CheckoutAsync takes its collaborators
-/// (IHttpClientFactory, KeycloakTokenProvider, ILoggerFactory) as
-/// parameters and needs no ASP.NET Core host to invoke.
+/// cart" into an order - the one place here where getting the sequencing
+/// wrong has a real consequence (clear the cart too early and the shopper
+/// loses it for nothing; report a clear failure as a checkout failure and
+/// a charged shopper sees an error). Exercised directly, not through HTTP,
+/// since CheckoutAsync takes its collaborators as parameters.
 /// </summary>
 public sealed class CheckoutEndpointTests
 {
@@ -93,9 +90,7 @@ public sealed class CheckoutEndpointTests
     [Fact]
     public async Task ARejectedOrderIsRelayedAsIsAndTheCartIsNotCleared()
     {
-        // Orders.Api declines - a bad SKU, a duplicate, whatever - and the
-        // cart must survive exactly as it was so the shopper can fix the
-        // request and retry without re-adding everything.
+        // Orders.Api declines - the cart must survive so the shopper can retry without re-adding everything.
         var cartHandler = new RecordingHandler(_ => JsonResponse(
             HttpStatusCode.OK, new { items = new[] { new { sku = "SKU-UNKNOWN", quantity = 1 } } }));
         var ordersHandler = new RecordingHandler(_ => JsonResponse(
@@ -112,10 +107,7 @@ public sealed class CheckoutEndpointTests
     [Fact]
     public async Task ACartClearFailureAfterASuccessfulOrderIsNotReportedAsACheckoutFailure()
     {
-        // The one sequencing invariant that matters most: the order is
-        // real and already accepted by the time the cart fails to clear,
-        // so the shopper must still see success - anything else makes
-        // them think they were not charged for an order that exists.
+        // The order is real and already accepted by the time the cart fails to clear, so the shopper must still see success.
         var cartHandler = new RecordingHandler(request => request.Method == HttpMethod.Get
             ? JsonResponse(HttpStatusCode.OK, new { items = new[] { new { sku = "SKU-BOOK-001", quantity = 1 } } })
             : throw new HttpRequestException("connection reset"));
@@ -135,10 +127,7 @@ public sealed class CheckoutEndpointTests
         string? couponCode = null)
     {
         var httpContext = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
-        // Results.ValidationProblem/Results.Problem resolve IProblemDetailsService
-        // from HttpContext.RequestServices while formatting the response
-        // (falling back to their own default JSON if it isn't registered) -
-        // it just can't be null, which DefaultHttpContext leaves it as.
+        // Results.Problem resolves IProblemDetailsService from RequestServices while formatting - it just can't be null, which DefaultHttpContext leaves it as.
         httpContext.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
         var httpClientFactory = new FakeHttpClientFactory(new Dictionary<string, HttpMessageHandler>(StringComparer.Ordinal)
         {
@@ -194,13 +183,7 @@ public sealed class CheckoutEndpointTests
 
     private sealed record RecordedRequest(HttpMethod Method, string? Body, string? AuthorizationHeader);
 
-    /// <summary>
-    /// Snapshots method/body/auth-header at Send time rather than storing
-    /// the HttpRequestMessage itself - CheckoutAsync disposes it (a `using`
-    /// around the request it builds, same as every other route in this
-    /// service), so reading its Content afterwards would throw
-    /// ObjectDisposedException.
-    /// </summary>
+    /// <summary>Snapshots method/body/auth-header at Send time, not the HttpRequestMessage itself - CheckoutAsync disposes it afterward.</summary>
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
         public List<RecordedRequest> Requests { get; } = [];

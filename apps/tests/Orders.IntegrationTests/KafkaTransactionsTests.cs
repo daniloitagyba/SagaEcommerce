@@ -4,22 +4,15 @@ using Testcontainers.Redpanda;
 namespace Orders.IntegrationTests;
 
 /// <summary>
-/// Milestone 52: Milestones 22 and 23 both explicitly left dedup out of
-/// scope for the orchestrated saga and the event-sourced read side -
-/// "a real production orchestrator would need the same InboxStore-style
-/// deduplication the choreographed consumers already have." This proves
-/// the alternative to that Outbox+Inbox pattern - Kafka's own
-/// transactional producer/consumer API - actually delivers exactly-once
-/// for a Kafka-to-Kafka hop, and demonstrates precisely why that
-/// guarantee still doesn't extend to a Postgres write in the same
-/// logical step (a real production orchestrator advancing saga state in
-/// Postgres in response to a Kafka message still needs Outbox+Inbox, or
-/// equivalent, for THAT half - Kafka transactions only cover Kafka).
-///
-/// A real process crash between produce and offset-commit is simulated
-/// deterministically by aborting the transaction rather than actually
-/// killing a process mid-flight - the effect on what a downstream
-/// read_committed consumer sees is identical either way.
+/// Milestone 52: Milestones 22 and 23 left dedup out of scope for the
+/// orchestrated saga and event-sourced read side, noting a real
+/// orchestrator would need InboxStore-style dedup. This proves the
+/// alternative - Kafka's transactional producer/consumer API - delivers
+/// exactly-once for a Kafka-to-Kafka hop, and why that guarantee still
+/// doesn't extend to a Postgres write in the same logical step (that half
+/// still needs Outbox+Inbox). A process crash between produce and
+/// offset-commit is simulated by aborting the transaction, which a
+/// downstream read_committed consumer sees identically to a real crash.
 /// </summary>
 public sealed class KafkaTransactionsTests : IAsyncLifetime
 {
@@ -53,10 +46,7 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
         };
         using var outputProducer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = bootstrapServers }).Build();
 
-        // Attempt 1: consume, produce the derived output, but "crash" before
-        // committing the offset - exactly what a plain at-least-once
-        // consume-transform-produce loop risks if the process dies in that
-        // window.
+        // Attempt 1: consume, produce, "crash" before committing the offset - what a plain at-least-once loop risks.
         using (var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build())
         {
             consumer.Subscribe(inputTopic);
@@ -68,9 +58,7 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
             consumer.Close();
         }
 
-        // Attempt 2 ("after restart"): same group, offset was never
-        // committed, so the same message is redelivered and reprocessed -
-        // this time committing successfully.
+        // Attempt 2 ("after restart"): offset was never committed, so the same message is redelivered - this time committed.
         using (var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build())
         {
             consumer.Subscribe(inputTopic);
@@ -110,10 +98,7 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
             IsolationLevel = IsolationLevel.ReadCommitted
         };
 
-        // Attempt 1: begin, produce, register the offset - then "crash" by
-        // aborting instead of committing. Nothing produced in an aborted
-        // transaction is ever visible to a read_committed consumer, and the
-        // offset was never actually advanced either.
+        // Attempt 1: begin, produce, register the offset, then abort ("crash") - nothing produced in an aborted transaction is ever visible.
         using (var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build())
         using (var producer = new ProducerBuilder<string, string>(new ProducerConfig
         {
@@ -136,10 +121,7 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
             consumer.Close();
         }
 
-        // Attempt 2 ("after restart"): a brand new consumer in the same
-        // group resumes from the last COMMITTED offset - unchanged by the
-        // abort - so the same message is redelivered. This time the
-        // transaction actually commits.
+        // Attempt 2: a new consumer resumes from the last COMMITTED offset, unchanged by the abort, so the message is redelivered - this time committed.
         using (var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build())
         using (var producer = new ProducerBuilder<string, string>(new ProducerConfig
         {
@@ -197,10 +179,7 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
             var start = DateTimeOffset.UtcNow;
             for (var i = 0; i < messageCount; i++)
             {
-                // One transaction per message - the worst case, matching
-                // this test's one-message-per-saga-step shape rather than
-                // a larger batched transaction, which would amortize the
-                // begin/commit overhead across many messages instead.
+                // One transaction per message - the worst case, matching this test's one-message-per-saga-step shape, not a batched transaction.
                 producer.BeginTransaction();
                 producer.Produce(txnTopic, new Message<string, string> { Key = $"k{i}", Value = $"v{i}" });
                 producer.CommitTransaction();

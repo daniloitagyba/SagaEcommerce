@@ -39,17 +39,13 @@ public sealed class RedisOrderCacheTests : IAsyncLifetime
     {
         var cache = new RedisOrderCache(_connectionMultiplexer!, _pipelineProvider, Options.Create(new CacheOptions()));
 
-        // ResilienceExtensions.RedisPipeline times this cache's Redis calls out at 150ms -
-        // deliberately tight for production, where a slow Redis is itself worth failing fast
-        // on. Against a real Testcontainers Redis sharing a noisy CI runner with several other
-        // integration test assemblies (see ci.yml's coverage-step comment for the same class of
-        // issue), an ordinary sub-millisecond round trip can occasionally get scheduled past
-        // that window, and the cache degrades exactly as designed: bypass and re-run the
-        // factory rather than serve a Hit. That degradation is correct behavior under a
-        // genuinely slow Redis - here the slowness is CI scheduler jitter impersonating one.
-        // Retried with a fresh order id each attempt, rather than loosening the timeout, so a
-        // real regression in cache-hit serving still fails every attempt and the test still
-        // fails.
+        // The 150ms Redis timeout is deliberately tight for production; on
+        // a noisy CI runner sharing Testcontainers Redis with other test
+        // assemblies, a round trip can occasionally miss that window and
+        // the cache degrades exactly as designed (bypass, re-run the
+        // factory) - correct behavior, but CI jitter impersonating a slow
+        // Redis. Retried with a fresh order id each attempt, not a looser
+        // timeout, so a real regression still fails every attempt.
         for (var attempt = 1; attempt <= 3; attempt++)
         {
             var orderId = Guid.NewGuid();

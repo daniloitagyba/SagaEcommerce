@@ -49,10 +49,7 @@ public class CustomerTierTests
     [Fact]
     public void AFullRefundTakesBackTheSpendButNotTheStanding()
     {
-        // Deliberate asymmetry: the spend reverses because the customer no
-        // longer paid it, but the tier does not, because retroactively
-        // taking a discount away is the kind of surprise that generates
-        // support tickets. Real programmes review downward on a schedule.
+        // Deliberate asymmetry: spend reverses, but tier doesn't - retroactively taking a discount away generates support tickets.
         var customer = Customer.Create("customer-1", DateTimeOffset.UtcNow);
         customer.RecordCompletedOrder(1_200m);
         Assert.Equal(CustomerTiers.Silver, customer.Tier);
@@ -67,10 +64,7 @@ public class CustomerTierTests
     [Fact]
     public void TheWorkersTierThresholdsMatchTheDomains()
     {
-        // Orders.Worker deliberately does not reference Orders.Domain, so
-        // the thresholds its SQL uses are a second copy. This is the test
-        // that stops the two drifting - which is the whole reason the
-        // duplication is acceptable.
+        // Orders.Worker deliberately doesn't reference Orders.Domain, so its SQL thresholds are a second copy - this stops the two drifting.
         Assert.Equal(CustomerTiers.SilverThreshold, Orders.Worker.CustomerTierThresholds.Silver);
         Assert.Equal(CustomerTiers.GoldThreshold, Orders.Worker.CustomerTierThresholds.Gold);
         Assert.Equal(CustomerTiers.Bronze, Orders.Worker.CustomerTierThresholds.BronzeName);
@@ -101,8 +95,7 @@ public class CustomerTierTests
     [Fact]
     public void TheTierDiscountStacksWithACouponAndTheEngineStillCapsTheTotal()
     {
-        // Five independently-authored rules, none aware of the others -
-        // and the cap is what keeps them from together exceeding the order.
+        // Five independent rules, none aware of the others - the cap keeps them from together exceeding the order.
         var options = new PricingOptions
         {
             CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["books"] = 80m },
@@ -152,8 +145,7 @@ public class CustomerTierTests
     [Fact]
     public void AnOrderWithNoAddressStillPricesOnTheOldFlatTerms()
     {
-        // The amount-only checkout shape has no destination, and Milestone
-        // 66's expand/contract promise means it has to keep working.
+        // The amount-only checkout shape has no destination and still has to work.
         var breakdown = Engine().Price(new PricingRequest("customer-1", Brl, [Line(50m)]));
 
         Assert.Equal(new Money(19.90m, Brl), breakdown.ShippingTotal);

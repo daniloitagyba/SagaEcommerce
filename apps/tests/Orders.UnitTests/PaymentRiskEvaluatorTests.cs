@@ -63,9 +63,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task ALargeFirstPurchaseCompoundsIntoADecline()
     {
-        // Neither signal declines alone (50 and 20 are both under 60);
-        // together they cross the threshold. This compounding is the whole
-        // reason the policy is scored rather than a chain of booleans.
+        // Neither signal declines alone (50 and 20 are under 60); together they cross the threshold - the whole reason it's scored, not boolean.
         var assessment = await Evaluator().EvaluateAsync("new-customer", 5_000m, DateTimeOffset.UtcNow, CancellationToken.None);
 
         Assert.False(assessment.Approved);
@@ -92,10 +90,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task RapidRepeatPurchasesTripTheVelocitySignal()
     {
-        // The old account is what isolates VELOCITY. Without it the three
-        // rapid orders would also make this a minutes-old account, and
-        // NEW_ACCOUNT(25) would compound to a decline - correct behaviour,
-        // pinned separately below, but not what this test is about.
+        // The old account isolates VELOCITY - without it, NEW_ACCOUNT(25) would also compound in (pinned separately below).
         var now = DateTimeOffset.UtcNow;
         await SeedAsync("fast", 40m, now.AddDays(-90));
         await SeedAsync("fast", 40m, now.AddMinutes(-1));
@@ -129,10 +124,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
         await SeedAsync("modest", 20m, now.AddDays(-20));
         await SeedAsync("modest", 30m, now.AddDays(-10));
 
-        // Average is 25; 200 is 8x that, past the 5x multiplier - and well
-        // under the absolute HIGH_VALUE threshold, so only the
-        // relative-to-this-customer signal fires. That distinction is the
-        // point: 200 is unremarkable in general and not for this account.
+        // Average is 25; 200 is 8x that (past the 5x multiplier) but well under HIGH_VALUE, so only the relative signal fires.
         var assessment = await Evaluator().EvaluateAsync("modest", 200m, now, CancellationToken.None);
 
         Assert.Contains(assessment.Signals, signal => signal.Code == "ATYPICAL_AMOUNT");
@@ -144,9 +136,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
     public async Task DeclinedHistoryDoesNotEstablishACustomersNormalSpend()
     {
         var now = DateTimeOffset.UtcNow;
-        // A declined 10,000 attempt must not raise this customer's
-        // "average", which would let a fraudster normalise their own
-        // baseline by failing loudly first.
+        // A declined 10,000 attempt must not raise this customer's "average" - or a fraudster could normalise their own baseline by failing loudly first.
         await SeedAsync("probing", 10_000m, now.AddMinutes(-30), approved: false);
         await SeedAsync("probing", 20m, now.AddDays(-5));
 
@@ -158,9 +148,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task AnUnknownCustomerIsNotScoredAsAFirstPurchase()
     {
-        // A decision request that lost its CustomerId (an in-flight message
-        // from before this milestone) must not be scored as though every
-        // such order were a brand-new customer.
+        // A decision request that lost its CustomerId must not be scored as a brand-new customer.
         var assessment = await Evaluator().EvaluateAsync("", 50m, DateTimeOffset.UtcNow, CancellationToken.None);
 
         Assert.True(assessment.Approved);
@@ -170,9 +158,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task AnAccountThatAppearedMinutesAgoScoresAsNewOnItsSecondOrder()
     {
-        // FIRST_PURCHASE cannot express this: by the second order it has
-        // already stopped firing, and yet an account minutes old placing
-        // another order looks nothing like a returning customer.
+        // FIRST_PURCHASE has already stopped firing by the second order, yet a minutes-old account isn't a returning customer either.
         var now = DateTimeOffset.UtcNow;
         await SeedAsync("fresh", 50m, now.AddMinutes(-10));
 
@@ -204,8 +190,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
 
         Assert.Contains(assessment.Signals, signal => signal.Code == "ADDRESS_MISMATCH");
 
-        // Ordinary on its own - people move and send gifts - so it must not
-        // decline a customer by itself.
+        // Ordinary on its own - people move and send gifts.
         Assert.True(assessment.Approved);
     }
 
@@ -223,9 +208,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task AMissingAddressIsUnknownRatherThanMismatched()
     {
-        // Before Milestone 71 no order carried an address at all. Scoring
-        // absence as a mismatch would have flagged every one of them, which
-        // is how a signal becomes noise nobody acts on.
+        // Before Milestone 71 no order carried an address - scoring absence as a mismatch would flag every one of them.
         var now = DateTimeOffset.UtcNow;
         await SeedAsync("legacy", 50m, now.AddDays(-40), postalPrefix: "01");
 
@@ -240,9 +223,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task ABrandNewAccountBuyingFastIsDeclinedByTheCombination()
     {
-        // Neither signal declines alone (35 and 25 are both under 60). An
-        // account that appeared minutes ago and is already on its fourth
-        // order is the pattern the two together are meant to catch.
+        // Neither signal declines alone (35 and 25 are under 60) - a minutes-old account on its fourth order is what the two together catch.
         var now = DateTimeOffset.UtcNow;
         await SeedAsync("burst", 40m, now.AddMinutes(-1));
         await SeedAsync("burst", 40m, now.AddMinutes(-2));

@@ -26,13 +26,10 @@ public sealed class RedisFencedWriteTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Reproduces the exact hazard fencing tokens exist for: holder A takes
-    /// the lock, stalls past its timeout (a slow Postgres query, a GC
-    /// pause); holder B's lock-timeout fires, B acquires the lock, does its
-    /// own work and writes first. Without a fencing token, A resuming and
-    /// writing afterwards would silently clobber B's newer value with
-    /// stale data - exactly what RedisOrderCache/RedisIdempotencyStore did
-    /// before Milestone 48. A's write must be rejected instead.
+    /// Reproduces the hazard fencing tokens exist for: holder A stalls past
+    /// its lock timeout, B acquires the lock and writes first. Without a
+    /// fencing token, A resuming would silently clobber B's newer value -
+    /// exactly what happened before Milestone 48. A's write must be rejected.
     /// </summary>
     [Fact]
     public async Task StaleHolderWriteIsRejectedAfterNewerHolderAlreadyWrote()

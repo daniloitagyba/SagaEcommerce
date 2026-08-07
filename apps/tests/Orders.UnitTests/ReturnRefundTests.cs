@@ -6,14 +6,10 @@ namespace Orders.UnitTests;
 
 /// <summary>
 /// Milestone 70: the refund arithmetic, and the invariant that makes
-/// storing per-line discounts in Milestone 66 worth it.
-///
-/// Refunding a returned unit at its list price would hand back more than
-/// was ever charged - a shopper who used HALFOFF and returned everything
-/// would be refunded twice what they paid. The refund comes out of
-/// LineTotal, which is net of that line's prorated discount and exists only
-/// because it was computed at checkout rather than re-derived now from
-/// rules that may have changed since.
+/// storing per-line discounts in Milestone 66 worth it - refunding at list
+/// price would hand back more than was ever charged. The refund comes out
+/// of LineTotal, net of that line's prorated discount, computed at
+/// checkout rather than re-derived from rules that may have changed since.
 /// </summary>
 public class ReturnRefundTests
 {
@@ -34,9 +30,7 @@ public class ReturnRefundTests
     [Fact]
     public void ReturningOneUnitAtATimeRefundsTheSameTotalAsReturningThemTogether()
     {
-        // The invariant that matters: a shopper who sends three shirts back
-        // in three parcels must be refunded exactly what one parcel of
-        // three would have refunded - no more, no less.
+        // Three returns in three parcels must refund exactly what one parcel of three would have.
         var lineTotal = Money(100m);
         var piecemeal = Money(0m);
 
@@ -54,12 +48,9 @@ public class ReturnRefundTests
     [Fact]
     public void ADiscountedLineRefundsTheDiscountedAmountNotTheListPrice()
     {
-        // 2 units at 89,90 = 179,80 list, less a 26,61 prorated coupon
-        // share = 153,19 actually charged. Returning both must refund
-        // 153,19, not 179,80.
-        // Built through the real checkout constructor rather than reaching
-        // for the internal OrderLine factory - the numbers under test are
-        // the ones a real order would actually carry.
+        // 2 units at 89,90 = 179,80 list, less a 26,61 coupon share = 153,19
+        // charged. Built through the real checkout constructor, not the
+        // internal factory, so these are numbers a real order would carry.
         var order = Order.CreateWithLines(
             "customer-1", "BRL", DateTimeOffset.UtcNow, "SAVE10",
             [new OrderLineDraft("SKU-BOOK-001", "Livro", "books", 2, 89.90m, 26.61m)],
@@ -85,9 +76,7 @@ public class ReturnRefundTests
     [Fact]
     public void PartialReturnsOfALineCanNeverTogetherExceedWhatWasCharged()
     {
-        // The property that protects the money: no sequence of partial
-        // returns, in any order or grouping, may refund more than the line
-        // was charged - and returning everything must refund exactly it.
+        // No sequence of partial returns may refund more than the line was charged, and returning everything must refund exactly it.
         var gen =
             from cents in Gen.Int[1, 500_00]
             from quantity in Gen.Int[1, 12]

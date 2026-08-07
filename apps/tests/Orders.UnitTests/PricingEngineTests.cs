@@ -21,10 +21,7 @@ public class PricingEngineTests
     private static PricingLine Line(string sku, string category, int quantity, decimal unitPrice) =>
         new(sku, $"Product {sku}", category, quantity, new Money(unitPrice, Brl));
 
-    // Milestone 67: the engine receives a coupon already looked up and
-    // found eligible - validity, limits and existence are decided before
-    // pricing (see CouponEligibility), so these tests supply the resolved
-    // fact rather than a code the engine would have to interpret.
+    // Milestone 67: the engine receives a coupon already resolved and eligible (see CouponEligibility), so tests supply the resolved fact, not a code.
     private static PricingRequest Request(decimal? couponPercentage, params PricingLine[] lines) =>
         new("customer-1", Brl, lines,
             couponPercentage is { } percentage
@@ -58,11 +55,7 @@ public class PricingEngineTests
     [Fact]
     public void PricesWithoutACouponWhenNoneWasResolved()
     {
-        // Milestone 67 moved "is this code real, valid and still
-        // available?" out of the engine and into CouponEligibility, which
-        // runs before pricing. By the time the engine is called the answer
-        // is already a resolved coupon or nothing at all - see
-        // CouponEligibilityTests for the rejection cases.
+        // Milestone 67 moved coupon validity into CouponEligibility, which runs before pricing - see CouponEligibilityTests for the rejection cases.
         var breakdown = BuildEngine().Price(Request(null, Line("SKU-BOOK-001", "books", 1, 100m)));
 
         Assert.Empty(breakdown.Discounts);
@@ -72,9 +65,7 @@ public class PricingEngineTests
     [Fact]
     public void StacksACouponWithACategoryPromotion()
     {
-        // Electronics carry a standing 5% promotion; the coupon is 10% of
-        // the whole order. Both rules were written independently and the
-        // engine combines them without either knowing about the other.
+        // Electronics carry a standing 5% promotion, the coupon is 10% of the whole order - two independent rules the engine combines.
         var breakdown = BuildEngine().Price(Request(
             10m,
             Line("SKU-ELEC-001", "electronics", 1, 1_000m),
@@ -114,9 +105,7 @@ public class PricingEngineTests
     [Fact]
     public void CapsStackedDiscountsAtTheSubtotalSoTheTotalNeverGoesNegative()
     {
-        // Two campaigns that each look reasonable in isolation: a 50%
-        // coupon and a category promotion that a careless config set to
-        // 80%. Together they exceed the order's value.
+        // A 50% coupon and an 80% category promotion, each sane alone, together exceed the order's value.
         var options = new PricingOptions
         {
             CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["clearance"] = 80m },
@@ -165,21 +154,16 @@ public class PricingEngineTests
             breakdown.LineDiscounts.Aggregate(new Money(0m, Brl), (running, share) => running + share));
     }
 
-    // Milestone 66's property tests found this by generating 10,000 random
-    // orders (CsCheck seed 53LlaLK3rYz2): NRules refuses to insert a fact
-    // that already compares equal to one already in its working memory
-    // (System.ArgumentException: "Facts for insert already exist"). Before
-    // PricingLine and AppliedDiscount switched to identity equality, either
-    // of the two tests below crashed pricing outright instead of returning
-    // a breakdown - a real cart shape, not a contrived one.
+    // Milestone 66's property tests found this via 10,000 random orders
+    // (CsCheck seed 53LlaLK3rYz2): NRules refuses to insert a fact that
+    // already compares equal to one in working memory. Before PricingLine
+    // and AppliedDiscount switched to identity equality, either test below
+    // crashed pricing outright - a real cart shape, not a contrived one.
 
     [Fact]
     public void TwoIdenticalLinesPriceIndependentlyRatherThanCrashing()
     {
-        // The same SKU, quantity and price added as two separate lines -
-        // e.g. a cart that never merged a duplicate add. Before the fix,
-        // inserting the second PricingLine fact threw immediately: two
-        // structurally-identical lines looked like the same fact twice.
+        // Same SKU, quantity and price as two separate lines - e.g. a cart that never merged a duplicate add.
         var breakdown = BuildEngine().Price(Request(
             null,
             Line("SKU-025", "clearance", 10, 100.00m),
@@ -192,13 +176,10 @@ public class PricingEngineTests
     [Fact]
     public void TwoBulkDiscountsThatRoundToTheSameAmountBothApply()
     {
-        // Same SKU and quantity (so BulkQuantityRule's Code and Description
-        // match for both), unit prices one centavo apart so the 8% bulk
-        // discount rounds to the identical centavo for both lines
-        // (2284.20 * 0.08 = 182.736 -> 182.74; 2284.30 * 0.08 = 182.744 ->
-        // 182.74). Two AppliedDiscount facts that print identically are
-        // still two separate grants, one per line - value equality made
-        // the second look like a duplicate of the first.
+        // Same SKU/quantity, unit prices one centavo apart, so the 8% bulk
+        // discount rounds to the same centavo for both lines (182.736 and
+        // 182.744 both -> 182.74). Two identical-looking AppliedDiscount
+        // facts are still two separate grants, one per line.
         var options = new PricingOptions { BulkQuantityThreshold = 5, BulkDiscountPercentage = 8m, FlatShippingAmount = 0m };
 
         var breakdown = BuildEngine(options).Price(Request(
