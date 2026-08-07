@@ -19,7 +19,12 @@ public enum MessageProcessingResult
 public sealed class InvalidReservationMessageException(string message, Exception? innerException = null)
     : Exception(message, innerException);
 
-public sealed class InventoryReservationMessageProcessor(
+// Split across two files to stay under the 500-line module-size budget:
+// this one owns reserve/commit/release/restock, and
+// InventoryReservationMessageProcessor.Backorders.cs owns the Milestone 74
+// backorder-release path - the newest, most self-contained concern here,
+// only ever called from ProcessSettlementAsync's restock branch below.
+public sealed partial class InventoryReservationMessageProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<InventoryKafkaOptions> kafkaOptions,
     ILogger<InventoryReservationMessageProcessor> logger)
@@ -395,58 +400,6 @@ public sealed class InventoryReservationMessageProcessor(
         return MessageProcessingResult.Processed;
     }
 
-    /// <summary>
-    /// Milestone 74: strict FIFO. Jumping ahead to a later, smaller
-    /// backorder because it happens to fit would be unfair to whoever has
-    /// been waiting the longest, so the loop stops at the first one that
-    /// still cannot be filled rather than skipping past it - the rest wait
-    /// for the next restock, same as they are waiting for this one.
-    /// </summary>
-    private async Task ReleaseBackordersAsync(
-        InventoryDbContext dbContext,
-        WarehouseAllocationStore allocationStore,
-        string sku,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        var pending = await dbContext.Backorders
-            .Where(backorder => backorder.Sku == sku)
-            .OrderBy(backorder => backorder.RequestedAt)
-            .ToListAsync(cancellationToken);
-
-        foreach (var backorder in pending)
-        {
-            var decision = await allocationStore.TryReserveAsync(
-                backorder.ReservationId, sku, backorder.Quantity, now, cancellationToken);
-
-            if (!decision.Reserved)
-            {
-                break;
-            }
-
-            dbContext.Backorders.Remove(backorder);
-
-            // Reuses InventoryReservationReplied on the exact reservationId
-            // the saga is still parked on - see OrderSagaReplyConsumer's
-            // handling of Backordered:false. No new event type, no new
-            // saga-side code: this looks like an ordinary late reply.
-            var reply = new InventoryReservationReplied(
-                backorder.ReservationId,
-                backorder.OrderId,
-                sku,
-                backorder.Quantity,
-                Reserved: true,
-                Reason: null,
-                backorder.CorrelationId,
-                now);
-
-            EnqueueReservationReply(dbContext, reply, now, backorder.CorrelationId);
-            EnqueueReplenishmentSignals(dbContext, decision.CrossedReorderPoint, backorder.CorrelationId, now);
-
-            InventoryLog.BackorderReleased(logger, backorder.ReservationId, sku, backorder.OrderId, backorder.CorrelationId);
-        }
-    }
-
     private static TRequest DeserializeAndValidate<TRequest>(
         ConsumeResult<string, string> consumeResult,
         Func<TRequest, (Guid ReservationId, Guid OrderId, string Sku, int Quantity)> extract)
@@ -507,31 +460,4 @@ public sealed class InventoryReservationMessageProcessor(
         var header = headers.LastOrDefault(item => string.Equals(item.Key, key, StringComparison.Ordinal));
         return header is null ? null : Encoding.UTF8.GetString(header.GetValueBytes());
     }
-}
-
-public sealed partial class InventoryLog
-{
-    [LoggerMessage(EventId = 9002, Level = LogLevel.Information, Message = "Decided reservation {ReservationId} for sku {Sku}: reserved={Reserved} with correlation {CorrelationId}")]
-    public static partial void Decided(ILogger logger, Guid reservationId, string sku, bool reserved, string correlationId);
-
-    [LoggerMessage(EventId = 9010, Level = LogLevel.Warning, Message = "Warehouse {WarehouseCode} fell to {AvailableQuantity} of {Sku}, at or below its reorder point of {ReorderPoint}")]
-    public static partial void ReplenishmentNeeded(ILogger logger, string sku, string warehouseCode, int availableQuantity, int reorderPoint);
-
-    [LoggerMessage(EventId = 9011, Level = LogLevel.Information, Message = "Decided commit {ReservationId} for sku {Sku}: committed={Committed} with correlation {CorrelationId}")]
-    public static partial void CommitDecided(ILogger logger, Guid reservationId, string sku, bool committed, string correlationId);
-
-    [LoggerMessage(EventId = 9012, Level = LogLevel.Information, Message = "Decided release {ReservationId} for sku {Sku}: released={Released} with correlation {CorrelationId}")]
-    public static partial void ReleaseDecided(ILogger logger, Guid reservationId, string sku, bool released, string correlationId);
-
-    [LoggerMessage(EventId = 9006, Level = LogLevel.Information, Message = "Restocked {Sku} for return {ReturnId}: restocked={Restocked} with correlation {CorrelationId}")]
-    public static partial void RestockDecided(ILogger logger, Guid returnId, string sku, bool restocked, string correlationId);
-
-    [LoggerMessage(EventId = 9005, Level = LogLevel.Information, Message = "Skipped duplicate reservation {ReservationId} for consumer {ConsumerName}")]
-    public static partial void Duplicate(ILogger logger, Guid reservationId, string consumerName);
-
-    [LoggerMessage(EventId = 9013, Level = LogLevel.Information, Message = "Reservation {ReservationId} for sku {Sku} backordered - the network cannot cover it yet, waiting for a restock (correlation {CorrelationId})")]
-    public static partial void Backordered(ILogger logger, Guid reservationId, string sku, string correlationId);
-
-    [LoggerMessage(EventId = 9014, Level = LogLevel.Information, Message = "Released backorder {ReservationId} for sku {Sku} on order {OrderId} after a restock (correlation {CorrelationId})")]
-    public static partial void BackorderReleased(ILogger logger, Guid reservationId, string sku, Guid orderId, string correlationId);
 }
