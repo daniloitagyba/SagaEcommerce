@@ -101,7 +101,7 @@ Integration tests spin up real, disposable Postgres/MongoDB/Redis/Kafka containe
 
 ## Repository layout
 
-- `apps/src` — the seven services and `BuildingBlocks` (shared contracts, telemetry, resilience pipelines).
+- `apps/src` — the seven services (each with its own `README.md` and architecture diagram) and `BuildingBlocks` (shared contracts, telemetry, resilience pipelines).
 - `apps/tests` — unit tests and Testcontainers-backed integration tests.
 - `compose/` — the full local infrastructure and application stack.
 - `kubernetes/` — production-style manifests: base resources, an Argo CD-managed overlay, cluster policies.
