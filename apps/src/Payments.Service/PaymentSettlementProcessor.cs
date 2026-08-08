@@ -83,9 +83,55 @@ public sealed class PaymentSettlementProcessor(
 
         if (!changed)
         {
-            await transaction.RollbackAsync(cancellationToken);
-            PaymentSettlementLog.AlreadySettled(logger, orderId, payment.State);
-            return MessageProcessingResult.Duplicate;
+            // Milestone 76: not every guard failure is a harmless redelivery.
+            // A true duplicate is this exact operation landing twice, and the
+            // payment is already sitting in the state it would have produced
+            // - safe to drop silently, the first attempt's reply already
+            // told the saga. Anything else is a genuine mismatch: most often
+            // the expiry sweeper voiding/expiring the hold in the window
+            // between the order shipping and the capture command arriving.
+            // That capture can never happen now, and the saga has to be told
+            // - the alternative is a shipped order nobody ever charged, with
+            // nothing in the system recording that it went wrong.
+            var isRedeliveryOfAlreadyAppliedOperation = operation switch
+            {
+                SettlementOperation.Capture => payment.State == PaymentStates.Captured,
+                SettlementOperation.Refund => payment.State == PaymentStates.Refunded && payment.RefundedAmount >= payment.Amount,
+                _ => payment.State == PaymentStates.Voided
+            };
+
+            if (isRedeliveryOfAlreadyAppliedOperation)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                PaymentSettlementLog.AlreadySettled(logger, orderId, payment.State);
+                return MessageProcessingResult.Duplicate;
+            }
+
+            var mismatchReply = new PaymentSettlementReplied(
+                orderId,
+                payment.Id,
+                payment.State,
+                payment.Amount,
+                payment.Currency,
+                correlationId,
+                settledAt);
+
+            dbContext.OutboxMessages.Add(OutboxMessage.Create(
+                Guid.NewGuid(),
+                nameof(PaymentSettlementReplied),
+                JsonSerializer.Serialize(mismatchReply, SerializerOptions),
+                settledAt,
+                correlationId,
+                Activity.Current?.Id,
+                Activity.Current?.TraceStateString));
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            activity?.SetTag("payment.state", payment.State);
+            OrdersTelemetry.RecordProcessed("mismatch");
+            PaymentSettlementLog.SettlementMismatch(logger, orderId, payment.Id, operation.ToString(), payment.State, correlationId);
+            return MessageProcessingResult.Processed;
         }
 
         var reply = new PaymentSettlementReplied(
@@ -178,4 +224,7 @@ public sealed partial class PaymentSettlementLog
 
     [LoggerMessage(EventId = 5103, Level = LogLevel.Warning, Message = "Expired {Count} card authorization(s) that were never captured")]
     public static partial void ExpiredAuthorizations(ILogger logger, int count);
+
+    [LoggerMessage(EventId = 5105, Level = LogLevel.Warning, Message = "Settlement mismatch for order {OrderId}: {Operation} could not apply because payment {PaymentId} is already {State} - reply published so the saga can react, not just this log line")]
+    public static partial void SettlementMismatch(ILogger logger, Guid orderId, Guid paymentId, string operation, string state, string correlationId);
 }

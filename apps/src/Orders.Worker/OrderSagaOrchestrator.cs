@@ -203,4 +203,7 @@ public sealed partial class SagaOrchestratorLog
 
     [LoggerMessage(EventId = 6013, Level = LogLevel.Information, Message = "Order {OrderId} backordered for sku {Sku} - waiting for a restock, saga parked at ReserveInventory, correlation {CorrelationId}")]
     public static partial void Backordered(ILogger logger, Guid orderId, string sku, string correlationId);
+
+    [LoggerMessage(EventId = 6014, Level = LogLevel.Warning, Message = "Order {OrderId} moved to FulfillmentHold - a settlement reply came back {State} instead of Captured, correlation {CorrelationId}")]
+    public static partial void SettlementReconciled(ILogger logger, Guid orderId, string state, string correlationId);
 }

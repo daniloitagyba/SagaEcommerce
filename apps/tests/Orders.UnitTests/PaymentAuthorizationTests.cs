@@ -162,4 +162,21 @@ public class PaymentAuthorizationTests
         Assert.Equal(PaymentStates.Authorized, PaymentMethods.PendingStateFor(PaymentMethods.Card));
         Assert.Equal(PaymentStates.AwaitingPayment, PaymentMethods.PendingStateFor(PaymentMethods.Boleto));
     }
+
+    [Fact]
+    public void AnAlreadyExpiredPaymentCannotBeVoidedEither()
+    {
+        // Milestone 76: the domain-level half of why Shipped ->
+        // FulfillmentHold -> Cancelled being legal at the OrderStatuses
+        // level (a shipped order whose capture actually failed, then
+        // cancelled by an operator) can never produce a real double
+        // settlement - once the sweeper has expired the hold, neither a
+        // late capture nor a later void can move money, because both
+        // share the same IsAwaitingSettlement guard.
+        var payment = Authorize(PaymentMethods.Card);
+        payment.TrySettleWithoutCapture(PaymentStates.Expired, "sweeper", Now.AddMinutes(35));
+
+        Assert.False(payment.TrySettleWithoutCapture(PaymentStates.Voided, "order cancelled", Now.AddMinutes(40)));
+        Assert.Equal(PaymentStates.Expired, payment.State);
+    }
 }

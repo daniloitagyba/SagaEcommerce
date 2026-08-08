@@ -47,10 +47,13 @@ public static class OrderStatuses
     public const string Returned = "Returned";
 
     /// <summary>
-    /// Confirmed, but cannot be fulfilled as-is and needs a human: payment
-    /// approved, but the inventory commit reply came back negative. Distinct
-    /// from plain "Confirmed" so it doesn't look like a healthy order in
-    /// every query, dashboard and read model.
+    /// Confirmed or shipped, but something a human needs to look at: the
+    /// inventory commit reply came back negative (Milestone 69), or a
+    /// capture that was supposed to happen never did because the
+    /// authorization had already expired (Milestone 76 - see
+    /// PaymentSettlementProcessor's settlement-mismatch reply). Distinct
+    /// from plain "Confirmed"/"Shipped" so it doesn't look like a healthy
+    /// order in every query, dashboard and read model.
     /// </summary>
     public const string FulfillmentHold = "FulfillmentHold";
 
@@ -64,7 +67,10 @@ public static class OrderStatuses
         [Backordered] = [Created],
         [Confirmed] = [Created, Backordered],
         [Cancelled] = [Created, Confirmed, Picking, FulfillmentHold, Backordered],
-        [FulfillmentHold] = [Confirmed, Picking],
+        // Milestone 76: Shipped added - an expired-instead-of-captured
+        // authorization is discovered only after the goods already left,
+        // so the hold has to reach here from further along than Picking.
+        [FulfillmentHold] = [Confirmed, Picking, Shipped],
         [Picking] = [Confirmed, FulfillmentHold],
         [Shipped] = [Picking],
         [Delivered] = [Shipped],

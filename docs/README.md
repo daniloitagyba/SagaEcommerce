@@ -45,6 +45,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 - [Milestone 72: Stock Lives in Buildings](domain/milestone-72-multi-warehouse-allocation.md)
 - [Milestone 73: Closing the Gaps the Plan Left Open](domain/milestone-73-closing-the-plan-gaps.md)
 - [Milestone 74: Waiting Is a State, Not a Cancellation](domain/milestone-74-backorders.md)
+- [Milestone 76: A Capture That Fails Is Now Visible, Not Silent](domain/milestone-76-settlement-reconciliation.md)
 
 ## cqrs
 

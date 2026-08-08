@@ -48,7 +48,8 @@ public sealed class OrderSagaReplyConsumer(
             _options.ReservationRepliedTopic,
             _options.DecisionRepliedTopic,
             _options.CommitRepliedTopic,
-            _options.ReleaseRepliedTopic
+            _options.ReleaseRepliedTopic,
+            _options.SettlementRepliedTopic
         ]);
         SagaOrchestratorLog.Started(logger, _options.ReplyConsumerGroup, _options.ReplyConsumerGroup);
 
@@ -81,7 +82,8 @@ public sealed class OrderSagaReplyConsumer(
         }
     }
 
-    private Task DispatchAsync(ConsumeResult<string, string> consumeResult, CancellationToken cancellationToken)
+    /// <summary>Public so integration tests can drive it directly, the same shape as OrderSagaOrchestrator.RequestReservationAsync.</summary>
+    public Task DispatchAsync(ConsumeResult<string, string> consumeResult, CancellationToken cancellationToken)
     {
         return consumeResult.Topic switch
         {
@@ -89,6 +91,7 @@ public sealed class OrderSagaReplyConsumer(
             _ when consumeResult.Topic == _options.DecisionRepliedTopic => HandlePaymentDecisionRepliedAsync(consumeResult.Message.Value, cancellationToken),
             _ when consumeResult.Topic == _options.CommitRepliedTopic => HandleCommitRepliedAsync(consumeResult.Message.Value, cancellationToken),
             _ when consumeResult.Topic == _options.ReleaseRepliedTopic => HandleReleaseRepliedAsync(consumeResult.Message.Value, cancellationToken),
+            _ when consumeResult.Topic == _options.SettlementRepliedTopic => HandleSettlementRepliedAsync(consumeResult.Message.Value, cancellationToken),
             _ => Task.CompletedTask
         };
     }
@@ -267,6 +270,36 @@ public sealed class OrderSagaReplyConsumer(
         SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, outcome, latencyMs, completed.CorrelationId);
         await orderStatusStore.TryCancelAsync(reply.OrderId, completed.CorrelationId, cancellationToken);
         await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Milestone 76: not a saga step - the saga row is already gone by the
+    /// time an order ships, so there's nothing here to advance or
+    /// complete. This is a standalone reconciliation for the one outcome
+    /// that must never pass silently: a capture that was supposed to
+    /// happen (the order shipped, or a settlement command was in flight)
+    /// but the authorization had already expired. Both
+    /// PaymentAuthorizationSweeper's bulk expiry and
+    /// PaymentSettlementProcessor's settlement-mismatch reply land here
+    /// through the same topic, and both mean the same thing: money that
+    /// should have moved never did, and it needs a human, not a log line.
+    /// </summary>
+    private async Task HandleSettlementRepliedAsync(string payload, CancellationToken cancellationToken)
+    {
+        var reply = Deserialize<PaymentSettlementReplied>(payload);
+        if (reply is null || reply.State != PaymentStates.Expired)
+        {
+            return;
+        }
+
+        var moved = await orderStatusStore.TryTransitionAsync(
+            reply.OrderId, OrderStatuses.FulfillmentHold, reply.CorrelationId, cancellationToken);
+
+        if (moved == StatusTransitionResult.Transitioned)
+        {
+            await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
+            SagaOrchestratorLog.SettlementReconciled(logger, reply.OrderId, reply.State, reply.CorrelationId);
+        }
     }
 
     private async Task PublishNextStepAsync<TRequest>(
