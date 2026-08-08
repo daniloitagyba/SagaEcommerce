@@ -206,4 +206,7 @@ public sealed partial class SagaOrchestratorLog
 
     [LoggerMessage(EventId = 6014, Level = LogLevel.Warning, Message = "Order {OrderId} moved to FulfillmentHold - a settlement reply came back {State} instead of Captured, correlation {CorrelationId}")]
     public static partial void SettlementReconciled(ILogger logger, Guid orderId, string state, string correlationId);
+
+    [LoggerMessage(EventId = 6015, Level = LogLevel.Information, Message = "Saga timeout for order {OrderId} released the reservation for sku {Sku}, correlation {CorrelationId}")]
+    public static partial void TimeoutReleaseRequested(ILogger logger, Guid orderId, string sku, string correlationId);
 }

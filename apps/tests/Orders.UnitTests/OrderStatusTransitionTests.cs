@@ -129,25 +129,29 @@ public class OrderStatusTransitionTests
     }
 
     [Fact]
-    public void MoneyIsOnlyEverAskedToBeCapturedOnceAndVoidedOnceAlongAnyPath()
+    public void VoidIsRequestedAtMostOnceButRepeatedCaptureRequestsAreSafeOnlyBecausePaymentItselfIsIdempotent()
     {
-        // Capture only ever fires at Shipped, void only ever fires at
-        // Cancelled - neither status is reachable twice in one path
-        // (Shipped has one outgoing edge, to Delivered; Cancelled is
-        // terminal), so each action still fires at most once.
+        // Void only ever fires at Cancelled, and Cancelled is terminal -
+        // never a predecessor of anything else in AllowedPredecessors - so
+        // once a path reaches it, no further transition (and so no further
+        // void) can ever fire. That half of the original claim still holds
+        // structurally.
         //
-        // Milestone 76 made Shipped -> FulfillmentHold -> Cancelled legal
-        // (a shipped order whose capture actually failed, reconciled into
-        // a hold, then cancelled by an operator) - which means the graph
-        // can now legally ask for both a capture and a void on the same
-        // order. That's safe only because Payment.TryCapture/
-        // TrySettleWithoutCapture guard on the payment's *actual* state,
-        // not the order's: a capture that never truly happened (payment
-        // sitting in Expired) means the later void is a no-op at the
-        // domain level, not a second real settlement. This test can no
-        // longer prove "never both" by itself - that guarantee now lives
-        // one layer down, in Payment's own state guard (see
-        // PaymentAuthorizationTests).
+        // Capture is a different story since Milestone 76 added
+        // Shipped -> FulfillmentHold. Combined with the pre-existing
+        // FulfillmentHold -> Picking -> Shipped (Milestone 69: ops routes a
+        // held order back through fulfilment), Shipped is now reachable
+        // repeatedly in a single path - Confirmed, Picking, Shipped,
+        // FulfillmentHold, Picking, Shipped, ... - and each visit asks for
+        // another capture. That is a real, intended path (a re-picked and
+        // re-shipped order after a human resolves whatever put it on
+        // hold), not a graph bug, so this test no longer claims captures
+        // are bounded by the graph. What keeps a repeated request from
+        // charging twice lives one layer down: Payment.TryCapture only
+        // succeeds from Authorized (see
+        // PaymentAuthorizationTests.CapturingAnAuthorizationMovesTheMoneyOnce),
+        // so every capture request past the first one that actually lands
+        // is a same-state no-op, not a second real settlement.
         var allStatuses = new[]
         {
             OrderStatuses.Confirmed, OrderStatuses.Picking, OrderStatuses.Shipped,
@@ -159,7 +163,6 @@ public class OrderStatusTransitionTests
             path =>
             {
                 var current = OrderStatuses.Created;
-                var captures = 0;
                 var voids = 0;
 
                 foreach (var next in path)
@@ -169,16 +172,15 @@ public class OrderStatusTransitionTests
                         continue;
                     }
 
-                    switch (OrderStatuses.SettlementActionFor(next))
+                    if (OrderStatuses.SettlementActionFor(next) == OrderSettlementAction.Void)
                     {
-                        case OrderSettlementAction.Capture: captures++; break;
-                        case OrderSettlementAction.Void: voids++; break;
+                        voids++;
                     }
 
                     current = next;
                 }
 
-                return captures <= 1 && voids <= 1;
+                return voids <= 1;
             },
             iter: 10_000);
     }
