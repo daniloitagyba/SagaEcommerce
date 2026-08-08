@@ -75,7 +75,8 @@ public sealed class OrderSagaOrchestrator(
         }
     }
 
-    private async Task RequestReservationAsync(ConsumeResult<string, byte[]> consumeResult, CancellationToken cancellationToken)
+    /// <summary>Public so integration tests can drive it directly, the same shape as the *MessageProcessor classes elsewhere in this codebase.</summary>
+    public async Task RequestReservationAsync(ConsumeResult<string, byte[]> consumeResult, CancellationToken cancellationToken)
     {
         OrderCreated orderCreated;
         try

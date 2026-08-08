@@ -54,8 +54,19 @@ spec:
               value: payments-service-k3s
             - name: PaymentDecisionRequest__BootstrapServers
               value: kafka:9092
+            # Milestone 68/75: PaymentSettlementOptions binds its own
+            # section with the same localhost:9092 default every other
+            # Kafka options class here has - missing from this manifest
+            # entirely until now, which would leave capture/void/refund
+            # consumption silently trying to reach the pod itself.
+            - name: PaymentSettlement__BootstrapServers
+              value: kafka:9092
             - name: SchemaRegistry__Url
               value: http://schema-registry:8081
+            # Milestone 75: explicit, not left to the code default - must
+            # match orders-worker's Saga__Mode.
+            - name: Saga__Mode
+              value: Both
             - name: InstanceId
               valueFrom:
                 fieldRef:

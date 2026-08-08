@@ -670,11 +670,15 @@ services:
       OrderProjectionKafka__BootstrapServers: kafka:9092
       SagaOrchestration__BootstrapServers: kafka:9092
       OrderEventStore__BootstrapServers: kafka:9092
-      # Milestone 65: Choreography (default, matches payments-service below),
-      # Orchestration, or Both - see SagaMode's own comment for what each
-      # mode starts/stops. Both requires payments-service to also be set to
-      # Both so every request/reply pair has someone to talk to.
-      Saga__Mode: Choreography
+      # Milestone 75: Both (matches payments-service below) - see SagaMode's
+      # own comment for what each mode starts/stops. Choreography alone
+      # never reserves inventory (OrderMessageProcessor has no inventory
+      # step at all), so it was silently running every order without a
+      # stock check; Both keeps that path exercised for comparison while
+      # making Orchestration's inventory reservation the one that's
+      # actually load-bearing. Requires payments-service set to Both too,
+      # so every request/reply pair has someone to talk to.
+      Saga__Mode: Both
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -716,9 +720,9 @@ services:
       # four times.
       PaymentSettlement__BootstrapServers: kafka:9092
       PaymentSettlement__ExpirySweepIntervalSeconds: "30"
-      # Milestone 65: must match orders-worker's Saga__Mode above - see that
+      # Milestone 75: must match orders-worker's Saga__Mode above - see that
       # comment.
-      Saga__Mode: Choreography
+      Saga__Mode: Both
     depends_on:
       kafka-init:
         condition: service_completed_successfully

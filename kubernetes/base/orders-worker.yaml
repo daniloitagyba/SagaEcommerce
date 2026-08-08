@@ -102,6 +102,11 @@ spec:
               value: orders-lab
             - name: LeaderElection__LeaseName
               value: orders-worker-saga-sweeper
+            # Milestone 75: explicit, not left to the code default -
+            # Choreography alone never reserves inventory. Must match
+            # payments-service's Saga__Mode.
+            - name: Saga__Mode
+              value: Both
           ports:
             - name: http
               containerPort: 8080
