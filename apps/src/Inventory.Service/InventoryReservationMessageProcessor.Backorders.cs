@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Inventory.Service;
 
-// Milestone 74: the backorder-release path, split into its own file from
+// The backorder-release path, split into its own file from
 // InventoryReservationMessageProcessor.cs to stay under the 500-line
 // module-size budget. Same partial class, same private members (logger,
 // EnqueueReservationReply, EnqueueReplenishmentSignals) as the other part -
@@ -15,7 +15,7 @@ namespace Inventory.Service;
 public sealed partial class InventoryReservationMessageProcessor
 {
     /// <summary>
-    /// Milestone 74: strict FIFO. Jumping ahead to a later, smaller
+    /// Strict FIFO. Jumping ahead to a later, smaller
     /// backorder because it happens to fit would be unfair to whoever has
     /// been waiting the longest, so the loop stops at the first one that
     /// still cannot be filled rather than skipping past it - the rest wait
@@ -67,13 +67,13 @@ public sealed partial class InventoryReservationMessageProcessor
     }
 
     /// <summary>
-    /// Milestone 81: the order this backorder was waiting on behalf of was
+    /// The order this backorder was waiting on behalf of was
     /// cancelled. A plain <c>DELETE ... WHERE order_id = @orderId</c> is
     /// idempotent by construction - no reservation was ever placed for a
     /// row that's still sitting here (see the class comment on
     /// <c>ReleaseBackordersAsync</c>'s Reserve call), so there is nothing
     /// to release, only the wait itself to stop. Deletes every line
-    /// (Milestone 78 allows several backorders per order) in one
+    /// (an order can have several backorders) in one
     /// statement; no reply is published because nothing is waiting on one -
     /// the order is already Cancelled by the time this arrives.
     /// </summary>

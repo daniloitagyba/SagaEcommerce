@@ -67,14 +67,31 @@ This environment has no Docker daemon, so none of Testcontainers-backed integrat
 
 ## What was deliberately not done
 
-- **The `Created`-origin operator-cancellation race** described above.
 - **A cancellation reason beyond the fixed `"order cancelled"` string** carried through to `PaymentCancellationRequested.Reason` and the restock/backorder-cancellation commands - an operator or shopper-facing cancellation reason is a Milestone 83 concern (self-service cancellation), not this one.
-- **Extending the TLA+ model.** Real production risk given this milestone changes compensation logic in the saga's own neighborhood, and explicitly flagged rather than silently skipped.
+- **Extending the TLA+ model.** Real production risk given this milestone changes compensation logic in the saga's own neighborhood, and explicitly flagged rather than silently skipped. Still true of the addendum below, which touches the same neighborhood again.
+
+## Addendum (2026-08-08): the Created/Backordered-origin race is closed
+
+The gap this milestone originally left open - an operator or shopper cancelling an order the orchestrated saga is still mid-flight on - is fixed, not merely documented, as of this addendum. The fix turned out not to need Orders.Api to guess at inventory it can't see: `saga_orchestration_states` lives in the same Postgres database as `orders` (Orders.Api and Orders.Worker share it, and `OrdersDbContext` already maps both), so "invisible to Orders.Api" was a code-boundary framing, not a genuine cross-service problem the way Payments/Inventory's split from Orders is in Milestone 88.
+
+**`EfOrderStatusRepository.FlagInFlightSagaAsCancelledAsync`** runs in the same transaction as the status CAS, for a cancellation from `Created` or `Backordered`: an idempotent `UPDATE saga_orchestration_states SET cancellation_requested_at = COALESCE(...)`, a no-op if no saga row exists (the ordinary case). It does not decide what to release or restock - it only marks that *whichever reply arrives next* is deciding for an order that's already been cancelled elsewhere.
+
+**`OrderSagaReplyConsumer`** checks the flag at the two points that would otherwise commit the order to keep something the cancellation already gave up:
+- Every line finishing reservation (about to request a payment decision): releases every line instead, via the same `CancelDuringSagaAsync` helper the partial-rejection compensation (Milestone 78) already used a version of.
+- Every line's commit reply arriving (about to confirm the order): restocks whatever was actually committed - reusing `InventoryRestockRequested`, the same command Milestone 70's returns and Milestone 89's replenishment loop already produce - instead of confirming or holding.
+
+Payment needs no equivalent check: `EfOrderStatusRepository` already queues `PaymentCancellationRequested` unconditionally for every cancellation, regardless of saga step, and `Payment.TryCancel` (this milestone's own earlier fix) already decides void-vs-refund from the payment's actual current state - so a payment that got approved *after* the order was already cancelled is still correctly refunded, without this addendum needing to know that happened.
+
+**Verified against a live cluster** (a real Ubuntu Docker host, not Testcontainers-on-a-laptop): both new `OrderSagaReplyConsumerCancellationRaceTests` pass - a cancellation flagged mid-reservation releases every line and never requests a payment decision; one flagged mid-commit restocks the line that actually committed, leaves the never-committed sibling alone, and never moves the order off `Cancelled`. The full `Orders.IntegrationTests` suite (44/44, including these two) passes with test-collection parallelism disabled; run with the default parallelism, unrelated pre-existing tests in this suite are flaky under this host's container-startup contention - a resourcing issue this addendum did not introduce and did not attempt to fix.
+
+**Still open, newly found while fixing this**: a `Backordered` order with more than one line, where the backordered line specifically is the one still unanswered when the order is cancelled, has no path back to answering it - `BackorderCancellationRequested` removes that line's place in the FIFO queue, so it will now never receive the reply that would let `saga_orchestration_lines` see all lines answered and trigger the release this addendum just added. The saga row (and any sibling line that already reserved) is orphaned until `SagaTimeoutSweeper` eventually claims it - which, for `ReserveInventory`, still only cancels, on the same "whether anything was reserved is unknown" reasoning Milestone 77 used, unaware that in this specific case the answer genuinely is known. Narrower than the race this addendum closes (requires a multi-line backordered order, not just any cancellation), but real, and left open rather than folded in silently.
 
 ## See also
 
 - [Milestone 69: The Order's Life Does Not End at Confirmed](milestone-69-order-lifecycle.md) — the transition table this milestone's compensation now actually covers.
 - [Milestone 70: Returns, Partial Refunds, and a Money Bug in Shipped Code](milestone-70-returns-and-refunds.md) — `ReturnRefundCalculator` and the restock path this milestone's restock-on-cancel reuses (and whose multi-SKU id bug this milestone also fixed).
+- [Milestone 77: Inventory Timeout Compensation Was the One Cancelled Order That Never Released Its Stock](../saga/milestone-77-inventory-timeout-compensation.md) — `SagaTimeoutSweeper`'s own "unknown whether anything was reserved" reasoning, which the addendum's still-open backordered-sibling gap runs into again.
+- [Milestone 89: The Replenishment Loop Closes](milestone-89-replenishment-loop.md) — the other consumer of `InventoryRestockRequested` this addendum's mid-commit cancellation now also produces.
 - [Milestone 73: Closing the Gaps the Plan Left Open](milestone-73-closing-the-plan-gaps.md) — the `pg_try_advisory_xact_lock` single-sweeper pattern and the "one new thing wired in wrong, the whole outbox stops" shape this milestone's own bugs shared.
 - [Milestone 74: Waiting Is a State, Not a Cancellation](milestone-74-backorders.md) — the backorder table and FIFO release path this milestone's cancellation now interrupts correctly.
 - [Milestone 76: A Capture That Fails Is Now Visible, Not Silent](milestone-76-settlement-reconciliation.md) — the redelivery-vs-mismatch distinction this milestone's `Cancel` operation extends.

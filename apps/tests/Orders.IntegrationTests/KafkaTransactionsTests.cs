@@ -4,8 +4,8 @@ using Testcontainers.Redpanda;
 namespace Orders.IntegrationTests;
 
 /// <summary>
-/// Milestone 52: Milestones 22 and 23 left dedup out of scope for the
-/// orchestrated saga and event-sourced read side, noting a real
+/// The orchestrated saga and the event-sourced read side originally left
+/// dedup out of scope, noting a real
 /// orchestrator would need InboxStore-style dedup. This proves the
 /// alternative - Kafka's transactional producer/consumer API - delivers
 /// exactly-once for a Kafka-to-Kafka hop, and why that guarantee still

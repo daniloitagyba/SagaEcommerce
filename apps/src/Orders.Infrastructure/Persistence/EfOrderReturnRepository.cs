@@ -106,10 +106,10 @@ public sealed class EfOrderReturnRepository(
     private void QueueRestockCommands(OrderReturn orderReturn, string correlationId)
     {
         // One command per SKU rather than one per return: Inventory
-        // serialises by SKU partition key (Milestone 41), so a single
+        // serialises by SKU partition key, so a single
         // multi-SKU command would have no correct key to be produced under.
         //
-        // Milestone 81: each line gets its own fresh id, not
+        // Each line gets its own fresh id, not
         // orderReturn.Id shared across all of them. Inventory's restock
         // inbox is deduplicated on this id
         // (InventoryReservationMessageProcessor.ProcessSettlementAsync) -

@@ -10,7 +10,7 @@ namespace Orders.Infrastructure.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // Existing rows predate this milestone's refund-policy split and
+            // Existing rows predate the refund-policy split and
             // never owed shipping under any category - Unwanted is the one
             // category that keeps them refunding exactly what they already
             // refunded, not retroactively granting a shipping refund they

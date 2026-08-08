@@ -6,9 +6,9 @@ using Orders.Application.UseCases.AdvanceFulfillment;
 namespace Orders.Api.Endpoints;
 
 /// <summary>
-/// Milestone 83: the shopper's own way to cancel an order - the single
+/// The shopper's own way to cancel an order - the single
 /// most common e-commerce self-service action, and one this lab had no
-/// route to at all before this milestone (the only way to reach Cancelled
+/// route to at all until now (the only way to reach Cancelled
 /// was the warehouse's POST .../fulfillment endpoint, now Admin-gated).
 /// Reuses AdvanceFulfillmentHandler's compare-and-set machinery through a
 /// narrower, ownership-checked entry point rather than duplicating it.

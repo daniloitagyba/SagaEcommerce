@@ -151,7 +151,7 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
         if (allocations.Count == 0)
         {
             // Nothing recorded - either an unknown reservation or one made
-            // before this milestone. The caller falls back to the
+            // before per-warehouse tracking existed. The caller falls back to the
             // single-warehouse path so orders in flight during the rollout
             // still settle.
             return false;
@@ -181,6 +181,65 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
 
         dbContext.ReservationAllocations.RemoveRange(allocations);
         return true;
+    }
+
+    /// <summary>
+    /// The permanent half of settlement -
+    /// ReservationAllocation is deleted the moment TrySettleReservationAsync
+    /// replays it (by design, so it doesn't linger); this is what survives,
+    /// specifically so a later anti-entropy sweep can still ask whether the
+    /// order this stock was drawn down for is still one that should have it.
+    /// Called only on a successful commit, never a release - a released
+    /// reservation never drew anything down permanently, so there is
+    /// nothing here for it to leak.
+    /// </summary>
+    public Task RecordCommittedAsync(
+        Guid reservationId, Guid orderId, string sku, int quantity, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        dbContext.ReservationLedgerEntries.Add(
+            InventoryReservationLedgerEntry.Create(reservationId, orderId, sku, quantity, now));
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The other half: a restock (a return, an operator cancellation, a
+    /// backorder cancellation - anything that gives committed stock back)
+    /// reduces the oldest still-open ledger entries for the same order and
+    /// sku first, deleting one once it reaches zero. Quantity, not a
+    /// specific warehouse or reservation, is what's reconciled - a restock
+    /// command carries neither (TryRestockAsync itself picks whichever
+    /// warehouse has the most room, not necessarily the one commit drew
+    /// from), and the anti-entropy check this feeds only ever asks "does
+    /// this order still have committed stock outstanding," not "which shelf."
+    /// A restock whose order id was never a real customer order (the
+    /// replenishment loop's restocks carry a purchase order's own id) simply
+    /// matches nothing here and is a harmless no-op.
+    /// </summary>
+    public async Task ResolveLedgerOnRestockAsync(
+        Guid orderId, string sku, int quantity, CancellationToken cancellationToken)
+    {
+        var remaining = quantity;
+        var entries = await dbContext.ReservationLedgerEntries
+            .Where(entry => entry.OrderId == orderId && entry.Sku == sku)
+            .OrderBy(entry => entry.CommittedAt)
+            .ToListAsync(cancellationToken);
+
+        foreach (var entry in entries)
+        {
+            if (remaining <= 0)
+            {
+                break;
+            }
+
+            var reduceBy = Math.Min(entry.Quantity, remaining);
+            entry.Reduce(reduceBy);
+            remaining -= reduceBy;
+
+            if (entry.Quantity <= 0)
+            {
+                dbContext.ReservationLedgerEntries.Remove(entry);
+            }
+        }
     }
 
     /// <summary>

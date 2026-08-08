@@ -21,8 +21,8 @@ public sealed class InvalidReservationMessageException(string message, Exception
 
 // Split across two files to stay under the 500-line module-size budget:
 // this one owns reserve/commit/release/restock, and
-// InventoryReservationMessageProcessor.Backorders.cs owns the Milestone 74
-// backorder-release path - the newest, most self-contained concern here,
+// InventoryReservationMessageProcessor.Backorders.cs owns the
+// backorder-release path - the most self-contained concern here,
 // only ever called from ProcessSettlementAsync's restock branch below.
 public sealed partial class InventoryReservationMessageProcessor(
     IServiceScopeFactory scopeFactory,
@@ -90,8 +90,8 @@ public sealed partial class InventoryReservationMessageProcessor(
         // Correctness for concurrent requests against the SAME Sku relies
         // entirely on Kafka never handing this Sku's partition to more than
         // one consumer instance at a time - see InventoryContracts.cs.
-        // Milestone 72: the warehouse network decides, not a single row.
-        // Milestone 74: the decision itself lives in WarehouseAllocationStore
+        // The warehouse network decides, not a single row.
+        // The decision itself lives in WarehouseAllocationStore
         // now, shared with the backorder release path below - see
         // TryReserveAsync's own comment for why that sharing matters.
         var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
@@ -103,8 +103,7 @@ public sealed partial class InventoryReservationMessageProcessor(
 
         // A backorder is only worth recording when a restock could someday
         // fill it. An unknown SKU will never restock - there is nothing to
-        // wait for - so that case still fails outright, exactly as it did
-        // before this milestone.
+        // wait for - so that case still fails outright, exactly as it always did.
         var backordered = !decision.Reserved && itemExists;
         if (backordered)
         {
@@ -243,7 +242,7 @@ public sealed partial class InventoryReservationMessageProcessor(
     }
 
     /// <summary>
-    /// Milestone 70: returned units go back on the shelf.
+    /// Returned units go back on the shelf.
     ///
     /// Reuses the same inbox-dedup / mutate / reply shape as commit and
     /// release, but the mutation is different in kind: those two draw down
@@ -349,8 +348,8 @@ public sealed partial class InventoryReservationMessageProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        // Milestone 72: replay the recorded allocation before touching the
-        // aggregate view. A reservation made before this milestone has no
+        // Replay the recorded allocation before touching the
+        // aggregate view. A reservation made before per-warehouse tracking existed has no
         // recorded plan, and TrySettleReservationAsync says so rather than
         // failing - the single-warehouse path below still settles it, so
         // orders in flight during the rollout are not stranded.
@@ -369,6 +368,25 @@ public sealed partial class InventoryReservationMessageProcessor(
         var succeeded = item is not null && mutate(item, quantity, processedAt);
         var reason = succeeded ? null : insufficientReason;
 
+        // The permanent ledger's two write sides -
+        // a commit records what it actually drew down; a restock (the
+        // "else" of settleAllocation, same as the TryRestockAsync call
+        // above) resolves whatever of it the order is giving back. Both
+        // gated on succeeded, same as the reply below - nothing recorded
+        // or resolved for a mutation that didn't actually happen.
+        if (succeeded)
+        {
+            var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
+            if (settleAllocation && commitAllocation)
+            {
+                await allocationStore.RecordCommittedAsync(reservationId, orderId, sku, quantity, processedAt, cancellationToken);
+            }
+            else if (!settleAllocation)
+            {
+                await allocationStore.ResolveLedgerOnRestockAsync(orderId, sku, quantity, cancellationToken);
+            }
+        }
+
         var (eventType, reply) = makeReply(reservationId, orderId, sku, quantity, succeeded, reason, correlationId, processedAt);
         var outboxMessage = OutboxMessage.Create(
             Guid.NewGuid(),
@@ -381,7 +399,7 @@ public sealed partial class InventoryReservationMessageProcessor(
 
         dbContext.OutboxMessages.Add(outboxMessage);
 
-        // Milestone 74: only the restock path can clear a backorder, and
+        // Only the restock path can clear a backorder, and
         // only after the aggregate row above has actually been restocked -
         // releasing against a stale AvailableQuantity would just refuse
         // every waiting order again. Same allocationStore instance the

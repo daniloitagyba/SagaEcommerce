@@ -48,9 +48,9 @@ public static class OrderStatuses
 
     /// <summary>
     /// Confirmed or shipped, but something a human needs to look at: the
-    /// inventory commit reply came back negative (Milestone 69), or a
+    /// inventory commit reply came back negative, or a
     /// capture that was supposed to happen never did because the
-    /// authorization had already expired (Milestone 76 - see
+    /// authorization had already expired (see
     /// PaymentSettlementProcessor's settlement-mismatch reply). Distinct
     /// from plain "Confirmed"/"Shipped" so it doesn't look like a healthy
     /// order in every query, dashboard and read model.
@@ -67,7 +67,7 @@ public static class OrderStatuses
         [Backordered] = [Created],
         [Confirmed] = [Created, Backordered],
         [Cancelled] = [Created, Confirmed, Picking, FulfillmentHold, Backordered],
-        // Milestone 76: Shipped added - an expired-instead-of-captured
+        // Shipped added - an expired-instead-of-captured
         // authorization is discovered only after the goods already left,
         // so the hold has to reach here from further along than Picking.
         [FulfillmentHold] = [Confirmed, Picking, Shipped],
@@ -110,7 +110,7 @@ public static class OrderStatuses
         // Capture when the goods actually leave - the entire reason for
         // holding an authorization rather than charging at checkout.
         Shipped => OrderSettlementAction.Capture,
-        // Milestone 81: "Cancel", not "Void" - a Pix payment is already
+        // "Cancel", not "Void" - a Pix payment is already
         // Captured the instant it's approved, so cancelling it has to
         // refund, not void a hold that was never placed. Which of the two
         // applies depends on the payment's own current state, which only

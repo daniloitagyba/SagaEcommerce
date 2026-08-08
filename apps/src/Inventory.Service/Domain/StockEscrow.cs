@@ -1,10 +1,10 @@
 namespace Inventory.Service.Domain;
 
 /// <summary>
-/// Milestone 87: splits one warehouse's stock of one SKU into N
+/// Splits one warehouse's stock of one SKU into N
 /// independently-lockable buckets, so concurrent reservations against the
 /// same (Sku, Warehouse) can be decided in parallel instead of serializing
-/// on one counter. Milestone 51 measured the ceiling this answers: a SKU
+/// on one counter. A prior measurement found the ceiling this answers: a SKU
 /// maps to one Kafka partition (so a flash sale on one SKU is handled by
 /// exactly one consumer, one row, one lock at a time) precisely because
 /// <see cref="WarehouseStock"/>'s read-then-write has no locking of its

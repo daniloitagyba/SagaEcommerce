@@ -12,8 +12,8 @@ namespace Orders.Api.Endpoints;
 /// built asynchronously by Orders.Worker's projector. Never touches the
 /// orders write table or the Redis cache used by GetByIdAsync.
 ///
-/// Milestone 83: scoped to the caller's own orders by default - the mass-disclosure
-/// half of the ownership gap Milestone 81's audit found (a plain
+/// Scoped to the caller's own orders by default - the mass-disclosure
+/// half of the ownership gap a prior audit found (a plain
 /// orders:read token could list every customer's orders, unbounded beyond
 /// a limit with no offset). An admin caller may still pass customerId to
 /// query someone specific, or omit it for the old cross-customer listing.

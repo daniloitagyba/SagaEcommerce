@@ -1,7 +1,7 @@
 namespace Orders.Application.UseCases.ReturnOrder;
 
 /// <summary>
-/// Milestone 82: how long after checkout a <see cref="Orders.Domain.ReturnReasonCategory.Regret"/>
+/// How long after checkout a <see cref="Orders.Domain.ReturnReasonCategory.Regret"/>
 /// return still owes shipping - Brazil's CDC art. 49 gives a shopper seven
 /// days to change their mind with no reason required, and the return owes
 /// the full amount, outbound shipping included. Configurable rather than a

@@ -3,7 +3,7 @@ using NodaMoney;
 namespace Orders.Domain.Pricing;
 
 /// <summary>
-/// Milestone 70: splits an amount of money into shares that are exact
+/// Splits an amount of money into shares that are exact
 /// <em>and</em> never negative - replacing NodaMoney's <c>Split</c>, which
 /// sums back to the total correctly but can hand out a negative share (e.g.
 /// <c>Money(0.06, BRL).Split(11)</c> → ten shares of 0.01 then -0.04),

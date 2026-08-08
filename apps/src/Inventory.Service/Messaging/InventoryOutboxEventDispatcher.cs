@@ -62,7 +62,7 @@ public sealed class InventoryOutboxEventDispatcher(IInventoryEventPublisher publ
 
             case nameof(InventoryRestockRequested):
             {
-                // Milestone 89: PurchaseOrderReceivingSweeper's restock,
+                // PurchaseOrderReceivingSweeper's restock,
                 // produced here rather than in-process specifically so a
                 // Kafka failure after the purchase order is marked
                 // Received still leaves this outbox row for OutboxPublisher to retry.

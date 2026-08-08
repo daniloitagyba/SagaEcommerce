@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Inventory.Service;
 
 /// <summary>
-/// Milestone 89: the other half of ReplenishmentRequestProcessor - turns a
+/// The other half of ReplenishmentRequestProcessor - turns a
 /// Requested purchase order into an actual restock once its lead time has
 /// elapsed. Single-sweeper via pg_try_advisory_xact_lock, the same
 /// reasoning BackorderTimeoutSweeper already carries in this service: the

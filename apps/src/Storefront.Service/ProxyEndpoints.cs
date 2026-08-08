@@ -7,7 +7,7 @@ namespace Storefront.Service;
 /// this one origin, avoiding CORS and keeping internal cluster addresses
 /// out of client-side code. Every route is a thin, generic forward.
 ///
-/// Milestone 83: the direct /api/orders passthrough (kept for k6/Pact/the
+/// The direct /api/orders passthrough (kept for k6/Pact/the
 /// README quickstart, which post straight to it rather than going through
 /// StorefrontEndpoints.CheckoutAsync's cart-driven flow) now forwards the
 /// caller's own Authorization header instead of minting a service-account
@@ -46,7 +46,7 @@ public static class ProxyEndpoints
             upstreamRequest.Content = new StringContent(body, Encoding.UTF8, "application/json");
         }
 
-        // Milestone 84: Cart.Service now requires the caller's own token
+        // Cart.Service now requires the caller's own token
         // (catalog stays anonymous for GETs, so this is a no-op there).
         var authorization = request.Headers.Authorization.FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(authorization))

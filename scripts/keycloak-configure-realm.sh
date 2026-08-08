@@ -109,7 +109,11 @@ fi
 # inventory:read gates GET /inventory (the full-catalog listing with exact
 # quantities); the per-SKU lookup stays open to any caller, coarsened to an
 # availability band rather than an exact count for one that isn't authenticated.
-for role_name in "orders:read" "orders:write" "orders:admin" "catalog:admin" "inventory:read"; do
+#
+# Milestone 88 follow-up: payments:read gates GET /payments/by-order/{id} -
+# the anti-entropy sweep's own read, unauthenticated (a named gap) until
+# this role gave Orders.Worker's own service account something to present.
+for role_name in "orders:read" "orders:write" "orders:admin" "catalog:admin" "inventory:read" "payments:read"; do
   if curl --fail --silent --header "$auth_header" "$keycloak_url/admin/realms/$realm_name/roles/$role_name" >/dev/null 2>&1; then
     printf 'Role %s already exists.\n' "$role_name"
   else
@@ -150,10 +154,13 @@ fi
 # meaningful, rather than accepting any token this realm ever issues.
 # Milestone 84: catalog-service, inventory-service and cart-service join
 # orders-api - this client (trusted backend tooling) needs to reach all four.
+# Milestone 88 follow-up: payments-service joins too - this same client is
+# also what Orders.Worker's anti-entropy sweeper authenticates as now.
 create_audience_mapper "$client_internal_id" "orders-api"
 create_audience_mapper "$client_internal_id" "catalog-service"
 create_audience_mapper "$client_internal_id" "inventory-service"
 create_audience_mapper "$client_internal_id" "cart-service"
+create_audience_mapper "$client_internal_id" "payments-service"
 
 service_account_user_id=$(
   curl --fail --silent --header "$auth_header" \
@@ -165,7 +172,7 @@ service_account_user_id=$(
 # backend tooling (an operator, a warehouse integration) - every role a
 # backend caller might legitimately need across all three protected services.
 assign_missing_roles "$service_account_user_id" \
-  "orders:read" "orders:write" "orders:admin" "catalog:admin" "inventory:read"
+  "orders:read" "orders:write" "orders:admin" "catalog:admin" "inventory:read" "payments:read"
 
 # Milestone 83: orders-storefront - a public client (no secret; PKCE
 # instead, since a browser can't keep one) so a shopper authenticates as
@@ -232,6 +239,6 @@ fi
 assign_missing_roles "$demo_user_id" "orders:read" "orders:write"
 
 printf '\nRealm ready.\n'
-printf 'Confidential client: %s (secret is KEYCLOAK_CLIENT_SECRET in .env) - orders:read, orders:write, orders:admin, catalog:admin, inventory:read.\n' "$client_id"
+printf 'Confidential client: %s (secret is KEYCLOAK_CLIENT_SECRET in .env) - orders:read, orders:write, orders:admin, catalog:admin, inventory:read, payments:read.\n' "$client_id"
 printf 'Public client: %s (PKCE, no secret) - the shopper-facing client. orders-api + cart-service audiences.\n' "$storefront_client_id"
 printf 'Demo shopper: %s / KEYCLOAK_DEMO_CUSTOMER_PASSWORD in .env.\n' "$demo_username"

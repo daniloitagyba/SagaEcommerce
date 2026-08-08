@@ -9,6 +9,7 @@ COPY apps/src/BuildingBlocks.Messaging/BuildingBlocks.Messaging.csproj apps/src/
 COPY apps/src/BuildingBlocks.Observability/BuildingBlocks.Observability.csproj apps/src/BuildingBlocks.Observability/
 COPY apps/src/BuildingBlocks.Persistence/BuildingBlocks.Persistence.csproj apps/src/BuildingBlocks.Persistence/
 COPY apps/src/BuildingBlocks.Resilience/BuildingBlocks.Resilience.csproj apps/src/BuildingBlocks.Resilience/
+COPY apps/src/BuildingBlocks.WebAuthentication/BuildingBlocks.WebAuthentication.csproj apps/src/BuildingBlocks.WebAuthentication/
 COPY apps/src/Payments.Service/Payments.Service.csproj apps/src/Payments.Service/
 RUN dotnet restore apps/src/Payments.Service/Payments.Service.csproj
 
@@ -18,6 +19,7 @@ COPY apps/src/BuildingBlocks.Messaging/ apps/src/BuildingBlocks.Messaging/
 COPY apps/src/BuildingBlocks.Observability/ apps/src/BuildingBlocks.Observability/
 COPY apps/src/BuildingBlocks.Persistence/ apps/src/BuildingBlocks.Persistence/
 COPY apps/src/BuildingBlocks.Resilience/ apps/src/BuildingBlocks.Resilience/
+COPY apps/src/BuildingBlocks.WebAuthentication/ apps/src/BuildingBlocks.WebAuthentication/
 COPY apps/src/Payments.Service/ apps/src/Payments.Service/
 RUN dotnet publish apps/src/Payments.Service/Payments.Service.csproj \
     --configuration Release \

@@ -6,7 +6,7 @@ using Storefront.Service;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Milestone 73: same guard Orders.Api has carried since Milestone 69, where
+// Same guard Orders.Api already carries, where
 // one unregistered IProducer took the whole outbox down while the service
 // went on reporting healthy - a background loop cannot fail loudly on its
 // own, so the failure has to happen at startup instead.
@@ -71,7 +71,7 @@ builder.Services.AddHttpClient("inventory", (serviceProvider, client) =>
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<InventoryProxyOptions>>().Value.BaseUrl);
     client.Timeout = TimeSpan.FromSeconds(5);
 })
-// Milestone 54's tail-latency benchmark routes this client through a
+// The tail-latency benchmark routes this client through a
 // Toxiproxy latency toxic with a toxicity probability - Toxiproxy applies
 // that probability per proxied TCP connection, not per HTTP request, so a
 // pooled/reused keep-alive connection would be either always or never

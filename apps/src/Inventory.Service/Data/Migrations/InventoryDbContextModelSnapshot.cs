@@ -190,6 +190,42 @@ namespace Inventory.Service.Data.Migrations
                     b.ToTable("inventory_items", (string)null);
                 });
 
+            modelBuilder.Entity("Inventory.Service.Domain.InventoryReservationLedgerEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CommittedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("committed_at");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer")
+                        .HasColumnName("quantity");
+
+                    b.Property<Guid>("ReservationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reservation_id");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sku");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId", "Sku")
+                        .HasDatabaseName("ix_inventory_reservation_ledger_order_sku");
+
+                    b.ToTable("inventory_reservation_ledger", (string)null);
+                });
+
             modelBuilder.Entity("Inventory.Service.Domain.PurchaseOrder", b =>
                 {
                     b.Property<Guid>("Id")

@@ -17,7 +17,7 @@ public enum AdvanceFulfillmentOutcome
 public sealed record AdvanceFulfillmentResult(AdvanceFulfillmentOutcome Outcome, string? Status);
 
 /// <summary>
-/// Milestone 69: moves an order through the fulfilment states an external
+/// Moves an order through the fulfilment states an external
 /// actor drives. Legality is decided from the transition table before
 /// touching the database; whether the order is actually <em>in</em> a
 /// state the move can be made from is decided by the compare-and-set
@@ -30,7 +30,7 @@ public sealed class AdvanceFulfillmentHandler(
     ILogger<AdvanceFulfillmentHandler> logger)
 {
     /// <summary>
-    /// Milestone 83: the states a shopper may cancel their own order from -
+    /// The states a shopper may cancel their own order from -
     /// a strict subset of OrderStatuses.PredecessorsOf(Cancelled). Picking
     /// and FulfillmentHold are deliberately excluded: the warehouse is
     /// already acting on the order, or a human already needs to look at
@@ -80,12 +80,12 @@ public sealed class AdvanceFulfillmentHandler(
     }
 
     /// <summary>
-    /// Milestone 83: a shopper cancelling their own order - the self-service
+    /// A shopper cancelling their own order - the self-service
     /// route this lab never had (fulfilment's POST .../fulfillment is the
     /// warehouse's endpoint, now Admin-gated). Ownership has to be checked
     /// before the compare-and-set runs, not on its result: CustomerId never
     /// changes once an order is created, so a plain read of it first carries
-    /// none of the race risk Milestone 81 had to guard the order's
+    /// none of the race risk the cancellation-compensation work had to guard the order's
     /// <em>status</em> against.
     /// </summary>
     public async Task<AdvanceFulfillmentResult> HandleSelfServiceCancelAsync(

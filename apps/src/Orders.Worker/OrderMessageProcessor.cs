@@ -103,7 +103,7 @@ public sealed class OrderMessageProcessor(
             throw new InvalidOrderMessageException("The OrderCreated event and order identifiers are required.");
         }
 
-        // Milestone 66: accept every schema version this consumer can
+        // Accept every schema version this consumer can
         // actually read, not just the newest. Pinning to one exact version
         // is what turns a backward-compatible schema change into a
         // rolling-deploy outage - during the rollout both v1 and v2

@@ -4,7 +4,7 @@ using Orders.Domain;
 namespace Orders.Application.UseCases.ListOrderSummaries;
 
 /// <summary>
-/// Milestone 83: caller.CustomerId scopes the listing to one shopper's own
+/// Caller.CustomerId scopes the listing to one shopper's own
 /// orders; only an admin caller may pass a null customerId through to an
 /// unfiltered, cross-customer listing (still status-filterable, still
 /// paginated) - Orders.Api decides which of the two this request gets, not

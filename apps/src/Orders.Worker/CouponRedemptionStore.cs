@@ -7,7 +7,7 @@ using Polly.Registry;
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 67: settles a coupon redemption once its order reaches a
+/// Settles a coupon redemption once its order reaches a
 /// terminal state. Without release, every declined payment would burn a
 /// redemption permanently - a 100-use coupon exhausted by 100 failed
 /// checkouts, no sale. Raw Npgsql, not EF, matching OrderStatusStore /
@@ -25,9 +25,9 @@ public sealed class CouponRedemptionStore(
         WHERE code = @code AND order_id = @order_id AND state = @reserved_state;
         """;
 
-    // Milestone 69: releasable from Confirmed as well as Reserved, since
+    // Releasable from Confirmed as well as Reserved, since
     // fulfilment states let an order be confirmed and later cancelled - the
-    // Milestone 67 Reserved-only guard silently did nothing in that case,
+    // original Reserved-only guard silently did nothing in that case,
     // leaving the slot spent for an order that no longer exists. Released
     // is still excluded, so a double release can't hand the slot back twice.
     private const string ReleaseSql = """

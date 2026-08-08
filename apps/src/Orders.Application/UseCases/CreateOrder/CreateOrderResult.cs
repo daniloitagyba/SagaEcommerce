@@ -3,7 +3,7 @@ using Orders.Domain;
 namespace Orders.Application.UseCases.CreateOrder;
 
 /// <summary>
-/// Milestone 85: the live catalog subtotal disagreed with what the caller
+/// The live catalog subtotal disagreed with what the caller
 /// expected - a product's price moved between when a shopper's cart
 /// snapshotted it and when they checked out. Distinct from a validation
 /// error: nothing about the request is malformed, the world changed under it.

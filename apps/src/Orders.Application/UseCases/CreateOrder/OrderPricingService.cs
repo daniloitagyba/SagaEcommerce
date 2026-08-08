@@ -15,7 +15,7 @@ public sealed record PricedCheckout(
     string? CouponCode);
 
 /// <summary>
-/// Milestone 66: turns "SKU + quantity" into a priced order. The catalog
+/// Turns "SKU + quantity" into a priced order. The catalog
 /// lookup happens here, server-side - a client posting a SKU and quantity
 /// gets today's catalog price regardless of what it thinks the price is,
 /// revalidating whatever Cart.Service snapshotted when the item was added.
@@ -99,7 +99,7 @@ public sealed class OrderPricingService(
                 new Money(entry.Product.Price, currency)))
             .ToList();
 
-        // Milestone 67: resolve the coupon before pricing, never during - keeps the rules engine free of I/O.
+        // Resolve the coupon before pricing, never during - keeps the rules engine free of I/O.
         ResolvedCoupon? resolvedCoupon = null;
         if (!string.IsNullOrWhiteSpace(command.CouponCode))
         {
@@ -121,7 +121,7 @@ public sealed class OrderPricingService(
             resolvedCoupon = coupon;
         }
 
-        // Milestone 71: customer standing and destination resolved here too, so the rules stay pure functions of facts, never a repository lookup.
+        // Customer standing and destination resolved here too, so the rules stay pure functions of facts, never a repository lookup.
         var customer = await customerRepository.GetOrCreateAsync(command.CustomerId!, cancellationToken);
         var destination = command.ShippingAddress is { IsComplete: true } address
             ? new PricingDestination(address.Region, address.PostalPrefix)

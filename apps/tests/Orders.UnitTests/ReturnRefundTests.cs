@@ -5,8 +5,8 @@ using Orders.Domain;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 70: the refund arithmetic, and the invariant that makes
-/// storing per-line discounts in Milestone 66 worth it - refunding at list
+/// The refund arithmetic, and the invariant that makes
+/// storing per-line discounts worth it - refunding at list
 /// price would hand back more than was ever charged. The refund comes out
 /// of LineTotal, net of that line's prorated discount, computed at
 /// checkout rather than re-derived from rules that may have changed since.
@@ -126,7 +126,7 @@ public class ReturnRefundTests
             iter: 10_000);
     }
 
-    // Milestone 82: a return refunds a line's tax share alongside its
+    // A return refunds a line's tax share alongside its
     // goods share - previously only LineTotal came back, leaving the tax
     // on returned units permanently kept.
 
@@ -162,7 +162,7 @@ public class ReturnRefundTests
 }
 
 /// <summary>
-/// Milestone 82: ShippingRefundPolicy in isolation. Order.TryReturn cannot
+/// ShippingRefundPolicy in isolation. Order.TryReturn cannot
 /// be exercised end-to-end from a unit test - nothing in Order's public API
 /// can advance a fresh order to Delivered, which TryReturn requires - so
 /// the policy decision was pulled out as its own pure function specifically

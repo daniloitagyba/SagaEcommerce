@@ -19,11 +19,11 @@ public sealed record ReturnOrderResult(
     bool OrderNotFound);
 
 /// <summary>
-/// Milestone 70: accepts a partial return and works out what it is worth.
+/// Accepts a partial return and works out what it is worth.
 /// The refund arithmetic lives in the domain (Order.TryReturn ->
 /// ReturnRefundCalculator), since it needs the order's own per-line
 /// charged totals, which nothing outside the aggregate should recompute.
-/// Milestone 82: the regret window's length is the one piece of that
+/// The regret window's length is the one piece of that
 /// policy this handler supplies - everything else (whether this return
 /// actually falls inside it) is decided in the domain, from the order's
 /// own CreatedAt.
@@ -49,7 +49,7 @@ public sealed class ReturnOrderHandler(
             return new ReturnOrderResult(ReturnRejectionReason.None, null, null, 0m, false, OrderNotFound: true);
         }
 
-        // Milestone 83: checked before TryReturn mutates anything, not
+        // Checked before TryReturn mutates anything, not
         // after - the order is read either way to know whose it is, but a
         // non-owner's request must never reach the mutation, even
         // transiently. Reported the same as a genuinely missing order (see

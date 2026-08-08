@@ -1,7 +1,7 @@
 namespace Orders.Domain;
 
 /// <summary>
-/// Milestone 71: where the order is going.
+/// Where the order is going.
 ///
 /// Enough of an address to decide the two things that actually depend on
 /// geography in this lab - what shipping costs and what tax applies - and

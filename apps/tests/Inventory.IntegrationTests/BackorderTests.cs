@@ -13,7 +13,7 @@ using Testcontainers.PostgreSql;
 namespace Inventory.IntegrationTests;
 
 /// <summary>
-/// Milestone 74: an order the network could not cover right now waits for
+/// An order the network could not cover right now waits for
 /// a restock instead of being cancelled outright.
 /// </summary>
 public sealed class BackorderTests : IAsyncLifetime
@@ -134,9 +134,9 @@ public sealed class BackorderTests : IAsyncLifetime
     [Fact]
     public async Task CancellingTheWaitingOrderRemovesItsBackorderSoARestockNeverReservesOnItsBehalf()
     {
-        // Milestone 81: the order this backorder belonged to was cancelled
-        // while still waiting on stock. Before this milestone nothing ever
-        // told Inventory that - the row sat there until a restock came in
+        // The order this backorder belonged to was cancelled
+        // while still waiting on stock. Nothing used to tell Inventory that -
+        // the row sat there until a restock came in
         // and blindly reserved for a saga that no longer existed, ahead of
         // whoever was actually still waiting (strict FIFO means it would
         // have been served first).

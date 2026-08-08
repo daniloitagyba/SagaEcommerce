@@ -3,14 +3,14 @@ using Orders.Application;
 namespace Orders.Api.Authorization;
 
 /// <summary>
-/// Milestone 83: who is actually calling, verified rather than
-/// self-asserted - the piece Milestone 26 deliberately left for later
-/// (that milestone built application identity, "which client is calling";
-/// this is end-user identity, "which shopper is calling").
+/// Who is actually calling, verified rather than
+/// self-asserted - the piece deliberately left for later when JWT auth was
+/// first wired in (that earlier work built application identity, "which
+/// client is calling"; this is end-user identity, "which shopper is calling").
 ///
 /// Reads <c>preferred_username</c> rather than the OIDC-standard
 /// <c>sub</c> claim: this lab's <c>customerId</c> has been a human-readable
-/// string ("customer-42") since Milestone 7, threaded through coupons,
+/// string ("customer-42") from the start, threaded through coupons,
 /// loyalty tiers, and order history. Provisioning Keycloak users under
 /// those same usernames (<c>scripts/keycloak-configure-realm.sh</c>) lets
 /// every existing consumer of <c>customerId</c> keep working unchanged - no

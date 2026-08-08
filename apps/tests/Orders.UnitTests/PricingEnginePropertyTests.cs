@@ -7,7 +7,7 @@ using Orders.Domain.Pricing;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 66: the pricing invariants, checked against generated orders
+/// The pricing invariants, checked against generated orders
 /// rather than hand-picked ones - the dangerous cases here are the ones
 /// nobody thinks of (campaigns stacking past 100%, a discount that won't
 /// divide evenly, a coupon on a zero-value order). CsCheck generates those
@@ -19,7 +19,7 @@ public class PricingEnginePropertyTests
 {
     private static readonly Currency Brl = Currency.FromCode("BRL");
     private static readonly string[] Categories = ["electronics", "books", "clothing", "home", "clearance"];
-    // Milestone 67: the engine only ever sees already-resolved, eligible
+    // The engine only ever sees already-resolved, eligible
     // coupons, so the generator produces percentages, not codes - see CouponEligibilityTests.
     private static readonly ResolvedCoupon?[] Coupons =
     [
@@ -177,10 +177,10 @@ public class PricingEnginePropertyTests
     [Fact]
     public void NoLineEverReceivesANegativeDiscountShare()
     {
-        // The property Milestone 66 should have had and did not: NodaMoney's
+        // The property the pricing engine should have had and did not: NodaMoney's
         // Split emits a negative share for roughly 1 in 200k weighted
         // allocations, which is a line whose discount *raises* its price.
-        // Milestone 70 hit the same defect in refunds and replaced Split on
+        // Refunds hit the same defect and replaced Split on
         // both paths; this is the check that would have caught it first.
         GenRequest.Sample(
             request =>

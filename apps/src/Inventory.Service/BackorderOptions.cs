@@ -1,7 +1,7 @@
 namespace Inventory.Service;
 
 /// <summary>
-/// Milestone 74: the backorder timeout policy, in configuration for the
+/// The backorder timeout policy, in configuration for the
 /// same reason PaymentRiskOptions's thresholds are - the right window is
 /// discovered from how long customers are actually willing to wait, not
 /// reasoned out up front.

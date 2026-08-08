@@ -4,7 +4,7 @@ using Inventory.Service.Domain;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 72: the multi-warehouse allocation policy - a pure function,
+/// The multi-warehouse allocation policy - a pure function,
 /// which is what makes it property-testable. These properties must hold
 /// for any stock configuration; getting them wrong means overselling or
 /// shipping in more parcels than needed.
@@ -190,7 +190,7 @@ public class StockAllocatorTests
     [Fact]
     public void ReplenishmentIsSignalledOnTheCrossingNotOnEveryLowReservation()
     {
-        // Milestone 73: the reservation that crosses the reorder point is
+        // The reservation that crosses the reorder point is
         // news; the next twenty orders finding it already low are not.
         var now = DateTimeOffset.UtcNow;
         var stock = WarehouseStock.Create("SKU-1", "WH-SP", available: 10, reorderPoint: 5, now);

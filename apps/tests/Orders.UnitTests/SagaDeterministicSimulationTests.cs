@@ -1,7 +1,7 @@
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 58: complements Milestone 56's TLA+ exhaustive proof with a
+/// Complements the TLA+ exhaustive proof with a
 /// FoundationDB/TigerBeetle-style deterministic simulation - the same saga
 /// state machine and NoResurrection property, exercised as running code
 /// under a seeded pseudo-random schedule instead of symbolic exploration.

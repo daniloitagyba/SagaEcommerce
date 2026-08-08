@@ -4,7 +4,7 @@ using CsCheck;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 69: the order lifecycle as a table. Before this, "which moves
+/// The order lifecycle as a table. Before this, "which moves
 /// are legal" wasn't answerable in code - each transition was a hardcoded
 /// pair inside OrderStatusStore, which only worked while a status had one
 /// legal predecessor, until the fulfilment states introduced more.
@@ -22,9 +22,9 @@ public class OrderStatusTransitionTests
     [InlineData(OrderStatuses.Shipped, OrderStatuses.Delivered)]
     [InlineData(OrderStatuses.FulfillmentHold, OrderStatuses.Picking)]
     [InlineData(OrderStatuses.FulfillmentHold, OrderStatuses.Cancelled)]
-    // Milestone 76: discovered only after the goods shipped - an expired-not-captured authorization.
+    // Discovered only after the goods shipped - an expired-not-captured authorization.
     [InlineData(OrderStatuses.Shipped, OrderStatuses.FulfillmentHold)]
-    // Milestone 74: parked here when the network can't cover it - cleared on restock (Confirmed) or given up on timeout (Cancelled).
+    // Parked here when the network can't cover it - cleared on restock (Confirmed) or given up on timeout (Cancelled).
     [InlineData(OrderStatuses.Created, OrderStatuses.Backordered)]
     [InlineData(OrderStatuses.Backordered, OrderStatuses.Confirmed)]
     [InlineData(OrderStatuses.Backordered, OrderStatuses.Cancelled)]
@@ -62,7 +62,7 @@ public class OrderStatusTransitionTests
     [Fact]
     public void NothingEscapesATerminalState()
     {
-        // Milestone 70 took Delivered off this list - a delivered order can still be returned, so it isn't the row's end of life.
+        // Delivered was taken off this list - a delivered order can still be returned, so it isn't the row's end of life.
         foreach (var terminal in new[] { OrderStatuses.Cancelled, OrderStatuses.Returned })
         {
             Assert.True(OrderStatuses.IsTerminal(terminal));
@@ -105,7 +105,7 @@ public class OrderStatusTransitionTests
         Assert.Equal(OrderSettlementAction.Capture, OrderStatuses.SettlementActionFor(OrderStatuses.Shipped));
         Assert.Equal(OrderSettlementAction.Cancel, OrderStatuses.SettlementActionFor(OrderStatuses.Cancelled));
 
-        // Milestone 68 captured at Confirmed because Shipped didn't exist - must not any more, the whole point of the hold.
+        // Originally captured at Confirmed because Shipped didn't exist - must not any more, the whole point of the hold.
         Assert.Equal(OrderSettlementAction.None, OrderStatuses.SettlementActionFor(OrderStatuses.Confirmed));
         Assert.Equal(OrderSettlementAction.None, OrderStatuses.SettlementActionFor(OrderStatuses.Picking));
         Assert.Equal(OrderSettlementAction.None, OrderStatuses.SettlementActionFor(OrderStatuses.Delivered));
@@ -137,9 +137,9 @@ public class OrderStatusTransitionTests
         // cancellation) can ever fire. That half of the original claim
         // still holds structurally.
         //
-        // Capture is a different story since Milestone 76 added
-        // Shipped -> FulfillmentHold. Combined with the pre-existing
-        // FulfillmentHold -> Picking -> Shipped (Milestone 69: ops routes a
+        // Capture is a different story since
+        // Shipped -> FulfillmentHold was added. Combined with the pre-existing
+        // FulfillmentHold -> Picking -> Shipped (ops routes a
         // held order back through fulfilment), Shipped is now reachable
         // repeatedly in a single path - Confirmed, Picking, Shipped,
         // FulfillmentHold, Picking, Shipped, ... - and each visit asks for

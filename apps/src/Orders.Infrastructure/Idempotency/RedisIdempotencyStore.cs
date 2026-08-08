@@ -54,7 +54,7 @@ public sealed class RedisIdempotencyStore(
         var lockTimeout = TimeSpan.FromMilliseconds(_options.LockTimeoutMilliseconds);
         var acquiredLock = await database.LockTakeAsync(lockKey, LockToken, lockTimeout);
 
-        // Milestone 48: drawn once per acquisition, strictly increasing,
+        // Drawn once per acquisition, strictly increasing,
         // independent of the lock itself - see RedisFencedWrite for why the
         // lock's own timeout can't be trusted to prevent a stale write.
         var fenceToken = acquiredLock

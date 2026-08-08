@@ -8,7 +8,7 @@ using Payments.Service.Data;
 namespace Payments.Service;
 
 /// <summary>
-/// Milestone 68: releases card authorizations nobody ever captured, so a
+/// Releases card authorizations nobody ever captured, so a
 /// hold from a lost capture command or an unfulfilled order doesn't
 /// encumber the shopper's funds indefinitely - what real acquirers do too.
 ///
@@ -18,7 +18,7 @@ namespace Payments.Service;
 /// makes concurrent sweeps safe (each replica claims a disjoint batch), so
 /// the lock only needs to stop wasted polling, not guarantee correctness. A
 /// Lease would mean new RBAC and a service account token this pod
-/// deliberately doesn't carry (Milestone 26); the advisory lock needs no
+/// deliberately doesn't carry; the advisory lock needs no
 /// new infrastructure and releases itself if a replica dies mid-sweep.
 /// </para>
 /// </summary>

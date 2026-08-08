@@ -33,7 +33,7 @@ public static class OrderEndpoints
         var instanceId = configuration["InstanceId"] ?? Environment.MachineName;
         var idempotencyKey = httpContext.Request.Headers["Idempotency-Key"].FirstOrDefault();
 
-        // Milestone 83: a plain shopper token places an order for exactly
+        // A plain shopper token places an order for exactly
         // one customer - itself. The body's customerId is honored only for
         // an admin caller (a support agent creating an order on someone
         // else's behalf); for everyone else it is overwritten, not merely
@@ -66,7 +66,7 @@ public static class OrderEndpoints
         }
         catch (CouponRedemptionUnavailableException exception)
         {
-            // Milestone 67: the coupon passed the advisory eligibility check
+            // The coupon passed the advisory eligibility check
             // and then lost the race for the last slot. 409, not 400 -
             // nothing about the request was wrong, it simply arrived second,
             // and resubmitting it unchanged would be equally valid and
@@ -77,7 +77,7 @@ public static class OrderEndpoints
                 title: "Coupon Unavailable");
         }
 
-        // Milestone 85: distinct from a validation error - nothing about
+        // Distinct from a validation error - nothing about
         // the request is malformed, the catalog moved under it. 409, the
         // same "well-formed but the world changed" status M67 already uses
         // for a coupon losing its last slot mid-request, not a 400 that
@@ -127,7 +127,7 @@ public static class OrderEndpoints
             return ServiceUnavailable(httpContext, "PostgreSQL is currently unavailable.");
         }
 
-        // Milestone 83: 404, not 403 - a non-owner gets the same answer as
+        // 404, not 403 - a non-owner gets the same answer as
         // a genuinely missing id, so probing ids can't be used to learn
         // which ones exist. This is deliberately checked after the cache
         // lookup, not before: the order still has to be fetched to know

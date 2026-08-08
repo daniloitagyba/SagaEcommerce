@@ -21,10 +21,10 @@ public sealed class LeaderElectionOptions
 }
 
 /// <summary>
-/// Milestone 36: Kubernetes Lease-based leader election so exactly one
+/// Kubernetes Lease-based leader election so exactly one
 /// orders-worker replica actively runs SagaTimeoutSweeper at a time, rather
 /// than every KEDA-scaled replica redundantly polling. Requires
-/// automountServiceAccountToken: true on this pod (a Milestone 26 hardening
+/// automountServiceAccountToken: true on this pod (a hardening
 /// default flipped back on), scoped tightly: RBAC grants nothing but Lease
 /// objects in this one namespace.
 /// </summary>

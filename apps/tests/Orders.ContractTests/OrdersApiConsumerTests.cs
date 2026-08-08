@@ -6,8 +6,8 @@ using PactNet.Matchers;
 namespace Orders.ContractTests;
 
 /// <summary>
-/// Milestone 29: consumer-driven contract testing for Orders.Api's REST
-/// surface, complementing Milestone 19's Avro contracts for the Kafka
+/// Consumer-driven contract testing for Orders.Api's REST
+/// surface, complementing the Avro contracts for the Kafka
 /// side. Orders.Worker and Payments.Service coordinate purely through
 /// Kafka, so the one real synchronous boundary worth protecting is
 /// whatever calls POST/GET /orders directly. This half generates the

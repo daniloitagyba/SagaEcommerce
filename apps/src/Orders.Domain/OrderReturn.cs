@@ -4,7 +4,7 @@ using Orders.Domain.Pricing;
 namespace Orders.Domain;
 
 /// <summary>
-/// Milestone 70: a customer sending some of an order back.
+/// A customer sending some of an order back.
 ///
 /// Partial by nature - "two of the three shirts, keep the book" is the
 /// ordinary case, not an edge case - which is what makes the refund
@@ -27,14 +27,14 @@ public sealed class OrderReturn
     public string Reason { get; private set; } = string.Empty;
 
     /// <summary>
-    /// Milestone 82: what refund policy this return is under - separate
+    /// What refund policy this return is under - separate
     /// from the free-text <see cref="Reason"/>, which is a description for
     /// the record, not something arithmetic can branch on.
     /// </summary>
     public ReturnReasonCategory ReasonCategory { get; private set; }
 
     /// <summary>
-    /// Milestone 82: this order's outbound shipping, refunded only on a
+    /// This order's outbound shipping, refunded only on a
     /// complete return under a policy that owes it (see
     /// <see cref="Order.TryReturn"/>) - shipping is charged once, at the
     /// order level, never per line, so there is nothing to prorate here.
@@ -84,7 +84,7 @@ public sealed class OrderReturn
 }
 
 /// <summary>
-/// Milestone 82: the policy that decides whether outbound shipping comes
+/// The policy that decides whether outbound shipping comes
 /// back on a complete return, alongside the goods and their tax. Not a
 /// free-text description - see <see cref="OrderReturn.Reason"/> for that.
 /// </summary>
@@ -101,7 +101,7 @@ public enum ReturnReasonCategory
 }
 
 /// <summary>
-/// Milestone 82: whether outbound shipping is owed on a return, pulled out
+/// Whether outbound shipping is owed on a return, pulled out
 /// of <see cref="Order.TryReturn"/> as its own pure function - same
 /// reasoning that keeps <see cref="ReturnRefundCalculator"/> a standalone,
 /// directly testable piece of arithmetic rather than inline logic no test
@@ -170,7 +170,7 @@ public enum ReturnRejectionReason
 }
 
 /// <summary>
-/// Milestone 70: works out what a partial return is worth, out of
+/// Works out what a partial return is worth, out of
 /// <see cref="OrderLine.LineTotal"/> - net of the line's prorated discount,
 /// stored at checkout - rather than list price, or a shopper who used a
 /// 50% coupon and returns everything would be refunded twice what they paid.

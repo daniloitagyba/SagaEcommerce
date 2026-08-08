@@ -17,7 +17,7 @@ public interface IOrderCache
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Milestone 69: drops the cached order so the next read sees the new
+    /// Drops the cached order so the next read sees the new
     /// status - needed once the fulfilment API started changing status too,
     /// not just Orders.Worker via its own IOrderCacheInvalidator.
     /// </summary>

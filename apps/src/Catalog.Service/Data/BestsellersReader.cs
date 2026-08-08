@@ -6,7 +6,7 @@ namespace Catalog.Service.Data;
 public sealed record BestsellerEntry(string Sku, long UnitsSold);
 
 /// <summary>
-/// The read side of Milestone 44's bestsellers projection - Orders.Worker
+/// The read side of the bestsellers projection - Orders.Worker
 /// (RedisBestsellersStore) is the only writer, on every confirmed saga.
 /// Ranking data lives entirely in Redis; this only reads it, then asks
 /// MongoDB (ProductRepository) for the product details to display next to

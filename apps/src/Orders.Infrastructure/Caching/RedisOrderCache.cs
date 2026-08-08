@@ -51,7 +51,7 @@ public sealed class RedisOrderCache(
         var lockTimeout = TimeSpan.FromMilliseconds(_options.LockTimeoutMilliseconds);
         var acquiredLock = await database.LockTakeAsync(lockKey, LockToken, lockTimeout);
 
-        // Milestone 48: drawn once per acquisition, independent of the lock itself - see RedisFencedWrite for why the lock's own timeout isn't enough.
+        // Drawn once per acquisition, independent of the lock itself - see RedisFencedWrite for why the lock's own timeout isn't enough.
         var fenceToken = acquiredLock ? await database.NextFenceTokenAsync(OrderCacheKeys.FenceSequenceKey(id)) : 0;
 
         if (!acquiredLock)

@@ -15,9 +15,9 @@ using Testcontainers.Redpanda;
 namespace Orders.IntegrationTests;
 
 /// <summary>
-/// Milestone 76: reproduces the exact race the milestone exists to close -
+/// Reproduces the exact race this reconciliation exists to close -
 /// an authorization expires (the sweeper, or a capture command that arrives
-/// too late) after the order has already shipped. Before this milestone,
+/// too late) after the order has already shipped. Before it was added,
 /// nothing consumed payments.settlement-replied.v1 at all: the order would
 /// sit in Shipped forever, eventually Delivered, having never been charged,
 /// with no record anywhere that it went wrong.

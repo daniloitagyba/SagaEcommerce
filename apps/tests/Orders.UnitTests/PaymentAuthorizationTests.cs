@@ -4,7 +4,7 @@ using Payments.Service.Domain;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 68: the authorize/capture state machine, splitting "approved"
+/// The authorize/capture state machine, splitting "approved"
 /// (was one boolean before) from "money moved", so a hold placed at
 /// checkout and funds taken at shipment become distinct states. The guards
 /// below keep a redelivered capture command from charging twice - the same
@@ -120,7 +120,7 @@ public class PaymentAuthorizationTests
     [Fact]
     public void AnApprovedBoletoWaitsForPaymentRatherThanHoldingMoney()
     {
-        // Milestone 73: deliberately not Authorized - nothing is held, the shopper has a slip and may never pay it.
+        // Deliberately not Authorized - nothing is held, the shopper has a slip and may never pay it.
         var payment = Authorize(PaymentMethods.Boleto);
 
         Assert.Equal(PaymentStates.AwaitingPayment, payment.State);
@@ -166,7 +166,7 @@ public class PaymentAuthorizationTests
     [Fact]
     public void AnAlreadyExpiredPaymentCannotBeVoidedEither()
     {
-        // Milestone 76: the domain-level half of why Shipped ->
+        // The domain-level half of why Shipped ->
         // FulfillmentHold -> Cancelled being legal at the OrderStatuses
         // level (a shipped order whose capture actually failed, then
         // cancelled by an operator) can never produce a real double
@@ -180,7 +180,7 @@ public class PaymentAuthorizationTests
         Assert.Equal(PaymentStates.Expired, payment.State);
     }
 
-    // Milestone 81: TryCancel replaces the method-gated void dispatch that
+    // TryCancel replaces the method-gated void dispatch that
     // used to skip Pix entirely (a Pix payment is Captured the instant it's
     // approved, so cancelling it must refund, not void a hold that was
     // never placed). One entry point, and the payment's own current state
@@ -209,7 +209,7 @@ public class PaymentAuthorizationTests
     [Fact]
     public void CancellingACapturedPixRefundsItInFullRatherThanVoidingNothing()
     {
-        // The bug this milestone closes: a Pix payment has no hold to void
+        // The bug this closes: a Pix payment has no hold to void
         // - it was Captured the instant it was approved - so the only way
         // to make a cancelled order stop owing money for it is a refund.
         var payment = Authorize(PaymentMethods.Pix);

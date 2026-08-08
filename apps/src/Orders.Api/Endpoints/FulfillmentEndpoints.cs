@@ -9,13 +9,13 @@ namespace Orders.Api.Endpoints;
 public sealed record AdvanceFulfillmentRequest(string? Status);
 
 /// <summary>
-/// Milestone 69: the warehouse's way in. Fulfilment is driven by an
+/// The warehouse's way in. Fulfilment is driven by an
 /// external actor - a picker, a carrier webhook, an ops user - so it gets
 /// an explicit endpoint rather than a timer pretending orders ship
 /// themselves; the interesting part is that an illegal move is refused by
 /// the same compare-and-set that performs a legal one.
 ///
-/// Milestone 83: Admin-gated, not Write - this is the warehouse's endpoint,
+/// Admin-gated, not Write - this is the warehouse's endpoint,
 /// able to move <em>any</em> customer's order and reach every fulfilment
 /// state including Picking and Shipped, neither of which a shopper should
 /// ever trigger themselves. A shopper cancelling their own order has its

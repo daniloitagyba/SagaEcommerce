@@ -3,7 +3,7 @@ using BuildingBlocks;
 namespace Payments.Service.Risk;
 
 /// <summary>
-/// Milestone 66: the risk policy, in configuration so thresholds can be
+/// The risk policy, in configuration so thresholds can be
 /// tuned without a redeploy - real numbers get discovered from decline
 /// rates, not reasoned out up front. Defaults keep this lab's scenarios
 /// behaving recognisably: the README's deliberately-large order still
@@ -33,20 +33,20 @@ public sealed class PaymentRiskOptions
 
     public int AtypicalAmountScore { get; init; } = 30;
 
-    /// <summary>Milestone 73: how long a customer counts as new - the second order from a minutes-old account, unlike FIRST_PURCHASE's total absence of history.</summary>
+    /// <summary>How long a customer counts as new - the second order from a minutes-old account, unlike FIRST_PURCHASE's total absence of history.</summary>
     public int NewAccountWindowMinutes { get; init; } = 60;
 
     public int NewAccountScore { get; init; } = 25;
 
-    /// <summary>Milestone 73: shipping somewhere new for this customer - ordinary on its own, so it scores low and matters only compounded.</summary>
+    /// <summary>Shipping somewhere new for this customer - ordinary on its own, so it scores low and matters only compounded.</summary>
     public int AddressMismatchScore { get; init; } = 20;
 
-    /// <summary>Milestone 68: how long a card hold lasts before it lapses. Kept short (real acquirers give days) so the sweeper is observable in a lab session.</summary>
+    /// <summary>How long a card hold lasts before it lapses. Kept short (real acquirers give days) so the sweeper is observable in a lab session.</summary>
     public int AuthorizationWindowMinutes { get; init; } = 30;
 
     public TimeSpan AuthorizationWindow => TimeSpan.FromMinutes(AuthorizationWindowMinutes);
 
-    /// <summary>Milestone 73: a boleto's due date - longer than the card hold but still watchable in a lab session (real ones run one to three days).</summary>
+    /// <summary>A boleto's due date - longer than the card hold but still watchable in a lab session (real ones run one to three days).</summary>
     public int BoletoWindowMinutes { get; init; } = 120;
 
     /// <summary>

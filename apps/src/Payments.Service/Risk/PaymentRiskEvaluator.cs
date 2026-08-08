@@ -14,7 +14,7 @@ public sealed record RiskAssessment(int Score, bool Approved, IReadOnlyList<Risk
 }
 
 /// <summary>
-/// Milestone 66: replaces "decline anything over 1000" with a scored set of
+/// Replaces "decline anything over 1000" with a scored set of
 /// signals that depend on state - this customer's history and buying pace -
 /// which is what makes the payment step genuinely stateful and gives the
 /// inbox deduplication on both saga paths a reason beyond tidiness: a

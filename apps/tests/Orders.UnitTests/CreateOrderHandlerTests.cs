@@ -106,7 +106,7 @@ public sealed class CreateOrderHandlerTests
         Assert.Equal(2, repository.AddCallCount);
     }
 
-    // Milestone 85: ExpectedSubtotal - a line-item checkout this time, since
+    // ExpectedSubtotal - a line-item checkout this time, since
     // the amount-only path never prices anything to compare against.
     private static OrderPricingService BuildLineItemPricingService(decimal livePrice) =>
         new(new FixedPriceCatalogClient(livePrice),

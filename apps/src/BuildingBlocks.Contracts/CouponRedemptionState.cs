@@ -1,7 +1,7 @@
 namespace BuildingBlocks;
 
 /// <summary>
-/// Milestone 67: the states a coupon redemption moves through.
+/// The states a coupon redemption moves through.
 ///
 /// Lives here rather than in Orders.Domain because both sides of the
 /// redemption's life need it and they sit in different assemblies:

@@ -1,7 +1,7 @@
 namespace Orders.Domain;
 
 /// <summary>
-/// Milestone 71: a customer, at last - until now <c>CustomerId</c> was a
+/// A customer, at last - until now <c>CustomerId</c> was a
 /// bare string, enough to group payment history by and not enough for
 /// account age, address, or standing with the shop. Auto-provisioned on
 /// first checkout rather than registered, since this lab has no sign-up

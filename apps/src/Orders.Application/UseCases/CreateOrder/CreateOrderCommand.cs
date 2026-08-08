@@ -17,12 +17,12 @@ public sealed record CreateOrderCommand(
     string? IdempotencyKey = null,
     IReadOnlyList<CreateOrderItem>? Items = null,
     string? CouponCode = null,
-    /// <summary>Milestone 68: Card or Pix. Null means Pix - see PaymentMethods.</summary>
+    /// <summary>Card or Pix. Null means Pix - see PaymentMethods.</summary>
     string? PaymentMethod = null,
-    /// <summary>Milestone 71: destination. Null falls back to flat shipping and the global tax rate.</summary>
+    /// <summary>Destination. Null falls back to flat shipping and the global tax rate.</summary>
     Orders.Domain.ShippingAddress? ShippingAddress = null,
     /// <summary>
-    /// Milestone 85: what the caller believes the subtotal (before
+    /// What the caller believes the subtotal (before
     /// shipping, tax, and discounts - see CreateOrderHandler for why
     /// specifically the subtotal) is, from whatever catalog prices it last
     /// saw. Null skips the check entirely - only a caller that actually
@@ -31,7 +31,7 @@ public sealed record CreateOrderCommand(
     decimal? ExpectedSubtotal = null)
 {
     /// <summary>
-    /// Milestone 66 runs both request shapes side by side - the expand half
+    /// Both request shapes run side by side - the expand half
     /// of an expand/contract migration - so a pricing bug stays
     /// distinguishable from a migration bug while both are live.
     /// </summary>

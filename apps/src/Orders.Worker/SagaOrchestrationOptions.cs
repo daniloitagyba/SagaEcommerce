@@ -24,7 +24,12 @@ public sealed class SagaOrchestrationOptions
 
     public string ReleaseRepliedTopic { get; init; } = "inventory.reservation-release-replied.v1";
 
-    // Milestone 76: not part of the 4-step saga state machine (the saga row
+    // The Created/Backordered-origin cancellation
+    // race - reused wholesale from returns' own restock command
+    // and topic, not a new mechanism.
+    public string RestockRequestedTopic { get; init; } = "inventory.restock-requested.v1";
+
+    // Not part of the 4-step saga state machine (the saga row
     // is already gone by the time an order ships) - a standalone
     // reconciliation signal, not a step to advance.
     public string SettlementRepliedTopic { get; init; } = "payments.settlement-replied.v1";

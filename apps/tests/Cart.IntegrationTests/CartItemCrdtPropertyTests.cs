@@ -4,7 +4,7 @@ using CsCheck;
 namespace Cart.IntegrationTests;
 
 /// <summary>
-/// Milestone 86: the actual mathematical content of "this is a CRDT" -
+/// The actual mathematical content of "this is a CRDT" -
 /// commutativity, associativity and idempotence of Merge, proven against
 /// randomly generated states rather than asserted by inspection, plus the
 /// two behavioural properties the whole exercise exists for: no

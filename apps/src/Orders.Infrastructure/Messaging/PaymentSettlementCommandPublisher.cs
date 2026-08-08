@@ -12,19 +12,19 @@ public interface IPaymentSettlementCommandPublisher
 {
     Task PublishCaptureAsync(PaymentCaptureRequested request, CancellationToken cancellationToken);
 
-    /// <summary>Milestone 81: replaces PublishVoidAsync - see PaymentCancellationRequested.</summary>
+    /// <summary>Replaces PublishVoidAsync - see PaymentCancellationRequested.</summary>
     Task PublishCancellationAsync(PaymentCancellationRequested request, CancellationToken cancellationToken);
 
     Task PublishRefundAsync(PaymentRefundRequested request, CancellationToken cancellationToken);
 
     Task PublishRestockAsync(InventoryRestockRequested request, CancellationToken cancellationToken);
 
-    /// <summary>Milestone 81: a backordered order was cancelled - stop waiting for stock on its behalf.</summary>
+    /// <summary>A backordered order was cancelled - stop waiting for stock on its behalf.</summary>
     Task PublishBackorderCancellationAsync(BackorderCancellationRequested request, CancellationToken cancellationToken);
 }
 
 /// <summary>
-/// Milestone 69: publishes the settlement commands the fulfilment API
+/// Publishes the settlement commands the fulfilment API
 /// queued on the outbox. Separate from Orders.Worker's
 /// PaymentSettlementRequester because they sit on opposite sides of the
 /// outbox - the worker produces inline from inside a message handler, this
@@ -53,7 +53,7 @@ public sealed class KafkaPaymentSettlementCommandPublisher(
 
     /// <summary>
     /// Keyed by SKU, not order id - Inventory serialises stock changes by
-    /// partition key (Milestone 41), and a restock keyed by anything else
+    /// partition key, and a restock keyed by anything else
     /// could land on a different partition than the reservation it reverses.
     /// </summary>
     public async Task PublishRestockAsync(InventoryRestockRequested request, CancellationToken cancellationToken)

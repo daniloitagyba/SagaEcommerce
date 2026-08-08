@@ -1,7 +1,7 @@
 namespace Cart.Service.Domain;
 
 /// <summary>
-/// Milestone 86: one event, from one replica - a device, a tab, a retried
+/// One event, from one replica - a device, a tab, a retried
 /// request. Uniquely identifies an "add or increase" so a merge can tell
 /// whether a given add was ever observed by a given remove, which is the
 /// entire mechanism behind add-wins: a remove can only tombstone dots it
@@ -10,7 +10,7 @@ namespace Cart.Service.Domain;
 public readonly record struct CartDot(string ReplicaId, long Counter);
 
 /// <summary>
-/// Milestone 86: one SKU's state as an Add-Wins Observed-Remove Set
+/// One SKU's state as an Add-Wins Observed-Remove Set
 /// (Bieniusa et al.; the same shape Riak and Akka's ORSet use) composed
 /// with a PN-Counter for quantity - the CRDT this lab's Dynamo-paper-style
 /// cart problem calls for. Two properties fall out of the join

@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 22's compensation half, extended in Milestone 43 into the
+/// The choreographed comparison's compensation half, extended into the
 /// driver of a 4-step saga. One consumer subscribing to all four reply
 /// topics and dispatching by topic name, since only one reply is ever
 /// outstanding per order at a time.
@@ -106,9 +106,9 @@ public sealed class OrderSagaReplyConsumer(
 
         if (!reply.Reserved && reply.Backordered)
         {
-            // Milestone 74: wait, don't give up - this line stays
+            // Wait, don't give up - this line stays
             // unanswered (neither Reserved nor rejected) until the
-            // eventual backorder-release reply flips it. Milestone 78: the
+            // eventual backorder-release reply flips it. The
             // *order* moves to Backordered even if a sibling line already
             // reserved fine - that reservation is held, not released,
             // until every line has an answer.
@@ -131,7 +131,7 @@ public sealed class OrderSagaReplyConsumer(
 
         if (lines.Any(line => line.Reserved == false))
         {
-            // Milestone 78's compensation case: at least one line was
+            // The multi-line compensation case: at least one line was
             // rejected outright. Release every sibling line that DID
             // reserve successfully before cancelling - the whole order
             // fails together, so a partial reservation left behind would
@@ -171,6 +171,21 @@ public sealed class OrderSagaReplyConsumer(
             return;
         }
 
+        if (advanced.CancellationRequestedAt is not null)
+        {
+            // An operator or the shopper themselves
+            // cancelled this order (from Created or Backordered) while this
+            // very reservation was in flight - every line just finished
+            // reserving successfully, at the exact moment nothing needs
+            // them any more. Give them back instead of asking Payments for
+            // a decision nobody wants any more; a payment cancellation was
+            // already requested unconditionally by whatever cancelled the
+            // order (EfOrderStatusRepository.TryTransitionAsync), so
+            // there's nothing to do here for money, only for stock.
+            await CancelDuringSagaAsync(reply.OrderId, SagaStep.DecidePayment, "CancelledWhileReserving", cancellationToken);
+            return;
+        }
+
         SagaOrchestratorLog.Advanced(logger, reply.OrderId, SagaStep.DecidePayment, advanced.CorrelationId);
 
         var request = new PaymentDecisionRequested(
@@ -183,6 +198,36 @@ public sealed class OrderSagaReplyConsumer(
             advanced.PaymentMethod,
             advanced.ShippingPostalPrefix);
         await PublishNextStepAsync(_options.DecisionRequestedTopic, reply.OrderId.ToString("N"), request, reply.OrderId, cancellationToken);
+    }
+
+    /// <summary>
+    /// The shared half of both cancellation-mid-saga
+    /// branches below that release rather than commit - completes the saga
+    /// row from wherever it currently stands and releases every line that
+    /// is known, from this same row's own lines snapshot, to have actually
+    /// reserved. Mirrors HandleReservationRepliedAsync's existing
+    /// partial-rejection compensation rather than inventing
+    /// a new shape for "release everything and stop".
+    /// </summary>
+    private async Task CancelDuringSagaAsync(Guid orderId, string expectedStep, string outcome, CancellationToken cancellationToken)
+    {
+        var completed = await store.TryCompleteAsync(orderId, expectedStep, cancellationToken);
+        if (completed is null)
+        {
+            SagaOrchestratorLog.UnknownReply(logger, orderId);
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var line in completed.Lines.Where(line => line.Reserved == true))
+        {
+            var release = new InventoryReservationReleaseRequested(line.ReservationId, orderId, line.Sku, line.Quantity, completed.CorrelationId, now);
+            await PublishNextStepAsync(_options.ReleaseRequestedTopic, line.Sku, release, orderId, cancellationToken);
+        }
+
+        var latencyMs = (now - completed.RequestedAt).TotalMilliseconds;
+        SagaOrchestratorLog.SagaCompleted(logger, orderId, outcome, latencyMs, completed.CorrelationId);
+        await cacheInvalidator.InvalidateAsync(orderId, cancellationToken);
     }
 
     private async Task HandlePaymentDecisionRepliedAsync(string payload, CancellationToken cancellationToken)
@@ -258,6 +303,29 @@ public sealed class OrderSagaReplyConsumer(
             return;
         }
 
+        if (completed.CancellationRequestedAt is not null)
+        {
+            // Cancelled while this commit was in
+            // flight. Payment was already approved to reach this step (and
+            // its cancellation already requested, same as above) - what's
+            // left is whatever stock the commit actually drew down for
+            // real, which restocking gives back through the same command
+            // returns and the replenishment loop
+            // already use. Never confirm, never hold - the order is
+            // already Cancelled, and no line here was ever sold.
+            var now = DateTimeOffset.UtcNow;
+            foreach (var line in completed.Lines.Where(line => line.Committed == true))
+            {
+                var restock = new InventoryRestockRequested(Guid.NewGuid(), reply.OrderId, line.Sku, line.Quantity, completed.CorrelationId, now);
+                await PublishNextStepAsync(_options.RestockRequestedTopic, line.Sku, restock, reply.OrderId, cancellationToken);
+            }
+
+            var cancelledLatencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
+            SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, "CancelledWhileCommitting", cancelledLatencyMs, completed.CorrelationId);
+            await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
+            return;
+        }
+
         var allCommitted = completed.Lines.All(line => line.Committed == true);
         var outcome = allCommitted ? "Confirmed" : "ConfirmedButCommitFailed";
         var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
@@ -269,7 +337,7 @@ public sealed class OrderSagaReplyConsumer(
 
         if (!allCommitted)
         {
-            // Milestone 69: moves to FulfillmentHold - the customer is owed
+            // Moves to FulfillmentHold - the customer is owed
             // something, but at least one line's stock was never actually
             // deducted, so a human has to resolve it before this can be picked.
             await orderStatusStore.TryTransitionAsync(
@@ -311,8 +379,8 @@ public sealed class OrderSagaReplyConsumer(
         var lines = await store.RecordLineOutcomeAsync(reply.OrderId, reply.ReservationId, SagaLineOutcomeField.Released, reply.Released, cancellationToken);
         if (lines is null || lines.Count == 0)
         {
-            // Also reached for a release reply to a line that Milestone
-            // 78's partial-failure compensation already published and
+            // Also reached for a release reply to a line that the
+            // multi-line partial-failure compensation already published and
             // completed the order for (HandleReservationRepliedAsync) -
             // that path deletes the saga row immediately rather than
             // waiting at ReleaseInventory, so this is an expected, harmless no-op.
@@ -342,7 +410,7 @@ public sealed class OrderSagaReplyConsumer(
     }
 
     /// <summary>
-    /// Milestone 76: not a saga step - the saga row is already gone by the
+    /// Not a saga step - the saga row is already gone by the
     /// time an order ships, so there's nothing here to advance or
     /// complete. This is a standalone reconciliation for the one outcome
     /// that must never pass silently: a capture that was supposed to

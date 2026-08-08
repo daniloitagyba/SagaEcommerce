@@ -37,7 +37,7 @@ public sealed class InventoryReservationMessageProcessorTests : IAsyncLifetime
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
         await dbContext.Database.MigrateAsync();
         dbContext.InventoryItems.Add(InventoryItem.Create("SKU-TEST-001", 10, DateTimeOffset.UtcNow));
-        // Milestone 72 made the allocator (not just the aggregate row) the
+        // The allocator (not just the aggregate row) is the
         // thing that decides whether a reservation is fulfillable - a SKU
         // with no warehouse_stock rows at all is an empty candidate list,
         // which StockAllocator.Allocate always refuses. The aggregate row

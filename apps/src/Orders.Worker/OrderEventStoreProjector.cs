@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 23: appends to the append-only order_events store - a second,
+/// Appends to the append-only order_events store - a second,
 /// additive consumer group on the same topics the choreographed CQRS
 /// projector already reads. No inbox dedup here, a deliberate scope
 /// boundary: a redelivered message can append a duplicate event, which the

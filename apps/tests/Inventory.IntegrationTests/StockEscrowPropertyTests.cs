@@ -4,7 +4,7 @@ using Inventory.Service.Domain;
 namespace Inventory.IntegrationTests;
 
 /// <summary>
-/// Milestone 87: StockEscrow's core promise, proven rather than asserted -
+/// StockEscrow's core promise, proven rather than asserted -
 /// splitting one counter into N buckets must never let more out than the
 /// original total held, regardless of how requests are routed or how many
 /// of them run.

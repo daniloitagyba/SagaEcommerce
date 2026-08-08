@@ -1,7 +1,7 @@
 namespace Inventory.Service.Domain;
 
 /// <summary>
-/// Milestone 74: an order waiting for stock that was not there when it
+/// An order waiting for stock that was not there when it
 /// asked.
 ///
 /// Keyed by <see cref="ReservationId"/> - the same id the saga already

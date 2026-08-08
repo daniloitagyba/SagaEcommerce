@@ -4,7 +4,7 @@ using System.Text.Json;
 using BuildingBlocks;
 using Confluent.Kafka;
 
-// Milestone 62: the five dead-letter topics have been write-only since they
+// The five dead-letter topics have been write-only since they
 // were introduced - publishers exist, nothing consumes them. Generic and
 // standalone, not tied to any one service, since every publisher writes
 // the same DeadLetterEnvelope JSON shape and header set.

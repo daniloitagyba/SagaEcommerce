@@ -5,7 +5,7 @@ using Avro.Generic;
 namespace BuildingBlocks;
 
 /// <summary>
-/// The Avro wire contract for OrderCreated (Milestone 19), and the one
+/// The Avro wire contract for OrderCreated, and the one
 /// place that converts it to/from the C# record, keeping every consumer in
 /// agreement about the mapping. Guid/DateTimeOffset/decimal fields are
 /// encoded as strings rather than Avro's logical types, to keep

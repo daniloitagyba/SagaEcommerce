@@ -13,6 +13,8 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
 
     public DbSet<ReservationAllocation> ReservationAllocations => Set<ReservationAllocation>();
 
+    public DbSet<InventoryReservationLedgerEntry> ReservationLedgerEntries => Set<InventoryReservationLedgerEntry>();
+
     public DbSet<Backorder> Backorders => Set<Backorder>();
 
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
@@ -23,6 +25,7 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
     {
         ConfigureInventoryItem(modelBuilder);
         ConfigureWarehouseStock(modelBuilder);
+        ConfigureReservationLedgerEntry(modelBuilder);
         ConfigureBackorder(modelBuilder);
         ConfigurePurchaseOrder(modelBuilder);
         ConfigureOutbox(modelBuilder);
@@ -67,6 +70,24 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
         // Commit and release look the allocation up by reservation - without
         // this they would scan, on the saga's hot path.
         allocation.HasIndex(entity => entity.ReservationId).HasDatabaseName("ix_reservation_allocations_reservation");
+    }
+
+    private static void ConfigureReservationLedgerEntry(ModelBuilder modelBuilder)
+    {
+        var entry = modelBuilder.Entity<InventoryReservationLedgerEntry>();
+
+        entry.ToTable("inventory_reservation_ledger");
+        entry.HasKey(item => item.Id);
+        entry.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
+        entry.Property(item => item.ReservationId).HasColumnName("reservation_id").IsRequired();
+        entry.Property(item => item.OrderId).HasColumnName("order_id").IsRequired();
+        entry.Property(item => item.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();
+        entry.Property(item => item.Quantity).HasColumnName("quantity").IsRequired();
+        entry.Property(item => item.CommittedAt).HasColumnName("committed_at").IsRequired();
+        // ResolveLedgerOnRestockAsync's whole query shape: every still-open
+        // entry for an (order, sku) pair, oldest first.
+        entry.HasIndex(item => new { item.OrderId, item.Sku })
+            .HasDatabaseName("ix_inventory_reservation_ledger_order_sku");
     }
 
     private static void ConfigureBackorder(ModelBuilder modelBuilder)

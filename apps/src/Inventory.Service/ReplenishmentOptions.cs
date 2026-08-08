@@ -1,11 +1,11 @@
 namespace Inventory.Service;
 
 /// <summary>
-/// Milestone 89: closes the loop Milestone 73 left open -
-/// WarehouseReplenishmentNeeded finally has a consumer. LeadTimeSeconds is
-/// this lab's usual compression of a real supplier's lead time (days) into
-/// something a lab session can actually watch happen, the same trade
-/// Milestone 73 already made for a boleto's due date.
+/// Closes the loop left open when WarehouseReplenishmentNeeded was first
+/// emitted - it finally has a consumer. LeadTimeSeconds is this lab's usual
+/// compression of a real supplier's lead time (days) into something a lab
+/// session can actually watch happen, the same trade already made for a
+/// boleto's due date.
 /// </summary>
 public sealed class ReplenishmentOptions
 {

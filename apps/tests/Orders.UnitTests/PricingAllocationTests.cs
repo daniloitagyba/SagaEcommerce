@@ -4,7 +4,7 @@ using Orders.Domain.Pricing;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 82: AllocateTax in isolation, with hand-picked per-line
+/// AllocateTax in isolation, with hand-picked per-line
 /// discounts rather than ones a real promotion would produce - the pricing
 /// engine's own AllocateDiscounts always spreads a discount proportional to
 /// raw subtotal (see PricingEngineTests), which makes discounted-value and

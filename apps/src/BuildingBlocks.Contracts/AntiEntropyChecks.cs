@@ -1,14 +1,14 @@
 namespace BuildingBlocks;
 
 /// <summary>
-/// Milestone 88: the actual "is this a divergence" decisions the
+/// The actual "is this a divergence" decisions the
 /// anti-entropy sweep makes, pulled out as pure functions of the two
 /// facts each check compares - so they're testable without a database, a
 /// Kafka broker, or another service's HTTP endpoint, the same reasoning
 /// that already keeps StockAllocator and ReturnRefundCalculator pure.
 ///
 /// Each check answers a question a bug in this codebase has actually
-/// asked wrongly before (Milestone 81's audit): does this order's status
+/// asked wrongly before: does this order's status
 /// agree with what Payments thinks happened to its money, and does every
 /// backorder still belong to an order that is actually waiting.
 /// </summary>
@@ -27,9 +27,25 @@ public static class AntiEntropyChecks
     /// <summary>
     /// A backorder row only makes sense while its order is still
     /// Backordered - waiting on stock. Any other order status (most
-    /// concretely, Cancelled - Milestone 81's own bug class) with a
+    /// concretely, Cancelled - the audit's own bug class) with a
     /// backorder still on file means the wait was never actually cleared.
     /// </summary>
     public static bool BackorderBelongsToAnOrderNoLongerWaiting(string orderStatus) =>
         !string.Equals(orderStatus, OrderStatuses.Backordered, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The third check the audit above
+    /// wanted from the start and could not build until
+    /// Inventory.Service had a ledger surviving settlement to ask it of.
+    /// A ledger entry only makes sense while its order is still one the
+    /// commit could legitimately belong to - Cancelled is the one status
+    /// that specifically means the stock should already have been given
+    /// back (cancellation compensation), so a still-open
+    /// entry against a Cancelled order is exactly the leak this check
+    /// exists to catch. A missing order entirely counts as the same
+    /// divergence, the same reasoning BackorderBelongsToAnOrderNoLongerWaiting
+    /// already applies to a backorder with no matching order.
+    /// </summary>
+    public static bool CommittedInventoryBelongsToACancelledOrder(string? orderStatus) =>
+        orderStatus is null or OrderStatuses.Cancelled;
 }

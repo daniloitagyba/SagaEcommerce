@@ -1,7 +1,7 @@
 namespace Orders.Application;
 
 /// <summary>
-/// Milestone 83: who is calling a use case, carried in from the transport
+/// Who is calling a use case, carried in from the transport
 /// layer rather than read from ASP.NET Core types directly - the
 /// Application layer does not (and per the architecture fitness functions,
 /// must not) depend on HttpContext or JWT claims. Orders.Api's

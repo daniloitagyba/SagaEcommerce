@@ -1,4 +1,5 @@
 using BuildingBlocks;
+using BuildingBlocks.WebAuthentication;
 using Confluent.Kafka;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,7 @@ using Payments.Service.Risk;
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
-// Milestone 69: fail loudly at startup instead of silently at runtime. A
+// Fail loudly at startup instead of silently at runtime. A
 // missing DI registration used to surface only when first resolved - if
 // that's the outbox dispatcher, it's a background loop logging an
 // exception every poll while the service reports healthy and delivers
@@ -54,7 +55,7 @@ builder.Services.AddOptions<OutboxOptions>()
     .Validate(options => options.PollIntervalMilliseconds >= 100, "Outbox poll interval must be at least 100 milliseconds.")
     .Validate(options => options.MaximumRetryDelaySeconds > 0, "Outbox maximum retry delay must be positive.")
     .ValidateOnStart();
-// Milestone 66: replaces PaymentDecisionOptions' single amount threshold
+// Replaces PaymentDecisionOptions' single amount threshold
 // with a scored risk policy - see PaymentRiskEvaluator.
 builder.Services.AddOptions<PaymentRiskOptions>()
     .Bind(builder.Configuration.GetSection(PaymentRiskOptions.SectionName))
@@ -139,7 +140,7 @@ builder.Services.AddSingleton<PaymentDecisionRequestProcessor>();
 builder.Services.AddScoped<IOutboxEventDispatcher, PaymentOutboxEventDispatcher>();
 builder.Services.AddHostedService<OutboxPublisher<PaymentsDbContext>>();
 
-// Milestone 65: which saga(s) this instance answers to - see SagaMode's
+// Which saga(s) this instance answers to - see SagaMode's
 // own comment. Both is for side-by-side comparison; Choreography is the default.
 var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Choreography);
 
@@ -175,7 +176,7 @@ if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
     });
 }
 
-// Milestone 68: capture/void handling and the expiry sweeper run
+// Capture/void handling and the expiry sweeper run
 // regardless of Saga:Mode - they follow the order's lifecycle, not the
 // saga style that created it.
 builder.Services.AddSingleton<IHostedService>(serviceProvider =>
@@ -192,6 +193,16 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 });
 builder.Services.AddHostedService<PaymentAuthorizationSweeper>();
 
+// The same JWKS-backed wiring Orders.Api/Catalog/
+// Inventory/Cart already carry, now shared via
+// BuildingBlocks.WebAuthentication instead of copied a fifth time.
+// payments:read is granted to orders-api-clients' service account, the
+// same trusted-backend-tooling client Orders.Worker's anti-entropy sweeper
+// authenticates as - see KeycloakTokenProvider in Orders.Worker.
+builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "payments-service");
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("payments:read", policy => policy.RequireRole("payments:read"));
+
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Payments"])
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"]);
@@ -207,6 +218,8 @@ if (args.Contains("--migrate", StringComparer.Ordinal))
 }
 
 app.UseExceptionHandler();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {
@@ -218,14 +231,14 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 });
 app.MapGet("/", () => Results.Ok(new { service = "Payments.Service", instanceId }));
 
-// Milestone 88: the one read this service otherwise has no reason to
+// The one read this service otherwise has no reason to
 // serve - Payments is Kafka-only everywhere else, but Orders.Worker's
 // anti-entropy sweeper needs to ask "what does Payments think happened to
 // this order" without a second copy of payment state living in Orders'
-// own database. Unauthenticated, unlike every other cross-service surface
-// this lab protects (Milestones 83-84) - a deliberate, named scope gap:
-// this is meant for one internal caller, and this pass did not extend
-// Milestone 26's JWT wiring to Payments.Service to close it properly.
+// own database. payments:read-gated, the same
+// JWKS-backed protection already given to every other
+// cross-service surface - closed, not just named, now that Orders.Worker
+// has a service identity (KeycloakTokenProvider) to present.
 app.MapGet("/payments/by-order/{orderId:guid}", async (Guid orderId, PaymentsDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var payment = await dbContext.Payments
@@ -237,6 +250,6 @@ app.MapGet("/payments/by-order/{orderId:guid}", async (Guid orderId, PaymentsDbC
     return payment is null
         ? Results.NotFound()
         : Results.Ok(new { payment.OrderId, payment.State, payment.Amount, payment.Currency, payment.DecidedAt });
-}).WithTags("Payments");
+}).WithTags("Payments").RequireAuthorization("payments:read");
 
 await app.RunAsync();

@@ -13,14 +13,14 @@ using Testcontainers.PostgreSql;
 namespace Inventory.IntegrationTests;
 
 /// <summary>
-/// Milestone 89: end to end at the persistence layer -
+/// End to end at the persistence layer -
 /// ReplenishmentRequestProcessor turning a WarehouseReplenishmentNeeded
 /// signal into a Requested purchase order, and
 /// PurchaseOrderReceivingSweeper turning a due one into an actual restock
 /// command on the outbox. What happens after the outbox row is dispatched
 /// (the produce to inventory.restock-requested.v1, and
 /// InventoryReservationMessageProcessor.ProcessRestockAsync picking it back
-/// up) is exactly Milestone 74's already-tested restock/backorder-release
+/// up) is exactly the already-tested restock/backorder-release
 /// path - not re-tested here.
 /// </summary>
 public sealed class ReplenishmentTests : IAsyncLifetime

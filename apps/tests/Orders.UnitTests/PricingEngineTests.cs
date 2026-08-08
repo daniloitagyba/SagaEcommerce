@@ -6,7 +6,7 @@ using Orders.Domain.Pricing;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 66: worked examples for the promotion rules. The invariants
+/// Worked examples for the promotion rules. The invariants
 /// that must hold for <em>every</em> input live in
 /// PricingEnginePropertyTests - these pin the specific numbers a human
 /// would check on a receipt.
@@ -21,7 +21,7 @@ public class PricingEngineTests
     private static PricingLine Line(string sku, string category, int quantity, decimal unitPrice) =>
         new(sku, $"Product {sku}", category, quantity, new Money(unitPrice, Brl));
 
-    // Milestone 67: the engine receives a coupon already resolved and eligible (see CouponEligibility), so tests supply the resolved fact, not a code.
+    // The engine receives a coupon already resolved and eligible (see CouponEligibility), so tests supply the resolved fact, not a code.
     private static PricingRequest Request(decimal? couponPercentage, params PricingLine[] lines) =>
         new("customer-1", Brl, lines,
             couponPercentage is { } percentage
@@ -55,7 +55,7 @@ public class PricingEngineTests
     [Fact]
     public void PricesWithoutACouponWhenNoneWasResolved()
     {
-        // Milestone 67 moved coupon validity into CouponEligibility, which runs before pricing - see CouponEligibilityTests for the rejection cases.
+        // Coupon validity moved into CouponEligibility, which runs before pricing - see CouponEligibilityTests for the rejection cases.
         var breakdown = BuildEngine().Price(Request(null, Line("SKU-BOOK-001", "books", 1, 100m)));
 
         Assert.Empty(breakdown.Discounts);
@@ -154,7 +154,7 @@ public class PricingEngineTests
             breakdown.LineDiscounts.Aggregate(new Money(0m, Brl), (running, share) => running + share));
     }
 
-    // Milestone 66's property tests found this via 10,000 random orders
+    // The property tests found this via 10,000 random orders
     // (CsCheck seed 53LlaLK3rYz2): NRules refuses to insert a fact that
     // already compares equal to one in working memory. Before PricingLine
     // and AppliedDiscount switched to identity equality, either test below
@@ -194,7 +194,7 @@ public class PricingEngineTests
             breakdown.Discounts.Aggregate(new Money(0m, Brl), (running, d) => running + d.Amount));
     }
 
-    // Milestone 82: LineTaxes - the per-line share of TaxTotal a return
+    // LineTaxes - the per-line share of TaxTotal a return
     // refunds alongside LineDiscounts' goods share.
 
     [Fact]
@@ -217,12 +217,12 @@ public class PricingEngineTests
     [Fact]
     public void ADiscountFallsProportionallyAcrossLinesByRawSubtotalSoEqualSizedLinesSplitTaxEvenlyEvenUnderATargetedPromotion()
     {
-        // AllocateDiscounts (Milestone 66) spreads the order-level discount
+        // AllocateDiscounts spreads the order-level discount
         // total by each line's raw subtotal, regardless of which rule
         // actually granted it - a category promotion that only matched the
         // electronics line still shows up as an even split here, because
         // both lines carry the same subtotal. This is the existing
-        // discount-allocation behaviour, not new to this milestone; the
+        // discount-allocation behaviour, not new here; the
         // test exists so a change to that allocation is forced to notice
         // it changes tax refunds on returns too, not just discount receipts.
         var options = new PricingOptions

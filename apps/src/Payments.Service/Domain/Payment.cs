@@ -30,7 +30,7 @@ public sealed class Payment
 
     public string CorrelationId { get; private set; } = string.Empty;
 
-    /// <summary>Milestone 68: Card or Pix - see PaymentMethods for why this changes the flow.</summary>
+    /// <summary>Card or Pix - see PaymentMethods for why this changes the flow.</summary>
     public string Method { get; private set; } = string.Empty;
 
     /// <summary>
@@ -167,7 +167,7 @@ public sealed class Payment
     }
 
     /// <summary>
-    /// Milestone 81: the order was cancelled - make sure this payment owes
+    /// The order was cancelled - make sure this payment owes
     /// nothing, whichever of the two genuinely different actions that
     /// takes. A hold (<see cref="PaymentStates.Authorized"/> or
     /// <see cref="PaymentStates.AwaitingPayment"/>) is voided, same as

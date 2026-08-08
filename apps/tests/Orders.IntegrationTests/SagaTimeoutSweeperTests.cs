@@ -16,7 +16,7 @@ using Testcontainers.Redpanda;
 namespace Orders.IntegrationTests;
 
 /// <summary>
-/// Milestone 77: proves each of SagaTimeoutSweeper.ResolveAsync's four
+/// Proves each of SagaTimeoutSweeper.ResolveAsync's four
 /// step-dependent branches does what the class comment claims - a release
 /// published exactly for the two steps where a reservation is certain to
 /// exist and uncommitted, FulfillmentHold (not a guess) when the commit

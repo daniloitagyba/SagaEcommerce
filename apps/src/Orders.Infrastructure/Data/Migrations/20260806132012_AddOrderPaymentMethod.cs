@@ -27,7 +27,7 @@ namespace Orders.Infrastructure.Data.Migrations
                 defaultValue: "");
 
             // Same reasoning as the payments backfill: an order that predates
-            // Milestone 68 was charged outright, so Pix is the honest reading
+            // this schema was charged outright, so Pix is the honest reading
             // - and it keeps OrderStatusStore from asking Payments to capture
             // an authorization that never existed for historical orders.
             migrationBuilder.Sql("UPDATE orders SET payment_method = 'Pix' WHERE payment_method = '';");

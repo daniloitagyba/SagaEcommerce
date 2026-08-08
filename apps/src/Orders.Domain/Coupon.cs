@@ -1,7 +1,7 @@
 namespace Orders.Domain;
 
 /// <summary>
-/// Milestone 67: a coupon with a life, replacing Milestone 66's
+/// A coupon with a life, replacing the earlier
 /// configuration dictionary that had no notion of a coupon being
 /// <em>used</em> - a leaked code could be redeemed indefinitely by anyone.
 /// Enforcing MaxTotalRedemptions under concurrent checkout is the same
@@ -28,7 +28,7 @@ public sealed class Coupon
     /// <summary>Orders below this subtotal cannot use the coupon at all.</summary>
     public decimal MinimumOrderAmount { get; private set; }
 
-    /// <summary>Null means unlimited - the Milestone 66 behaviour, now opt-in rather than the only option.</summary>
+    /// <summary>Null means unlimited - the original behaviour, now opt-in rather than the only option.</summary>
     public int? MaxTotalRedemptions { get; private set; }
 
     public int? MaxPerCustomer { get; private set; }

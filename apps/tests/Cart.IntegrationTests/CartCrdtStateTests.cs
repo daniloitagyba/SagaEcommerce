@@ -3,7 +3,7 @@ using Cart.Service.Domain;
 namespace Cart.IntegrationTests;
 
 /// <summary>
-/// Milestone 86: CartCrdtState composes CartItemCrdt key-wise across a
+/// CartCrdtState composes CartItemCrdt key-wise across a
 /// whole cart - these pin the map-level behaviour specifically (which SKU
 /// a merge affects, that unrelated SKUs are untouched, that ToLineItems
 /// only ever surfaces what's actually live) on top of the per-item CRDT

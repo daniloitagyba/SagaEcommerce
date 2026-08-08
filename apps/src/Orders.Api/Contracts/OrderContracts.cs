@@ -1,12 +1,12 @@
 namespace Orders.Api.Contracts;
 
-/// <summary>Milestone 66: a requested line. Note there is no price field - see CreateOrderRequest.</summary>
+/// <summary>A requested line. Note there is no price field - see CreateOrderRequest.</summary>
 public sealed record CreateOrderItemRequest(string? Sku, int Quantity);
 
 /// <summary>
 /// Accepts two shapes for the duration of an expand/contract migration:
 /// <c>{ customerId, items, couponCode? }</c>, the real one, prices from the
-/// catalog server-side; and the Milestone 7 <c>{ customerId, amount,
+/// catalog server-side; and the original <c>{ customerId, amount,
 /// currency }</c> shape, still posted by k6, smoke tests, Pact and the
 /// README quickstart. Items wins if both are present.
 /// </summary>
@@ -16,11 +16,11 @@ public sealed record CreateOrderRequest(
     string? Currency,
     IReadOnlyList<CreateOrderItemRequest>? Items = null,
     string? CouponCode = null,
-    /// <summary>Milestone 68: "Card" (authorize now, capture on shipment) or "Pix" (charged outright). Defaults to Pix.</summary>
+    /// <summary>"Card" (authorize now, capture on shipment) or "Pix" (charged outright). Defaults to Pix.</summary>
     string? PaymentMethod = null,
-    /// <summary>Milestone 71: destination. Decides shipping zone and tax jurisdiction; omitted falls back to flat shipping.</summary>
+    /// <summary>Destination. Decides shipping zone and tax jurisdiction; omitted falls back to flat shipping.</summary>
     ShippingAddressRequest? ShippingAddress = null,
-    /// <summary>Milestone 85: what the caller's cart last saw the subtotal as. Omitted skips the check; present and disagreeing with the live catalog returns 409, not a silent recharge.</summary>
+    /// <summary>What the caller's cart last saw the subtotal as. Omitted skips the check; present and disagreeing with the live catalog returns 409, not a silent recharge.</summary>
     decimal? ExpectedSubtotal = null);
 
 public sealed record ShippingAddressRequest(string? Line1, string? City, string? Region, string? PostalCode);
@@ -75,7 +75,7 @@ public sealed record OrderSummaryResponse(
     DateTimeOffset ProjectedAt);
 
 /// <summary>
-/// Milestone 23: an order's state reconstructed by folding the event store,
+/// An order's state reconstructed by folding the event store,
 /// alongside the raw events that produced it - the audit trail.
 /// </summary>
 public sealed record OrderHistoryResponse(

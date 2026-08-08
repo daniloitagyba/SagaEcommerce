@@ -1,8 +1,8 @@
 namespace Orders.Domain;
 
 /// <summary>
-/// Milestone 66: what the customer actually bought - before this, Order was
-/// amount-only (Milestone 7) and the saga faked a SKU by hashing the order
+/// What the customer actually bought - before this, Order was
+/// amount-only and the saga faked a SKU by hashing the order
 /// id, so "reserve inventory" reserved a product nobody ordered.
 ///
 /// UnitPrice is snapshotted at checkout from Catalog's current price, not
@@ -42,7 +42,7 @@ public sealed class OrderLine
     public decimal LineTotal { get; private set; }
 
     /// <summary>
-    /// Milestone 82: this line's prorated share of the order's total tax,
+    /// This line's prorated share of the order's total tax,
     /// weighted by its discounted value - stored at checkout for the same
     /// reason LineDiscount is: a return refunds what this line actually
     /// paid in tax, not a rate re-derived from config that may have
@@ -50,7 +50,7 @@ public sealed class OrderLine
     /// </summary>
     public decimal LineTax { get; private set; }
 
-    /// <summary>Milestone 70: how many of this line's units have come back - tracked per line so "may this customer return two more?" needs no replay.</summary>
+    /// <summary>How many of this line's units have come back - tracked per line so "may this customer return two more?" needs no replay.</summary>
     public int ReturnedQuantity { get; private set; }
 
     public int ReturnableQuantity => Quantity - ReturnedQuantity;

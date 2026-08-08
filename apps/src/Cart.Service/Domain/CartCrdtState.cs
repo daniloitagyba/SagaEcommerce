@@ -1,7 +1,7 @@
 namespace Cart.Service.Domain;
 
 /// <summary>
-/// Milestone 86: everything about a SKU that isn't its quantity or its
+/// Everything about a SKU that isn't its quantity or its
 /// presence - snapshotted once, at first add, and never merged, since
 /// there is no meaningful "join" of two product names. First writer wins;
 /// re-adding after a full removal re-snapshots.
@@ -9,7 +9,7 @@ namespace Cart.Service.Domain;
 public sealed record CartItemMetadata(string ProductName, decimal UnitPrice, string Currency, DateTimeOffset AddedAt);
 
 /// <summary>
-/// Milestone 86: a whole cart as a map from Sku to its own
+/// A whole cart as a map from Sku to its own
 /// <see cref="CartItemCrdt"/> - the CRDT composition rule for maps
 /// (Shapiro et al.'s composable/delta-CRDT framework; also how Riak's Map
 /// and Akka's ORMap work) is simply "merge key-wise, union the keyspace" -

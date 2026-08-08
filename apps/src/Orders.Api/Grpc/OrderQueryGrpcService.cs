@@ -8,7 +8,7 @@ using Orders.Application.UseCases.GetOrder;
 namespace Orders.Api.Grpc;
 
 /// <summary>
-/// Milestone 30: a gRPC transport for the same read GetByIdAsync (REST)
+/// A gRPC transport for the same read GetByIdAsync (REST)
 /// already serves - same handler, same cache, same database, no
 /// duplicated business logic. Exists to demonstrate a real, concrete
 /// consequence of HTTP/2 for the mesh: Linkerd load-balances gRPC calls
@@ -29,7 +29,7 @@ public sealed class OrderQueryGrpcService(GetOrderHandler handler, IConfiguratio
         var result = await handler.HandleAsync(id, context.CancellationToken);
         var httpContext = context.GetHttpContext();
 
-        // Milestone 83: same 404-hides-ownership reasoning as the REST
+        // Same 404-hides-ownership reasoning as the REST
         // GetByIdAsync this service mirrors - a gRPC transport for the same
         // read is still the same read, and inherits the same gap otherwise.
         if (result.Order is null || !httpContext.MayAccess(result.Order.CustomerId))

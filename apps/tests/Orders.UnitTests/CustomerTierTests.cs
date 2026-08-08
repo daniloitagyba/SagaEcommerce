@@ -7,7 +7,7 @@ using Orders.Domain.Pricing;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 71: loyalty standing, and the geography that shipping and tax
+/// Loyalty standing, and the geography that shipping and tax
 /// actually depend on.
 /// </summary>
 public class CustomerTierTests

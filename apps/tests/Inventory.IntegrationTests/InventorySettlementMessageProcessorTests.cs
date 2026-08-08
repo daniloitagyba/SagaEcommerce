@@ -39,7 +39,7 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
         var item = InventoryItem.Create("SKU-TEST-001", 10, DateTimeOffset.UtcNow);
         item.TryReserve(4, DateTimeOffset.UtcNow);
         dbContext.InventoryItems.Add(item);
-        // Needed since Milestone 72 refuses reservation outright with no
+        // Needed since the allocator refuses reservation outright with no
         // warehouse network - the 6 here mirrors the item's own Available
         // after the 4 already reserved, keeping aggregate and network in agreement.
         dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-TEST-001", "WH-TEST", 6, reorderPoint: 0, DateTimeOffset.UtcNow));

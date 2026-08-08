@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Storefront.Service;
 
 /// <summary>
-/// Milestone 85: reads a claim out of a JWT's payload segment without
+/// Reads a claim out of a JWT's payload segment without
 /// validating the token - Storefront never authorizes anything on the
 /// strength of this; Orders.Api and Cart.Service do that themselves,
 /// fully, against Keycloak's JWKS, on the same forwarded token. This exists

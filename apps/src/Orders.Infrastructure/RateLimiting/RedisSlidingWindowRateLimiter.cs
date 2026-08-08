@@ -9,9 +9,9 @@ namespace Orders.Infrastructure.RateLimiting;
 public sealed record RateLimitDecision(bool Allowed, int Count, int Limit);
 
 /// <summary>
-/// Milestone 38: a cluster-wide sliding-window-log rate limiter, contrasted
-/// with Milestone 11's per-pod in-memory token bucket - with 3 replicas,
-/// M11's limiter effectively enforces (replica count * per-pod limit), not
+/// A cluster-wide sliding-window-log rate limiter, contrasted
+/// with the per-pod in-memory token bucket - with 3 replicas,
+/// that limiter effectively enforces (replica count * per-pod limit), not
 /// the configured number. This shares state in Redis (a sorted set per key,
 /// member = per-request GUID, score = timestamp) so the limit means what
 /// it says. Sliding-window-log, not fixed-window, to avoid the up-to-2x

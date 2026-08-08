@@ -3,7 +3,7 @@ using Catalog.Service.Domain;
 namespace Catalog.Service.Data;
 
 /// <summary>
-/// Demo data for the storefront (Milestone 45) - realistic-enough products
+/// Demo data for the storefront - realistic-enough products
 /// across categories with genuinely different attribute shapes, the whole
 /// point of this being a document store rather than a relational table.
 /// </summary>

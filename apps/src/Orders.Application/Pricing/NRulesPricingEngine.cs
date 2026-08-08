@@ -7,7 +7,7 @@ using Orders.Domain.Pricing;
 namespace Orders.Application.Pricing;
 
 /// <summary>
-/// Milestone 66: prices an order by running the promotion rules, then
+/// Prices an order by running the promotion rules, then
 /// assembling the result deterministically. Promotions live in
 /// PromotionRules.cs as declarative rules - independent, freely-combining,
 /// which is what a rules engine is good at. Shipping and tax are fixed
@@ -99,7 +99,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
             lineTaxes);
     }
 
-    /// <summary>Milestone 71: shipping follows the destination, falling back to the flat rate when the amount-only checkout shape supplies no address.</summary>
+    /// <summary>Shipping follows the destination, falling back to the flat rate when the amount-only checkout shape supplies no address.</summary>
     private decimal ResolveShipping(PricingRequest request)
     {
         if (request.Destination is not { } destination || destination.PostalPrefix.Length == 0)

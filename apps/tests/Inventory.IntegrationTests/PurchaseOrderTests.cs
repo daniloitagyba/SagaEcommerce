@@ -2,7 +2,7 @@ using Inventory.Service.Domain;
 
 namespace Inventory.IntegrationTests;
 
-/// <summary>Milestone 89: PurchaseOrder's own state machine, pure and needing no database.</summary>
+/// <summary>PurchaseOrder's own state machine, pure and needing no database.</summary>
 public class PurchaseOrderTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 8, 12, 0, 0, TimeSpan.Zero);

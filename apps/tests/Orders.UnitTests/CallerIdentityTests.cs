@@ -3,7 +3,7 @@ using Orders.Application;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 83: the ownership check every ownership-sensitive endpoint and
+/// The ownership check every ownership-sensitive endpoint and
 /// handler shares - MayAccess is the one place this logic is allowed to
 /// exist, so every caller of it inherits the same rules automatically.
 /// </summary>

@@ -29,7 +29,7 @@ public sealed class RedisFencedWriteTests : IAsyncLifetime
     /// Reproduces the hazard fencing tokens exist for: holder A stalls past
     /// its lock timeout, B acquires the lock and writes first. Without a
     /// fencing token, A resuming would silently clobber B's newer value -
-    /// exactly what happened before Milestone 48. A's write must be rejected.
+    /// exactly what happened before fencing tokens existed. A's write must be rejected.
     /// </summary>
     [Fact]
     public async Task StaleHolderWriteIsRejectedAfterNewerHolderAlreadyWrote()

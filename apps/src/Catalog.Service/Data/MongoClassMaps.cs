@@ -6,7 +6,7 @@ using MongoDB.Bson.Serialization.Serializers;
 
 namespace Catalog.Service.Data;
 
-// Milestone 61: keeps Catalog.Service.Domain free of any MongoDB.Bson
+// Keeps Catalog.Service.Domain free of any MongoDB.Bson
 // dependency - the wire representation (Id as an ObjectId) is a Data-layer
 // concern, not something the domain model should know about. Must run once,
 // before the first IMongoCollection<Product> is used.

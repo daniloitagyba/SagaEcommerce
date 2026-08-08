@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 namespace Inventory.Service;
 
 /// <summary>
-/// Milestone 89: the consumer WarehouseReplenishmentNeeded never had.
+/// The consumer WarehouseReplenishmentNeeded never had.
 /// Records a purchase order the moment a warehouse crosses its reorder
 /// point; PurchaseOrderReceivingSweeper is the other half, turning it into
 /// an actual restock once its lead time elapses.

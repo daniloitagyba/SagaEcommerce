@@ -4,7 +4,7 @@ using Orders.Domain;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 67: the coupon rules Milestone 66 didn't have - a coupon used
+/// The coupon rules a bare percentage mapping didn't have - a coupon used
 /// to be a config entry mapping a code to a percentage, so it could never
 /// expire, run out, or be restricted. Evaluation is a pure function, so
 /// the whole rule set is testable without a database, the same discipline
@@ -43,7 +43,7 @@ public class CouponEligibilityTests
     [Fact]
     public void AnUnknownCodeIsRejectedRatherThanSilentlyIgnored()
     {
-        // Milestone 66 dropped unknown codes silently, defensible when a typo was the only way to produce one - not any more.
+        // Unknown codes used to be dropped silently, defensible when a typo was the only way to produce one - not any more.
         Assert.Equal(
             CouponRejectionReason.NotFound,
             CouponEligibility.Evaluate(null, subtotal: 100m, customerRedemptionCount: 0, Now));

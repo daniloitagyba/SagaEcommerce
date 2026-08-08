@@ -57,7 +57,7 @@ public sealed class InventoryItem
     }
 
     /// <summary>
-    /// Milestone 70: puts returned units back on the shelf. Distinct from
+    /// Puts returned units back on the shelf. Distinct from
     /// TryRelease, which hands back stock only ever <em>held</em> - a
     /// return means the sale happened and stock already left inventory, so
     /// there is no ReservedQuantity to draw down. A pure increment; cannot fail.

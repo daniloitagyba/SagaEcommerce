@@ -82,7 +82,7 @@ public sealed record AppliedCharge(string Code, string Description, Money Amount
 /// The priced result. GrandTotal is computed here, never supplied, and the
 /// per-line discount allocation is guaranteed to sum to exactly
 /// DiscountTotal - see AllocateDiscounts. LineTaxes is the same guarantee
-/// for TaxTotal (Milestone 82) - stored per line at checkout time, same
+/// for TaxTotal - stored per line at checkout time, same
 /// reasoning as LineDiscounts, so a later return can refund a line's tax
 /// share without re-deriving it from a rate that may have changed since.
 /// </summary>
@@ -134,7 +134,7 @@ public static class PricingAllocation
     }
 
     /// <summary>
-    /// Milestone 82: spreads the order's tax across lines weighted by each
+    /// Spreads the order's tax across lines weighted by each
     /// line's <em>discounted</em> value, not its raw subtotal - tax itself
     /// is computed on the discounted subtotal (see NRulesPricingEngine), so
     /// a heavily-discounted line should carry proportionally less of it.

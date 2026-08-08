@@ -113,7 +113,7 @@ public sealed class CartStore(
     }
 
     /// <summary>
-    /// Milestone 85: a monotonically increasing counter, bumped on every
+    /// A monotonically increasing counter, bumped on every
     /// mutation - the BFF's checkout uses it to build a deterministic
     /// Idempotency-Key ("this exact cart state, checked out once") without
     /// needing a client-generated one, and to notice when the cart changed
@@ -132,7 +132,7 @@ public sealed class CartStore(
     }
 
     /// <summary>
-    /// Milestone 86: reconciles operations a client tracked while offline
+    /// Reconciles operations a client tracked while offline
     /// (a different tab, a device that lost connectivity) against whatever
     /// is currently stored, via CartCrdtState.Merge - see that type for the
     /// no-resurrection and add-wins properties this buys over the plain

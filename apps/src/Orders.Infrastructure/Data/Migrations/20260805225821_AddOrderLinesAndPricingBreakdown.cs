@@ -90,12 +90,12 @@ namespace Orders.Infrastructure.Data.Migrations
                 table: "order_lines",
                 column: "sku");
 
-            // Backfill: an order that predates Milestone 66 has no lines and
+            // Backfill: an order that predates this schema has no lines and
             // no promotions, so its subtotal is simply what was charged.
             // Without this, every existing row would report subtotal = 0
             // alongside a non-zero amount - a breakdown that contradicts its
             // own total, and one that Order.CreateWithLines could never
-            // produce. Amount lives in amount_cents since Milestone 20's
+            // produce. Amount lives in amount_cents since the earlier
             // column cutover, hence the division rather than a plain copy.
             migrationBuilder.Sql("""
                 UPDATE orders

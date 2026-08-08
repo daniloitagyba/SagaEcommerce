@@ -54,7 +54,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         order.HasKey(item => item.Id);
         order.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
         order.Property(item => item.CustomerId).HasColumnName("customer_id").HasMaxLength(100).IsRequired();
-        // Milestone 20, cutover phase: Amount now reads/writes amount_cents
+        // Cutover phase: Amount now reads/writes amount_cents
         // directly via a value converter - the expand+dual-write phase
         // backfilled every row, so the old `amount` column (still present,
         // no longer touched) is safe to drop in the next, contract phase.
@@ -68,7 +68,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         order.Property(item => item.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         order.Property(item => item.CreatedAt).HasColumnName("created_at").IsRequired();
 
-        // Milestone 66: the pricing breakdown. Stored denormalised on the
+        // The pricing breakdown. Stored denormalised on the
         // order rather than recomputed on read, because a promotion is a
         // point-in-time fact - re-running today's rules against a
         // six-month-old order would produce today's prices, not what the
@@ -293,6 +293,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         saga.Property(item => item.Step).HasColumnName("step").HasMaxLength(32).IsRequired();
         saga.Property(item => item.Amount).HasColumnName("amount").HasPrecision(18, 2).IsRequired();
         saga.Property(item => item.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
+        saga.Property(item => item.CancellationRequestedAt).HasColumnName("cancellation_requested_at");
         saga.HasIndex(item => item.RequestedAt)
             .HasDatabaseName("ix_saga_orchestration_states_requested_at");
     }

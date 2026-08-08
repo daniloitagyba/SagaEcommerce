@@ -1,7 +1,7 @@
 namespace BuildingBlocks;
 
 /// <summary>
-/// Milestone 70: Orders tells Payments to give money back for a return.
+/// Orders tells Payments to give money back for a return.
 ///
 /// Carries the amount rather than letting Payments recompute it: the refund
 /// is a slice of what a specific line was <em>charged</em>, net of the

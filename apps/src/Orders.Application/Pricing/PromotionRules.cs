@@ -130,7 +130,7 @@ public sealed class BulkQuantityRule : Rule
 }
 
 /// <summary>
-/// Milestone 71: a standing discount for customers who have earned it -
+/// A standing discount for customers who have earned it -
 /// not requested like the others, but stacked with them the same way, with
 /// the engine's cap keeping all four from exceeding the order's value.
 /// </summary>

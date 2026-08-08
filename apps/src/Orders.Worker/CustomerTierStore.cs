@@ -7,7 +7,7 @@ using Polly.Registry;
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 71: records a completed order and lets standing climb. Runs
+/// Records a completed order and lets standing climb. Runs
 /// on <em>confirmation</em>, not creation, or placing and cancelling would
 /// be the cheapest route to Gold. Raw Npgsql, matching this worker's other writes.
 /// </summary>

@@ -7,7 +7,7 @@ using Payments.Service.Risk;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 66: the risk signals, against a real (SQLite in-memory)
+/// The risk signals, against a real (SQLite in-memory)
 /// PaymentsDbContext rather than a mocked repository - the rules are
 /// mostly queries over payment history, so mocking the query away would
 /// leave almost nothing under test.
@@ -208,7 +208,7 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task AMissingAddressIsUnknownRatherThanMismatched()
     {
-        // Before Milestone 71 no order carried an address - scoring absence as a mismatch would flag every one of them.
+        // Orders didn't always carry an address - scoring absence as a mismatch would flag every one of them.
         var now = DateTimeOffset.UtcNow;
         await SeedAsync("legacy", 50m, now.AddDays(-40), postalPrefix: "01");
 

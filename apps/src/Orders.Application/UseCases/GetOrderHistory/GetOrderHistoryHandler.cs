@@ -23,7 +23,7 @@ public sealed record OrderSnapshot(
 public sealed record OrderHistoryResult(OrderSnapshot? Snapshot, IReadOnlyList<OrderHistoryEvent> Events);
 
 /// <summary>
-/// Milestone 23: reconstructs Order state by folding over the append-only
+/// Reconstructs Order state by folding over the append-only
 /// event log rather than reading a current-state row - the event store is
 /// the source of truth, and current-state projections are just one
 /// read-optimized view of it. Temporal queries and the full audit trail

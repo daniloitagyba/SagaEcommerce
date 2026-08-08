@@ -9,16 +9,16 @@ namespace Orders.Api.Endpoints;
 public sealed record CreateReturnItemRequest(string? Sku, int Quantity);
 
 /// <summary>
-/// Milestone 82: ReasonCategory drives refund policy (does shipping come
+/// ReasonCategory drives refund policy (does shipping come
 /// back on a complete return) and defaults to Unwanted - the one category
 /// that owes nothing beyond the goods and their tax, so an old or
-/// unspecified request keeps getting exactly what it got before this
-/// milestone, not a shipping refund it never asked for.
+/// unspecified request keeps getting exactly what it got before,
+/// not a shipping refund it never asked for.
 /// </summary>
 public sealed record CreateReturnRequest(IReadOnlyList<CreateReturnItemRequest>? Items, string? Reason, string? ReasonCategory);
 
 /// <summary>
-/// Milestone 70: a customer (or support agent) sending part of a delivered
+/// A customer (or support agent) sending part of a delivered
 /// order back.
 /// </summary>
 public static class ReturnEndpoints

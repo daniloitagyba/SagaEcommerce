@@ -58,7 +58,7 @@ namespace Orders.Infrastructure.Data.Migrations
                 columns: ["code", "order_id"],
                 unique: true);
 
-            // Seeds the three codes Milestone 66 shipped as configuration,
+            // Seeds the three codes originally shipped as configuration,
             // so every existing reference to them (the storefront's coupon
             // placeholder, the README, the pricing docs) keeps working -
             // they are simply rows now, with the limits config could never

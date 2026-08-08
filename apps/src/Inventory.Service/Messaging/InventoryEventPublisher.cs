@@ -22,7 +22,7 @@ public interface IInventoryEventPublisher
     Task PublishAsync(WarehouseReplenishmentNeeded signal, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Milestone 89: Inventory producing a command it also consumes -
+    /// Inventory producing a command it also consumes -
     /// PurchaseOrderReceivingSweeper's restock rides the exact same
     /// InventoryReservationMessageProcessor.ProcessRestockAsync path a
     /// customer return already uses (backorder release included), through
@@ -62,7 +62,7 @@ public sealed class KafkaInventoryEventPublisher(
     }
 
     /// <summary>
-    /// Milestone 73: keyed by SKU rather than an order id, because this
+    /// Keyed by SKU rather than an order id, because this
     /// event is about a shelf, not a purchase - and per-SKU ordering is the
     /// guarantee this service already relies on everywhere else.
     /// </summary>

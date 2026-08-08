@@ -6,7 +6,7 @@ using BuildingBlocks;
 namespace Orders.UnitTests;
 
 /// <summary>
-/// Milestone 66 adds a lines array to OrderCreated. Schema Registry rejects
+/// A lines array was added to OrderCreated. Schema Registry rejects
 /// an incompatible change at publish time, but that says nothing about
 /// whether this codebase's reader/writer survives the mixed-version window
 /// a rolling deploy creates. These tests encode both halves of that window
@@ -122,7 +122,7 @@ public class OrderCreatedSchemaEvolutionTests
         var payload = Encode(OrderCreatedAvroSchema.ToGenericRecord(orderCreated), V2Schema);
         var decoded = OrderCreatedAvroSchema.FromGenericRecord(Decode(payload, V2Schema, V2Schema));
 
-        // The constant, not a literal - asserts "whatever the current writer emits", which caught the shift when Milestone 68 moved the default to v3.
+        // The constant, not a literal - asserts "whatever the current writer emits", which caught the shift when the default moved to v3.
         Assert.Equal(OrderCreatedSchemaVersions.WithShippingPrefix, decoded.SchemaVersion);
         Assert.True(decoded.HasLineItems);
         Assert.Collection(
@@ -188,7 +188,7 @@ public class OrderCreatedSchemaEvolutionTests
     [Fact]
     public void AV4ConsumerReadsAV1ProducersMessageAsHavingNoKnownAddress()
     {
-        // Milestone 73: the default has to be "unknown", not "somewhere" - an empty prefix says a pre-field order has nothing to compare.
+        // The default has to be "unknown", not "somewhere" - an empty prefix says a pre-field order has nothing to compare.
         var payload = Encode(BuildV1Record(), V1Schema);
 
         var orderCreated = OrderCreatedAvroSchema.FromGenericRecord(Decode(payload, V1Schema, V2Schema));

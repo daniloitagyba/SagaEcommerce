@@ -3,10 +3,10 @@
     <ProjectReference Include="..\BuildingBlocks.Caching\BuildingBlocks.Caching.csproj" />
     <ProjectReference Include="..\BuildingBlocks.Contracts\BuildingBlocks.Contracts.csproj" />
     <ProjectReference Include="..\BuildingBlocks.Observability\BuildingBlocks.Observability.csproj" />
+    <ProjectReference Include="..\BuildingBlocks.WebAuthentication\BuildingBlocks.WebAuthentication.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="MongoDB.Driver" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
   </ItemGroup>
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>

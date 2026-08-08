@@ -14,7 +14,7 @@ public static class OrdersTelemetry
     private static readonly Counter<long> ProcessedCounter = Meter.CreateCounter<long>("orders.processed");
     private static readonly Counter<long> OutboxPublishedCounter = Meter.CreateCounter<long>("outbox.messages.published");
     private static readonly Counter<long> OutboxRetryCounter = Meter.CreateCounter<long>("outbox.publish.retries");
-    // Milestone 79: a real backlog gauge, not inferred from the published
+    // A real backlog gauge, not inferred from the published
     // rate - OutboxPublisher records this once per poll cycle with a COUNT
     // of unprocessed rows, the same predicate its own polling query filters on.
     private static readonly Gauge<long> OutboxPendingGauge = Meter.CreateGauge<long>("outbox.messages.pending");
@@ -32,9 +32,9 @@ public static class OrdersTelemetry
     private static readonly Counter<long> DistributedRateLimitBypassCounter = Meter.CreateCounter<long>("orders.rate_limit.distributed_bypassed");
     private static readonly Counter<long> PaymentDecidedCounter = Meter.CreateCounter<long>("payments.decided");
     private static readonly Histogram<double> ProjectionLagHistogram = Meter.CreateHistogram<double>("orders.projection.lag_ms");
-    // Milestone 88: one row this sweep found where two services' account of
+    // One row this sweep found where two services' account of
     // the same order disagree - never expected to be nonzero for long, the
-    // same alerting shape Milestone 79 already gives the DLQ and outbox backlog.
+    // same alerting shape already used for the DLQ and outbox backlog.
     private static readonly Counter<long> AntiEntropyDivergenceCounter = Meter.CreateCounter<long>("anti_entropy.divergences");
 
     public static Activity? StartActivity(
@@ -97,7 +97,7 @@ public static class OrdersTelemetry
         CacheHitCounter.Add(1);
     }
 
-    /// <summary>Milestone 88: tagged by which invariant failed, so a dashboard can tell "orders missing a payment" apart from "backorders on a dead order" rather than one undifferentiated count.</summary>
+    /// <summary>Tagged by which invariant failed, so a dashboard can tell "orders missing a payment" apart from "backorders on a dead order" rather than one undifferentiated count.</summary>
     public static void RecordAntiEntropyDivergence(string checkName)
     {
         AntiEntropyDivergenceCounter.Add(1, new KeyValuePair<string, object?>("check", checkName));
@@ -124,7 +124,7 @@ public static class OrdersTelemetry
     }
 
     /// <summary>
-    /// A lock holder's write lost the fencing-token race (Milestone 48) -
+    /// A lock holder's write lost the fencing-token race -
     /// it was still trying to write after its lock had already expired and
     /// been re-acquired by someone else. Should be rare; a nonzero rate
     /// under sustained load means the lock timeout is set too aggressively

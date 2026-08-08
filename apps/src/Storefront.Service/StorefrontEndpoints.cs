@@ -142,12 +142,12 @@ public static class StorefrontEndpoints
         return await response.Content.ReadFromJsonAsync<object>(cancellationToken);
     }
 
-/// <summary>Milestone 85: mirrors Orders.Api's ShippingAddressRequest shape - Storefront has no reference to that assembly to reuse it directly.</summary>
+/// <summary>Mirrors Orders.Api's ShippingAddressRequest shape - Storefront has no reference to that assembly to reuse it directly.</summary>
     internal sealed record CheckoutShippingAddress(string? Line1, string? City, string? Region, string? PostalCode);
 
     internal sealed record CheckoutRequest(
         string? CouponCode,
-        /// <summary>Milestone 68/71: Card, Pix, or Boleto. Null defaults to Pix, same as Orders.Api.</summary>
+        /// <summary>Card, Pix, or Boleto. Null defaults to Pix, same as Orders.Api.</summary>
         string? PaymentMethod = null,
         CheckoutShippingAddress? ShippingAddress = null);
 
@@ -169,7 +169,7 @@ public static class StorefrontEndpoints
     /// Cart.Service and Orders.Api know nothing of each other; this turns
     /// "what's in this shopper's cart" into Orders.Api's checkout call.
     ///
-    /// Milestone 83: forwards the shopper's own bearer token to Orders.Api
+    /// Forwards the shopper's own bearer token to Orders.Api
     /// rather than minting a service-account one - replacing a design
     /// where Storefront authenticated as itself and simply asserted
     /// whatever customerId the request body carried, which any caller
@@ -202,7 +202,7 @@ public static class StorefrontEndpoints
             return;
         }
 
-        // Milestone 84: Cart.Service resolves "/carts/me" from this same
+        // Cart.Service resolves "/carts/me" from this same
         // forwarded token - there is no cartId left to pass, the cart IS
         // the shopper's, the same way the order about to be created is.
         var cartClient = httpClientFactory.CreateClient("cart");
@@ -249,7 +249,7 @@ public static class StorefrontEndpoints
         };
         upstreamRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
 
-        // Milestone 85: deterministic, not client-generated - this exact
+        // Deterministic, not client-generated - this exact
         // cart state ("this shopper, this version") checks out at most
         // once. A double-submitted click carries the identical version and
         // replays instead of double-charging; adding or removing an item

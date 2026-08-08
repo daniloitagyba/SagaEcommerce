@@ -13,11 +13,11 @@ public sealed class InvalidSettlementRequestException(string message, Exception?
     : Exception(message, innerException);
 
 /// <summary>
-/// Milestone 68: the second half of the two-phase payment flow - capturing
+/// The second half of the two-phase payment flow - capturing
 /// an authorization Orders decided to charge, or settling one it never
-/// will (Milestone 81: cancellation, which may void a hold or refund a
+/// will (cancellation, which may void a hold or refund a
 /// capture depending on what it finds - see Payment.TryCancel) or partially
-/// giving one back (Milestone 70: refund). Splits "approved" from "money
+/// giving one back (refund). Splits "approved" from "money
 /// moved", the distinction every card network makes, which is what makes an
 /// expiry sweeper meaningful (see PaymentAuthorizationSweeper). Every
 /// operation is guarded inside the domain, so a redelivered command is a
@@ -80,9 +80,9 @@ public sealed class PaymentSettlementProcessor(
         var changed = operation switch
         {
             SettlementOperation.Capture => payment.TryCapture(settledAt),
-            // Milestone 70: guarded cumulatively inside the domain, so a redelivered refund can't exceed what was ever charged.
+            // Guarded cumulatively inside the domain, so a redelivered refund can't exceed what was ever charged.
             SettlementOperation.Refund => payment.TryRefund(refundAmount, settledAt),
-            // Milestone 81: decides void vs. refund from the payment's own
+            // Decides void vs. refund from the payment's own
             // current state - see Payment.TryCancel. Replaces the old
             // method-agnostic "Void" operation entirely: nothing produces
             // that command any more, since a Pix payment is Captured the
@@ -93,7 +93,7 @@ public sealed class PaymentSettlementProcessor(
 
         if (!changed)
         {
-            // Milestone 76: not every guard failure is a harmless redelivery.
+            // Not every guard failure is a harmless redelivery.
             // A true duplicate is this exact operation landing twice, and the
             // payment is already sitting in the state it would have produced
             // - safe to drop silently, the first attempt's reply already
@@ -104,7 +104,7 @@ public sealed class PaymentSettlementProcessor(
             // - the alternative is a shipped order nobody ever charged, with
             // nothing in the system recording that it went wrong.
             //
-            // Milestone 81: Cancel is different in kind from the other
+            // Cancel is different in kind from the other
             // three - it has no single target state (it might void, might
             // refund, depending on what it finds), so "did it apply" can't
             // be compared against one expected outcome the way Capture and

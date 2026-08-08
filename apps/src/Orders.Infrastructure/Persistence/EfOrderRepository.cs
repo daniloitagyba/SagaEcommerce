@@ -61,7 +61,7 @@ public sealed class EfOrderRepository(
     }
 
     /// <summary>
-    /// Milestone 67: claims a redemption slot atomically. The guarded
+    /// Claims a redemption slot atomically. The guarded
     /// UPDATE closes the race - checking then incrementing would let N
     /// concurrent checkouts all read the same count and all pass a limit of
     /// 1 - same shape as OrderStatusStore's CAS and Inventory's reservation.
@@ -122,7 +122,7 @@ public sealed class EfOrderRepository(
     {
         try
         {
-            // Milestone 66: Include is required, not an optimisation - AsNoTracking means EF won't lazily fill the lines in later.
+            // Include is required, not an optimisation - AsNoTracking means EF won't lazily fill the lines in later.
             return await _pipeline.ExecuteAsync(
                 async ct => await dbContext.Orders
                     .AsNoTracking()

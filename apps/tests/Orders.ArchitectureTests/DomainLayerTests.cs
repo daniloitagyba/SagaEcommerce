@@ -40,7 +40,7 @@ public class DomainLayerTests
     [Fact]
     public void DomainDoesNotDependOnTheRulesEngine()
     {
-        // Milestone 66: Orders.Domain owns the pricing model and the
+        // Orders.Domain owns the pricing model and the
         // IPricingEngine contract; Orders.Application owns rule evaluation.
         // Without this, dropping an NRules Rule next to the model would
         // make the domain unusable without a Rete network compiled behind it.

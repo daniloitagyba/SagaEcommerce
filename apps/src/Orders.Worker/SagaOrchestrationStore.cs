@@ -24,27 +24,28 @@ public sealed record SagaOrchestrationRecord(
     string Step,
     decimal Amount,
     string Currency,
-    IReadOnlyList<SagaLineRecord> Lines);
+    IReadOnlyList<SagaLineRecord> Lines,
+    DateTimeOffset? CancellationRequestedAt = null);
 
 public sealed record SagaReservationLine(Guid ReservationId, string Sku, int Quantity);
 
 /// <summary>
-/// Milestone 36: Postgres-backed replacement for the in-memory
+/// Postgres-backed replacement for the in-memory
 /// SagaOrchestrationTracker that didn't survive a pod restart. Raw Npgsql,
 /// matching OrderEventStoreAppender/OrderProjectionStore - EF only owns
-/// this table's schema. Milestone 43: TryAdvanceAsync is the
+/// this table's schema. TryAdvanceAsync is the
 /// general-purpose "move to the next step" operation, gated on the row's
 /// CURRENT step matching what the caller expects, so a stale or duplicate
 /// reply for an already-passed step is a no-op rather than corrupting state.
 ///
-/// Milestone 78: a saga now tracks every line of the order, not just the
+/// A saga now tracks every line of the order, not just the
 /// largest by value - <see cref="SagaOrchestrationRecord.Lines"/> is one
 /// row per SKU in `saga_orchestration_lines`, each with its own
 /// ReservationId and its own Reserved/Committed/Released outcome. The
 /// parent row's Step still drives the order-level 4-step state machine
-/// unchanged (that's what Milestone 56's TLA+ model and Milestone 58's
+/// unchanged (that's what the TLA+ model and the
 /// deterministic simulation both verify, and neither needed to change for
-/// this milestone - they model "the reservation step succeeded" as one
+/// multi-line orders - they model "the reservation step succeeded" as one
 /// abstract event, never how many concrete reservations that required).
 /// What's new is that each of those four steps now waits for every line's
 /// reply, not one, before the parent row is allowed to advance -
@@ -70,13 +71,13 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
         UPDATE saga_orchestration_states
         SET step = @next_step, requested_at = @requested_at
         WHERE order_id = @order_id AND step = @expected_step
-        RETURNING correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, amount, currency;
+        RETURNING correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, amount, currency, cancellation_requested_at;
         """;
 
     private const string TryCompleteSql = """
         DELETE FROM saga_orchestration_states
         WHERE order_id = @order_id AND step = @expected_step
-        RETURNING correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, amount, currency;
+        RETURNING correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, amount, currency, cancellation_requested_at;
         """;
 
     // FOR UPDATE SKIP LOCKED here is belt-and-suspenders, not the primary
@@ -92,7 +93,7 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
         """;
 
     private const string SelectParentByIdsSql = """
-        SELECT order_id, correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, amount, currency
+        SELECT order_id, correlation_id, customer_id, payment_method, shipping_postal_prefix, requested_at, step, amount, currency, cancellation_requested_at
         FROM saga_orchestration_states
         WHERE order_id = ANY(@order_ids);
         """;
@@ -322,7 +323,8 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
                         reader.GetString(6),
                         reader.GetDecimal(7),
                         reader.GetString(8),
-                        []);
+                        [],
+                        await reader.IsDBNullAsync(9, ct) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(9, ct));
                 }
             }
 
@@ -423,7 +425,8 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
             reader.GetString(5),
             reader.GetDecimal(6),
             reader.GetString(7),
-            []);
+            [],
+            await reader.IsDBNullAsync(8, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(8, cancellationToken));
     }
 }
 

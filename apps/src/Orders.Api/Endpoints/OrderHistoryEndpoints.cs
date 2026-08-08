@@ -6,7 +6,7 @@ using Orders.Application.UseCases.GetOrderHistory;
 namespace Orders.Api.Endpoints;
 
 /// <summary>
-/// Milestone 23's event-sourced read side: state folded from the append-only
+/// The event-sourced read side: state folded from the append-only
 /// event log rather than a current-state row, plus the full event history
 /// alongside it. Entirely separate from GetByIdAsync's cache-aside read of
 /// the orders table - this is a second, independent way to read the same
@@ -33,7 +33,7 @@ public static class OrderHistoryEndpoints
     {
         var result = await handler.HandleAsync(id, asOf, cancellationToken);
 
-        // Milestone 83: same 404-hides-ownership reasoning as GetByIdAsync.
+        // Same 404-hides-ownership reasoning as GetByIdAsync.
         if (result.Snapshot is null || !httpContext.MayAccess(result.Snapshot.CustomerId))
         {
             return Results.NotFound();

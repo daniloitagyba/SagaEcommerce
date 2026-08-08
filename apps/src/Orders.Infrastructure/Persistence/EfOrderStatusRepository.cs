@@ -16,7 +16,7 @@ public sealed class EfOrderStatusRepository(
     OrdersDbContext dbContext,
     ResiliencePipelineProvider<string> pipelineProvider) : IOrderStatusRepository
 {
-    // Milestone 81: previous status alongside payment method - the read
+    // Previous status alongside payment method - the read
     // needs a lock (FOR UPDATE), not just a plain SELECT, or a concurrent
     // transition landing between this read and the CAS-guarded UPDATE
     // below could make this repository believe the order arrived at
@@ -66,7 +66,7 @@ public sealed class EfOrderStatusRepository(
                         null);
                 }
 
-                // Milestone 69: a cancellation must give the coupon slot
+                // A cancellation must give the coupon slot
                 // back, same as the saga-driven path - but this path can
                 // release it in the same transaction, since the coupon
                 // lives in the same database as the order.
@@ -83,7 +83,7 @@ public sealed class EfOrderStatusRepository(
                 }
                 else if (settlementAction == OrderSettlementAction.Cancel)
                 {
-                    // Milestone 81: unlike capture, cancellation is not
+                    // Unlike capture, cancellation is not
                     // method-gated - a Pix payment is Captured the moment
                     // it's approved, so cancelling it has to refund, not
                     // void a hold that was never placed. Payments decides
@@ -92,6 +92,7 @@ public sealed class EfOrderStatusRepository(
                     // command, unconditionally.
                     QueueSettlementCommand(orderId, settlementAction, targetStatus, correlationId);
                     await QueueInventoryCompensationAsync(orderId, previousStatus, correlationId, ct);
+                    await FlagInFlightSagaAsCancelledAsync(orderId, previousStatus, ct);
                     await dbContext.SaveChangesAsync(ct);
                 }
 
@@ -142,7 +143,7 @@ public sealed class EfOrderStatusRepository(
     }
 
     /// <summary>
-    /// Milestone 81: the inventory side of cancelling, chosen from where
+    /// The inventory side of cancelling, chosen from where
     /// the order actually was, not guessed:
     ///
     /// <list type="bullet">
@@ -151,14 +152,17 @@ public sealed class EfOrderStatusRepository(
     /// back via the same restock command a return uses.</item>
     /// <item>Backordered: nothing was ever reserved, only a place in the
     /// FIFO queue - that place is what needs to be given up.</item>
-    /// <item>Created: not reachable from a cancellation an operator drives
-    /// through this path in the ordinary case, and if it happens anyway
-    /// (an operator cancelling an order the saga is still mid-flight on),
-    /// this deliberately does nothing - the saga's own reservation state
-    /// lives in Orders.Worker, not here, and guessing at inventory this
-    /// repository cannot see would risk conjuring or destroying stock that
-    /// belongs to a decision already in flight elsewhere. That race
-    /// predates this milestone and remains an open gap, not a regression.</item>
+    /// <item>Created: nothing is queued from here either - not because the
+    /// saga is invisible (see <see cref="FlagInFlightSagaAsCancelledAsync"/>,
+    /// which runs alongside this method and is not invisible to it at all,
+    /// both being raw SQL against the one Postgres database Orders.Api and
+    /// Orders.Worker already share), but because at the moment this method
+    /// runs, what if anything was reserved is still unknown - the saga may
+    /// not have started, may have partially reserved, or may already have
+    /// committed. Guessing here would still risk conjuring or destroying
+    /// stock; flagging the row instead lets the saga's own reply consumer
+    /// react with the one thing that always knows the truth - the reply
+    /// that is actually, currently, in flight.</item>
     /// </list>
     /// </summary>
     private async Task QueueInventoryCompensationAsync(
@@ -202,7 +206,7 @@ public sealed class EfOrderStatusRepository(
             // past the first look like a redelivered duplicate of it and
             // get silently skipped, never restocked. The same bug existed
             // in EfOrderReturnRepository.QueueRestockCommands for a
-            // multi-SKU return before this milestone; fixed there too.
+            // multi-SKU return before; fixed there too.
             var request = new InventoryRestockRequested(Guid.NewGuid(), orderId, line.Sku, line.Quantity, correlationId, now);
 
             dbContext.OutboxMessages.Add(OutboxMessage.Create(
@@ -214,6 +218,39 @@ public sealed class EfOrderStatusRepository(
                 System.Diagnostics.Activity.Current?.Id,
                 System.Diagnostics.Activity.Current?.TraceStateString));
         }
+    }
+
+    /// <summary>
+    /// Closes the race a cancellation from Created or Backordered has
+    /// always had: this order might still have an orchestrated saga row
+    /// in flight (<c>saga_orchestration_states</c>), reserving or
+    /// committing inventory this repository has no way to know the
+    /// current status of. Rather than guess, it marks the row - a plain,
+    /// idempotent UPDATE that no-ops if no such row exists (the ordinary
+    /// case), or if the order isn't reachable through the choreographed
+    /// saga at all. OrderSagaReplyConsumer checks this flag at the two
+    /// points where it would otherwise commit the order to keep something
+    /// this cancellation just gave up: the moment every line finishes
+    /// reserving (it releases them instead of requesting a payment
+    /// decision), and the moment every line's commit reply arrives (it
+    /// restocks whatever was actually committed instead of confirming the
+    /// order). Same table, same database, same transaction as the status
+    /// CAS above - not a second write that could land only one of the two.
+    /// </summary>
+    private async Task FlagInFlightSagaAsCancelledAsync(Guid orderId, string previousStatus, CancellationToken cancellationToken)
+    {
+        if (previousStatus is not (OrderStatuses.Created or OrderStatuses.Backordered))
+        {
+            return;
+        }
+
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE saga_orchestration_states
+            SET cancellation_requested_at = COALESCE(cancellation_requested_at, {DateTimeOffset.UtcNow})
+            WHERE order_id = {orderId}
+            """,
+            cancellationToken);
     }
 
     /// <summary>

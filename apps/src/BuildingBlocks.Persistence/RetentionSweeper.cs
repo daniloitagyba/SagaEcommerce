@@ -5,7 +5,7 @@ using Npgsql;
 
 namespace BuildingBlocks;
 
-// Milestone 63: outbox_messages/inbox_messages are append-only and nothing
+// Outbox_messages/inbox_messages are append-only and nothing
 // ever deleted from them - a real gap this table pair shares across
 // Orders.Worker, Inventory.Service, and Payments.Service (all three grew
 // past 100k+ rows and 100+MiB from this project's own load tests alone,

@@ -7,7 +7,7 @@ namespace Cart.Service.Endpoints;
 public sealed record UpdateCartItemRequest(int Quantity);
 
 /// <summary>
-/// Milestone 86: one operation a client tracked while it couldn't reach
+/// One operation a client tracked while it couldn't reach
 /// this service - a different tab, a device that went offline - replayed
 /// here rather than shipped as raw CRDT dots, which are an implementation
 /// detail this wire contract has no reason to expose. Kind is
@@ -22,9 +22,9 @@ public sealed record CartMergeOperation(string Sku, string Kind, int Delta = 0, 
 public sealed record CartMergeRequest(IReadOnlyList<CartMergeOperation>? Operations);
 
 /// <summary>
-/// Milestone 84: every route resolves to the caller's own cart - there is
-/// no cartId left in the URL to name someone else's. Before this
-/// milestone, cartId was a client-supplied opaque string with no owner
+/// Every route resolves to the caller's own cart - there is
+/// no cartId left in the URL to name someone else's. Before,
+/// cartId was a client-supplied opaque string with no owner
 /// check at all: anyone who could guess or enumerate one could read or
 /// clear another shopper's cart. Deriving the storage key from the
 /// authenticated caller's own identity removes that surface rather than
@@ -123,7 +123,7 @@ public static class CartEndpoints
     }
 
     /// <summary>
-    /// Milestone 86: reconciles what a client tracked while it couldn't
+    /// Reconciles what a client tracked while it couldn't
     /// reach this cart against whatever is currently stored - see
     /// CartCrdtState.Merge and CartStore.MergeAsync for the actual CRDT
     /// join. Every real operation still goes through PutItemAsync/

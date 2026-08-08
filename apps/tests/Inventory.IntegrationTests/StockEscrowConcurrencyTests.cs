@@ -3,9 +3,9 @@ using System.Diagnostics;
 namespace Inventory.IntegrationTests;
 
 /// <summary>
-/// Milestone 87: the throughput case for escrow, measured rather than
-/// assumed - the same discipline Milestone 51 used to establish the
-/// ceiling this milestone answers. Neither side here calls into
+/// The throughput case for escrow, measured rather than
+/// assumed - the same discipline used to establish the
+/// ceiling this answers. Neither side here calls into
 /// Inventory.Service's real Kafka/Postgres path (there is no live cluster
 /// in this environment to measure against); both simulate the *locking
 /// shape* each design implies with an in-memory lock standing in for a
@@ -44,7 +44,7 @@ public class StockEscrowConcurrencyTests
 
     /// <summary>
     /// <paramref name="lockCount"/> = 1 models today's one-row-per-SKU
-    /// design (Milestone 41's partition-per-SKU guarantee makes the lock
+    /// design (the partition-per-SKU guarantee makes the lock
     /// implicit rather than explicit, but the effect - one operation at a
     /// time for this SKU, network-wide - is identical). lockCount = N
     /// models N escrow buckets, each an independent row a real deployment

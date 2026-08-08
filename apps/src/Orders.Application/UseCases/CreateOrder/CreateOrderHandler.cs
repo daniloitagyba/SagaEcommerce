@@ -37,7 +37,7 @@ public sealed class CreateOrderHandler(
                 return new CreateOrderResult(null, Guid.Empty, pricingErrors);
             }
 
-            // Milestone 85: compared against the subtotal specifically, not
+            // Compared against the subtotal specifically, not
             // the grand total - shipping, tax and discounts are expected to
             // apply and differ from whatever a cart last saw; that isn't a
             // price change, a moved catalog price is. Checked before the
@@ -145,7 +145,7 @@ public sealed class CreateOrderHandler(
         Activity.Current?.SetTag("messaging.message.id", orderCreated.EventId);
         Activity.Current?.SetTag("service.instance.id", command.InstanceId);
 
-        // Milestone 67: the coupon's redemption slot is claimed in the same
+        // The coupon's redemption slot is claimed in the same
         // transaction as the order itself - see CouponReservation for why
         // it cannot be a separate call.
         var couponReservation = checkout?.CouponCode is { } couponCode

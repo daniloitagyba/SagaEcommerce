@@ -1,7 +1,7 @@
 namespace Orders.Application.Pricing;
 
 /// <summary>
-/// Milestone 66: the promotion policy, kept in configuration rather than
+/// The promotion policy, kept in configuration rather than
 /// compiled into the rules so a campaign can be changed without a
 /// redeploy. The <em>shape</em> of each promotion is a rule (code); which
 /// coupon codes exist and what they are worth is data.
@@ -10,7 +10,7 @@ public sealed class PricingOptions
 {
     public const string SectionName = "Pricing";
 
-    // Milestone 67 removed the Coupons dictionary - coupons are now rows in
+    // The Coupons dictionary was removed - coupons are now rows in
     // `coupons` with validity windows and redemption limits, since config alone can't express being *used up*.
 
     /// <summary>Category slug to percentage off that category's lines.</summary>
@@ -24,7 +24,7 @@ public sealed class PricingOptions
 
     public decimal BulkDiscountPercentage { get; init; } = 8m;
 
-    /// <summary>Milestone 71: shipping cost by zone, keyed on the CEP's first two digits - a flat rate was fine before there was an address to read.</summary>
+    /// <summary>Shipping cost by zone, keyed on the CEP's first two digits - a flat rate was fine before there was an address to read.</summary>
     public Dictionary<string, decimal> ShippingByPostalPrefix { get; init; } = new(StringComparer.Ordinal)
     {
         ["01"] = 14.90m, ["02"] = 14.90m, ["03"] = 14.90m, ["04"] = 14.90m, ["05"] = 14.90m,
@@ -36,7 +36,7 @@ public sealed class PricingOptions
     /// <summary>Charged when the destination is outside every known zone.</summary>
     public decimal DefaultShippingAmount { get; init; } = 34.90m;
 
-    /// <summary>Milestone 71: tax rate by region, replacing the single global TaxRatePercentage.</summary>
+    /// <summary>Tax rate by region, replacing the single global TaxRatePercentage.</summary>
     public Dictionary<string, decimal> TaxRateByRegion { get; init; } = new(StringComparer.OrdinalIgnoreCase)
     {
         ["SP"] = 18m, ["RJ"] = 20m, ["MG"] = 18m, ["BA"] = 19m, ["PA"] = 17m, ["AM"] = 20m

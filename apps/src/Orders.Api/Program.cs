@@ -1,7 +1,5 @@
-using System.Security.Claims;
-using System.Text.Json;
 using BuildingBlocks;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+using BuildingBlocks.WebAuthentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -21,8 +19,8 @@ using Orders.Infrastructure.Data;
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
-// Milestone 30: gRPC gets its own port (8081) rather than sharing 8080 with
-// REST - the Milestone 26 AuthorizationPolicy hardcodes proxyProtocol:
+// gRPC gets its own port (8081) rather than sharing 8080 with
+// REST - the AuthorizationPolicy hardcodes proxyProtocol:
 // HTTP/1 on 8080, so Linkerd rejects real HTTP/2 (gRPC) traffic there.
 // Both ports are cleartext (Linkerd terminates mTLS at the proxy). Both
 // need an explicit ListenAnyIP call: the moment Kestrel gets one explicit
@@ -43,7 +41,7 @@ builder.WebHost.ConfigureKestrel(options =>
     });
 });
 
-// Milestone 69: fail loudly at startup instead of silently at runtime. A
+// Fail loudly at startup instead of silently at runtime. A
 // missing DI registration used to surface only when first resolved - if
 // that's the outbox dispatcher, it's a background loop logging an
 // exception every poll while the service reports healthy and delivers
@@ -74,11 +72,11 @@ builder.Services.AddOptions<KafkaOptions>()
 var connectionString = builder.Configuration.GetConnectionString("Orders")
     ?? throw new InvalidOperationException("Connection string 'Orders' is required.");
 
-// Milestone 66: the promotion policy (coupon codes, category promotions,
+// The promotion policy (coupon codes, category promotions,
 // free-shipping threshold) is configuration, so a campaign changes without
 // a redeploy. Absent config, PricingOptions' own defaults apply.
 builder.Services.Configure<PricingOptions>(builder.Configuration.GetSection(PricingOptions.SectionName));
-// Milestone 82: how long a Regret return still owes shipping. Absent config, ReturnOptions' own 7-day default applies.
+// How long a Regret return still owes shipping. Absent config, ReturnOptions' own 7-day default applies.
 builder.Services.Configure<ReturnOptions>(builder.Configuration.GetSection(ReturnOptions.SectionName));
 builder.Services.AddOptions<CatalogClientOptions>()
     .Bind(builder.Configuration.GetSection(CatalogClientOptions.SectionName))
@@ -99,47 +97,15 @@ builder.Services.AddOrdersInfrastructure(builder.Configuration, connectionString
 builder.Services.AddOrdersRateLimiting(builder.Configuration);
 builder.Services.AddGrpc();
 
-// Milestone 26: bearer tokens are validated against Keycloak's own JWKS,
-// fetched from its OIDC discovery document and refreshed automatically - no
-// key material lives in this service's config. "orders-api" is a
+// The JWT bearer wiring itself now lives in
+// BuildingBlocks.WebAuthentication, shared with Catalog/Inventory/Cart -
+// only the audience ever differed between them. "orders-api" is a
 // hardcoded-audience protocol mapper (scripts/keycloak-configure-realm.sh),
 // not the client_credentials grant's default "account" audience, so a
 // token minted for another client is rejected on audience alone.
-var authority = builder.Configuration["Authentication:Authority"]
-    ?? throw new InvalidOperationException("Authentication:Authority is required.");
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.Authority = authority;
-        options.Audience = "orders-api";
-        options.RequireHttpsMetadata = false;
-        // Keycloak nests realm roles under "realm_access": { "roles": [...] },
-        // not as flat claims; without this, RequireRole() below always 403s.
-        options.Events = new JwtBearerEvents
-        {
-            OnTokenValidated = context =>
-            {
-                var realmAccess = context.Principal?.FindFirst("realm_access")?.Value;
-                if (string.IsNullOrEmpty(realmAccess) || context.Principal?.Identity is not ClaimsIdentity identity)
-                {
-                    return Task.CompletedTask;
-                }
-
-                using var document = JsonDocument.Parse(realmAccess);
-                if (document.RootElement.TryGetProperty("roles", out var roles))
-                {
-                    foreach (var role in roles.EnumerateArray())
-                    {
-                        identity.AddClaim(new Claim(ClaimTypes.Role, role.GetString() ?? string.Empty));
-                    }
-                }
-
-                return Task.CompletedTask;
-            }
-        };
-    });
+builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "orders-api");
 builder.Services.AddAuthorizationBuilder()
-    // Milestone 83: orders:admin satisfies both - an admin token needs one role, not three.
+    // Orders:admin satisfies both - an admin token needs one role, not three.
     .AddPolicy(OrdersAuthorizationPolicies.Read, policy => policy.RequireRole("orders:read", "orders:write", OrdersAuthorizationPolicies.Admin))
     .AddPolicy(OrdersAuthorizationPolicies.Write, policy => policy.RequireRole("orders:write", OrdersAuthorizationPolicies.Admin))
     .AddPolicy(OrdersAuthorizationPolicies.Admin, policy => policy.RequireRole(OrdersAuthorizationPolicies.Admin));

@@ -8,8 +8,8 @@ using Microsoft.Extensions.Options;
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 68: asks Payments to finish what the authorization started -
-/// capture the money at Shipped (Milestone 69), or release the hold on
+/// Asks Payments to finish what the authorization started -
+/// capture the money at Shipped, or release the hold on
 /// cancellation.
 ///
 /// <para>
@@ -34,7 +34,7 @@ public sealed class PaymentSettlementRequester(
     }
 
     /// <summary>
-    /// Milestone 81: the order was cancelled - let Payments decide whether
+    /// The order was cancelled - let Payments decide whether
     /// that means voiding a hold or refunding a capture (see
     /// Payment.TryCancel). Replaces the old RequestVoidAsync call on this
     /// path, which only fired for methods that leave a hold - Pix is

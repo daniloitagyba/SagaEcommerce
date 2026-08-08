@@ -9,7 +9,7 @@ public interface IBestsellersStore
 }
 
 /// <summary>
-/// Milestone 44: "most sold" is an ordered, frequently incremented, top-N
+/// "most sold" is an ordered, frequently incremented, top-N
 /// read, exactly what a Redis sorted set (ZINCRBY) is for, not a MongoDB
 /// aggregation or a Postgres counter row. Best-effort and side-channel: a
 /// failure here must never fail the saga completion it's reacting to, so

@@ -15,17 +15,32 @@
 # Baking the mode into the actual startup command is what makes it survive
 # the restart being tested.
 #
+# Milestone 84 rewrite: this script used to drive Cart.Service's HTTP API
+# with a client-chosen cart id in the URL (PUT /carts/{cart_id}/items/...).
+# That route no longer exists - Milestone 84 requires authentication on
+# every cart route and derives the cart's key from the caller's own
+# identity (see CartIdentityExtensions.GetCustomerId), not from anything
+# the client supplies. Minting Keycloak tokens for 300 synthetic shoppers
+# just to exercise Redis's own persistence behaviour would be testing the
+# auth stack, not Redis - so this version writes the same Hash shape
+# CartStore.UpsertItemAsync writes (field = Sku, value = JSON, plus the
+# __version field, plus the same TTL) directly against the container's
+# redis-cli, bypassing Cart.Service's API entirely. That is a closer match
+# to what this script has always actually been measuring - Redis's own
+# survival of a kill under a given persistence mode - than going through
+# the API ever was.
+#
 # Usage: cart-redis-durability-test.sh <none|rdb|aof-everysec|aof-always> [cart_count]
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_directory=$(cd -- "$script_directory/.." && pwd)
 compose_directory="$project_directory/compose"
-namespace=${KUBERNETES_NAMESPACE:-orders-lab}
 
 mode=${1:?"usage: $0 <none|rdb|aof-everysec|aof-always> [cart_count]"}
 cart_count=${2:-300}
 sku="SKU-ELEC-001"
+ttl_seconds=${CART_TTL_SECONDS:-1800}
 run_id="dur-${mode}-$(date +%s)"
 
 case "$mode" in
@@ -54,37 +69,23 @@ docker exec "$redis_container" redis-cli CONFIG GET appendonly
 docker exec "$redis_container" redis-cli CONFIG GET save
 docker exec "$redis_container" redis-cli CONFIG GET appendfsync
 
-cart_ip=$(kubectl get svc cart-service -n "$namespace" -o jsonpath="{.spec.clusterIP}")
-cart_url="http://${cart_ip}"
-
-echo "== Warming up: waiting for cart-service's own Redis connection/circuit breaker to be ready =="
-for i in $(seq 1 30); do
-  code=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "${cart_url}/carts/${run_id}-warmup/items/${sku}" \
-    -H 'Content-Type: application/json' -d '{"quantity":1}')
-  [[ "$code" == "200" ]] && break
-  sleep 1
-done
-curl -s -o /dev/null -X DELETE "${cart_url}/carts/${run_id}-warmup"
-
-echo "== Creating ${cart_count} carts against ${cart_url} (run ${run_id}) =="
+echo "== Creating ${cart_count} carts directly in Redis (run ${run_id}) =="
 create_one() {
   local i=$1
-  local cart_id="${run_id}-${i}"
-  local code
-  code=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
-    "${cart_url}/carts/${cart_id}/items/${sku}" \
-    -H 'Content-Type: application/json' \
-    -d '{"quantity":1}')
-  echo "${cart_id} ${code}"
+  local cart_id="cart:${run_id}-${i}"
+  local payload="{\"sku\":\"${sku}\",\"quantity\":1,\"unitPrice\":199.90,\"currency\":\"BRL\",\"productName\":\"durability test item\",\"addedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+  docker exec "$redis_container" redis-cli HSET "$cart_id" "$sku" "$payload" __version 1 >/dev/null
+  docker exec "$redis_container" redis-cli EXPIRE "$cart_id" "$ttl_seconds" >/dev/null
+  echo "${cart_id} created"
 }
 export -f create_one
-export cart_url sku run_id
+export redis_container sku run_id ttl_seconds
 
 results_file=$(mktemp)
 trap 'rm -f "$results_file"' EXIT
 seq 1 "$cart_count" | xargs -P 20 -I{} bash -c 'create_one {}' > "$results_file"
 
-created=$(grep -c ' 200$' "$results_file" || true)
+created=$(grep -c ' created$' "$results_file" || true)
 echo "Created ${created}/${cart_count} carts successfully."
 
 echo "== Killing redis (SIGKILL, no graceful save) =="
@@ -112,10 +113,10 @@ echo "Redis back up after ${recovery_seconds}s."
 echo "== Re-checking all ${cart_count} carts =="
 check_one() {
   local i=$1
-  local cart_id="${run_id}-${i}"
-  local body
-  body=$(curl -s "${cart_url}/carts/${cart_id}")
-  if echo "$body" | grep -q "\"sku\":\"${sku}\""; then
+  local cart_id="cart:${run_id}-${i}"
+  local value
+  value=$(docker exec "$redis_container" redis-cli HGET "$cart_id" "$sku" 2>/dev/null || true)
+  if [[ -n "$value" ]]; then
     echo "survived"
   else
     echo "lost"

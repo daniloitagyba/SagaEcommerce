@@ -7,7 +7,7 @@ namespace Services.ArchitectureTests;
 // folder: nothing physically stops frameworks leaking into that namespace
 // the way project boundaries stop it for Orders, so this checks at the
 // namespace level. Catalog.Service's Product failed this for real (MongoDB
-// attributes on the entity) until Milestone 61 moved the mapping out.
+// attributes on the entity) until the mapping was moved out.
 public class DomainNamespaceTests
 {
     private static readonly string[] InfrastructureFrameworkNamespaces =
@@ -65,7 +65,7 @@ public class DomainNamespaceTests
     public void StorefrontServiceOwnsNoPersistenceOrMessaging(string frameworkNamespace)
     {
         // Storefront.Service is a BFF/proxy with no Domain namespace of its
-        // own (Milestone 45), so the rule here is "never own persistence or
+        // own, so the rule here is "never own persistence or
         // messaging at all" - a regression guard against a future project
         // reference reintroducing one of these dependencies transitively.
         var assembly = typeof(Storefront.Service.StorefrontEndpoints).Assembly;

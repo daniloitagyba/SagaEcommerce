@@ -42,7 +42,7 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
 
         var services = new ServiceCollection();
         services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
-        // Milestone 66: the processor resolves the risk evaluator per message from its own scope, so it must be registered here too.
+        // The processor resolves the risk evaluator per message from its own scope, so it must be registered here too.
         services.Configure<PaymentRiskOptions>(_ => { });
         services.AddScoped<PaymentRiskEvaluator>();
         _serviceProvider = services.BuildServiceProvider();
@@ -63,8 +63,8 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
         _schemaRegistryClient.Dispose();
     }
 
-    // Milestone 66 replaced the bare amount threshold with a scored risk
-    // policy: 49.90 scores FIRST_PURCHASE(20), under 60; 5000.00 scores
+    // A scored risk policy replaced the bare amount threshold:
+    // 49.90 scores FIRST_PURCHASE(20), under 60; 5000.00 scores
     // HIGH_VALUE(50)+FIRST_PURCHASE(20)=70, over it. Same outcome, better reason.
     [Theory]
     [InlineData(49.90, true)]

@@ -1,13 +1,13 @@
 namespace Inventory.Service.Domain;
 
 /// <summary>
-/// Milestone 89: closes the loop Milestone 73 opened and explicitly left
+/// Closes a loop opened earlier and explicitly left
 /// open - <c>WarehouseReplenishmentNeeded</c> has been emitted, durably,
-/// since that milestone, and nothing consumed it. A purchase order is this
+/// since then, and nothing consumed it. A purchase order is this
 /// lab's stand-in for "a human or a supplier's system now knows to send
 /// more stock" - requested the moment the signal arrives, received after a
 /// lab-scale compression of a real supplier's lead time (the same
-/// "minutes instead of days" trade Milestone 73 already made for a
+/// "minutes instead of days" trade already made for a
 /// boleto's due date), at which point the stock it represents actually
 /// lands and restocks the warehouse it was requested for.
 /// </summary>

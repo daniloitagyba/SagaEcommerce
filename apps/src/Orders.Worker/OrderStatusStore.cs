@@ -25,7 +25,7 @@ public sealed class OrderStatusStore(
     CustomerTierStore customerTierStore,
     ResiliencePipelineProvider<string> pipelineProvider)
 {
-    // Milestone 69: `status = ANY(@allowed_from)` guards the whole set of
+    // `status = ANY(@allowed_from)` guards the whole set of
     // legal predecessors in one statement, since an order can now be
     // cancelled from four different states - read-then-write would
     // reintroduce the race the CAS exists to remove. RETURNING carries what
@@ -46,7 +46,7 @@ public sealed class OrderStatusStore(
     public Task<bool> TryCancelAsync(Guid orderId, string correlationId, CancellationToken cancellationToken)
         => TransitionOrFalseAsync(orderId, OrderStatuses.Cancelled, correlationId, cancellationToken);
 
-    /// <summary>Milestone 69: the fulfilment states an operator or warehouse system drives.</summary>
+    /// <summary>The fulfilment states an operator or warehouse system drives.</summary>
     public Task<StatusTransitionResult> TryTransitionAsync(
         Guid orderId,
         string targetStatus,
@@ -118,7 +118,7 @@ public sealed class OrderStatusStore(
         decimal amount,
         CancellationToken cancellationToken)
     {
-        // Milestone 71: standing is earned on confirmation, not creation, or
+        // Standing is earned on confirmation, not creation, or
         // placing and cancelling would be the cheapest route to a discount.
         if (targetStatus == OrderStatuses.Confirmed && customerId is not null)
         {
@@ -142,7 +142,7 @@ public sealed class OrderStatusStore(
             return;
         }
 
-        // Milestone 69 moved capture from Confirmed to Shipped - the whole
+        // Capture moved from Confirmed to Shipped - the whole
         // point of a hold is taking the money when the goods actually
         // leave. Only a card/boleto leaves a hold; asking Payments to
         // capture a Pix payment is harmless but achieves nothing, since it
@@ -153,7 +153,7 @@ public sealed class OrderStatusStore(
         }
         else if (targetStatus == OrderStatuses.Cancelled)
         {
-            // Milestone 81: unlike capture, cancellation is not
+            // Unlike capture, cancellation is not
             // method-gated - a Pix payment is Captured the moment it's
             // approved, so cancelling it has to refund, not void a hold
             // that was never placed. Payments decides which of the two

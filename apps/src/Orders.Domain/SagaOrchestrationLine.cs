@@ -1,7 +1,7 @@
 namespace Orders.Domain;
 
 /// <summary>
-/// Milestone 78: one row per order line being reserved, replacing
+/// One row per order line being reserved, replacing
 /// SagaOrchestrationState's single Sku/Quantity/ReservationId - a
 /// multi-line order now reserves every line, not just the largest by
 /// value. EF owns this table's schema only, same as SagaOrchestrationState;

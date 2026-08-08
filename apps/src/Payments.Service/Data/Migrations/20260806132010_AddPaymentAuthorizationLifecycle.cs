@@ -51,7 +51,7 @@ namespace Payments.Service.Data.Migrations
                 table: "payments",
                 columns: ["state", "authorization_expires_at"]);
 
-            // Backfill: every payment that predates Milestone 68 was a
+            // Backfill: every payment that predates this schema was a
             // single-phase decision - the money was conceptually taken the
             // instant it was approved, which is exactly what Pix means now.
             // Leaving them at method='' / state='' would put historical rows

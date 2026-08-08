@@ -19,7 +19,7 @@ public static class ApplicationServiceCollectionExtensions
         // immutable and thread-safe, so the engine is a singleton and each
         // Price call takes a cheap session off it.
         services.TryAddSingleton<IPricingEngine, NRulesPricingEngine>();
-        // Milestone 67: coupon validity windows are evaluated against this
+        // Coupon validity windows are evaluated against this
         // clock, so it is injected rather than read from DateTimeOffset.UtcNow -
         // otherwise "expired last night" is untestable without waiting.
         services.TryAddSingleton(TimeProvider.System);

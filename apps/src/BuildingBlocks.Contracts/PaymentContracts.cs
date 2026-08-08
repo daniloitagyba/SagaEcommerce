@@ -44,7 +44,7 @@ public static class PaymentMethods
 }
 
 /// <summary>
-/// Milestone 68: the life of a payment, replacing the single
+/// The life of a payment, replacing the single
 /// <c>Approved</c> boolean.
 ///
 ///   Declined                                       (risk rules said no - terminal)
@@ -62,7 +62,7 @@ public static class PaymentStates
     public const string Authorized = "Authorized";
 
     /// <summary>
-    /// Milestone 73: a boleto has been issued and not yet paid. Distinct
+    /// A boleto has been issued and not yet paid. Distinct
     /// from <see cref="Authorized"/> because no money is held - if this
     /// expires, nothing is released, the shopper simply never paid.
     /// </summary>
@@ -71,7 +71,7 @@ public static class PaymentStates
     public const string Voided = "Voided";
     public const string Expired = "Expired";
 
-    /// <summary>Milestone 70: fully refunded after a return. A partially refunded payment stays Captured.</summary>
+    /// <summary>Fully refunded after a return. A partially refunded payment stays Captured.</summary>
     public const string Refunded = "Refunded";
 
     /// <summary>An authorization is the only state money can still be moved from.</summary>
@@ -91,7 +91,7 @@ public sealed record PaymentCaptureRequested(
     DateTimeOffset RequestedAt);
 
 /// <summary>
-/// Milestone 81: the order was cancelled - settle whatever this payment
+/// The order was cancelled - settle whatever this payment
 /// actually is, whichever way that turns out to require. Deliberately not
 /// "void": a Pix payment is <c>Captured</c> the instant it is approved, so
 /// cancelling it has to give money back, not release a hold that was never

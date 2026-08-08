@@ -680,6 +680,14 @@ services:
       # actually load-bearing. Requires payments-service set to Both too,
       # so every request/reply pair has someone to talk to.
       Saga__Mode: Both
+      # Milestone 88 follow-up: this service's own credentials for the
+      # anti-entropy sweep's two cross-service reads (GET /payments/by-order,
+      # GET /inventory/backorders) - reuses orders-api-clients, the same
+      # confidential client scripts/keycloak-configure-realm.sh already
+      # provisions as this lab's trusted-backend-tooling identity.
+      Keycloak__TokenUrl: http://keycloak:8080/realms/orders-lab/protocol/openid-connect/token
+      Keycloak__ClientId: orders-api-clients
+      Keycloak__ClientSecret: ${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET is required}
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -724,6 +732,7 @@ services:
       # Milestone 75: must match orders-worker's Saga__Mode above - see that
       # comment.
       Saga__Mode: Both
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
     depends_on:
       kafka-init:
         condition: service_completed_successfully

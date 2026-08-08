@@ -15,7 +15,7 @@ using Testcontainers.Redpanda;
 namespace Orders.IntegrationTests;
 
 /// <summary>
-/// Milestone 78: a multi-line order now reserves every line, not just the
+/// A multi-line order now reserves every line, not just the
 /// largest by value - these tests drive OrderSagaReplyConsumer's per-line
 /// aggregation directly (the same testable seam OrderSagaReplyConsumerSettlementTests
 /// uses), proving the two behaviours that only exist because there's more

@@ -8,7 +8,7 @@ using Orders.Worker;
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
-// Milestone 69: fail loudly at startup instead of silently at runtime. A
+// Fail loudly at startup instead of silently at runtime. A
 // missing DI registration used to surface only when first resolved - if
 // that's the outbox dispatcher, it's a background loop logging an
 // exception every poll while the service reports healthy and delivers
@@ -130,7 +130,21 @@ builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, 
     client.Timeout = TimeSpan.FromSeconds(3);
 }).AddStandardResilienceHandler();
 
-// Milestone 88: the anti-entropy sweep's two cross-service reads.
+// This service's own credentials - reuses
+// orders-api-clients (already provisioned as this lab's trusted-backend-tooling client)
+// rather than provisioning a new one, since it already carries every role
+// and audience the sweep below needs.
+builder.Services.AddOptions<KeycloakOptions>()
+    .Bind(builder.Configuration.GetSection(KeycloakOptions.SectionName))
+    .Validate(options => !string.IsNullOrWhiteSpace(options.ClientSecret), "Keycloak client secret is required.")
+    .ValidateOnStart();
+builder.Services.AddHttpClient<KeycloakTokenProvider>();
+builder.Services.AddTransient<BearerTokenHandler>();
+
+// The anti-entropy sweep's two cross-service reads.
+// Both now authenticate as the service identity
+// above - BearerTokenHandler attaches the token before AddStandardResilienceHandler's
+// retries run, so a retried request is still authenticated.
 builder.Services.AddOptions<AntiEntropyOptions>()
     .Bind(builder.Configuration.GetSection(AntiEntropyOptions.SectionName))
     .Validate(options => options.SweepIntervalSeconds > 0, "Anti-entropy sweep interval must be positive.")
@@ -143,13 +157,13 @@ builder.Services.AddHttpClient("anti-entropy-payments", (serviceProvider, client
     var options = serviceProvider.GetRequiredService<IOptions<AntiEntropyOptions>>().Value;
     client.BaseAddress = new Uri(options.PaymentsBaseUrl);
     client.Timeout = TimeSpan.FromSeconds(5);
-}).AddStandardResilienceHandler();
+}).AddHttpMessageHandler<BearerTokenHandler>().AddStandardResilienceHandler();
 builder.Services.AddHttpClient("anti-entropy-inventory", (serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<AntiEntropyOptions>>().Value;
     client.BaseAddress = new Uri(options.InventoryBaseUrl);
     client.Timeout = TimeSpan.FromSeconds(5);
-}).AddStandardResilienceHandler();
+}).AddHttpMessageHandler<BearerTokenHandler>().AddStandardResilienceHandler();
 builder.Services.AddHostedService<AntiEntropySweeper>();
 
 builder.Services.AddSingleton<IProducer<string, string>>(serviceProvider =>
@@ -188,7 +202,7 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         [options.OrderCreatedTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
 });
-// Milestone 65: which saga(s) this instance answers to - see SagaMode's
+// Which saga(s) this instance answers to - see SagaMode's
 // own comment. Both is for side-by-side comparison; Choreography is the default.
 var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Choreography);
 

@@ -7,7 +7,7 @@ using NpgsqlTypes;
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 88: catches the class of bug Milestone 81's audit found by
+/// Catches the class of bug a prior audit found by
 /// reading code, this time by comparing what actually happened - two
 /// invariants that should always hold across the Orders/Payments and
 /// Orders/Inventory boundaries, checked periodically rather than assumed.
@@ -24,8 +24,8 @@ namespace Orders.Worker;
 ///
 /// A divergence is logged and counted (anti_entropy.divergences), never
 /// auto-corrected. Guessing which side is wrong from here would repeat
-/// exactly the mistake this milestone exists to catch - a human, or a
-/// separately-reasoned compensation (Milestone 81's own fix, for the one
+/// exactly the mistake this sweep exists to catch - a human, or a
+/// separately-reasoned compensation (the cancellation-compensation fix, for the one
 /// bug class this happens to have already been built for) decides what to
 /// do about a divergence; this sweep's job stops at making sure one is
 /// never silent.
@@ -76,8 +76,9 @@ public sealed class AntiEntropySweeper(
     {
         var paymentDivergences = await CheckOrdersHaveAccountedPaymentsAsync(cancellationToken);
         var backorderDivergences = await CheckBackordersBelongToWaitingOrdersAsync(cancellationToken);
+        var committedInventoryDivergences = await CheckCommittedInventoryBelongsToLiveOrdersAsync(cancellationToken);
 
-        AntiEntropyLog.SweepCompleted(logger, paymentDivergences, backorderDivergences);
+        AntiEntropyLog.SweepCompleted(logger, paymentDivergences, backorderDivergences, committedInventoryDivergences);
     }
 
     private async Task<int> CheckOrdersHaveAccountedPaymentsAsync(CancellationToken cancellationToken)
@@ -168,6 +169,49 @@ public sealed class AntiEntropySweeper(
         return divergences;
     }
 
+    /// <summary>
+    /// The check the audit above
+    /// wanted from the start - committed
+    /// inventory belonging to a cancelled order - built now that
+    /// Inventory.Service's reservation ledger survives settlement to ask
+    /// about. Same shape as the backorder check above: fetch what
+    /// Inventory has on file, compare against Orders' own status column.
+    /// </summary>
+    private async Task<int> CheckCommittedInventoryBelongsToLiveOrdersAsync(CancellationToken cancellationToken)
+    {
+        var inventoryClient = httpClientFactory.CreateClient("anti-entropy-inventory");
+        IReadOnlyList<CommittedReservationResponse> committedReservations;
+        try
+        {
+            using var response = await inventoryClient.GetAsync("/inventory/committed-reservations", cancellationToken);
+            response.EnsureSuccessStatusCode();
+            committedReservations = await response.Content.ReadFromJsonAsync<List<CommittedReservationResponse>>(cancellationToken) ?? [];
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            AntiEntropyLog.DependencyUnavailable(logger, "inventory-service", exception);
+            return 0;
+        }
+
+        var divergences = 0;
+        var orderIds = committedReservations.Select(r => r.OrderId).Distinct().Take(_options.BatchSize).ToList();
+        var statuses = await GetOrderStatusesAsync(orderIds, cancellationToken);
+
+        foreach (var reservation in committedReservations)
+        {
+            statuses.TryGetValue(reservation.OrderId, out var orderStatus);
+
+            if (AntiEntropyChecks.CommittedInventoryBelongsToACancelledOrder(orderStatus))
+            {
+                divergences++;
+                OrdersTelemetry.RecordAntiEntropyDivergence("committed_inventory_on_cancelled_order");
+                AntiEntropyLog.CommittedInventoryDivergence(logger, reservation.OrderId, reservation.Sku, reservation.Quantity, orderStatus ?? "unknown (no such order)");
+            }
+        }
+
+        return divergences;
+    }
+
     private async Task<IReadOnlyList<(Guid OrderId, string Status)>> GetPaymentCandidateOrdersAsync(CancellationToken cancellationToken)
     {
         const string sql = """
@@ -216,6 +260,8 @@ public sealed class AntiEntropySweeper(
     private sealed record PaymentLookupResponse(Guid OrderId, string State, decimal Amount, string Currency);
 
     private sealed record BackorderResponse(Guid ReservationId, Guid OrderId, string Sku, int Quantity, DateTimeOffset RequestedAt);
+
+    private sealed record CommittedReservationResponse(Guid ReservationId, Guid OrderId, string Sku, int Quantity, DateTimeOffset CommittedAt);
 }
 
 public sealed partial class AntiEntropyLog
@@ -226,12 +272,15 @@ public sealed partial class AntiEntropyLog
     [LoggerMessage(EventId = 9301, Level = LogLevel.Warning, Message = "Anti-entropy: backorder for sku {Sku} references order {OrderId}, whose status is {OrderStatus} - not Backordered")]
     public static partial void BackorderDivergence(ILogger logger, Guid orderId, string sku, string orderStatus);
 
-    [LoggerMessage(EventId = 9302, Level = LogLevel.Information, Message = "Anti-entropy sweep completed: {PaymentDivergences} payment divergence(s), {BackorderDivergences} backorder divergence(s)")]
-    public static partial void SweepCompleted(ILogger logger, int paymentDivergences, int backorderDivergences);
+    [LoggerMessage(EventId = 9302, Level = LogLevel.Information, Message = "Anti-entropy sweep completed: {PaymentDivergences} payment divergence(s), {BackorderDivergences} backorder divergence(s), {CommittedInventoryDivergences} committed-inventory divergence(s)")]
+    public static partial void SweepCompleted(ILogger logger, int paymentDivergences, int backorderDivergences, int committedInventoryDivergences);
 
     [LoggerMessage(EventId = 9303, Level = LogLevel.Error, Message = "Anti-entropy sweep failed; will retry next tick")]
     public static partial void SweepFailed(ILogger logger, Exception exception);
 
     [LoggerMessage(EventId = 9304, Level = LogLevel.Warning, Message = "Anti-entropy: {Dependency} unavailable this tick - skipped, not counted as a divergence")]
     public static partial void DependencyUnavailable(ILogger logger, string dependency, Exception exception);
+
+    [LoggerMessage(EventId = 9305, Level = LogLevel.Warning, Message = "Anti-entropy: order {OrderId} still has {Quantity} unit(s) of sku {Sku} committed - order status is {OrderStatus}, not a status that should still hold it")]
+    public static partial void CommittedInventoryDivergence(ILogger logger, Guid orderId, string sku, int quantity, string orderStatus);
 }

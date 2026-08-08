@@ -39,12 +39,12 @@ public sealed class PaymentsDbContext(DbContextOptions<PaymentsDbContext> option
         payment.Property(item => item.SettledAt).HasColumnName("settled_at");
         payment.Property(item => item.SettlementReason).HasColumnName("settlement_reason").HasMaxLength(256);
         payment.Property(item => item.RefundedAmount).HasColumnName("refunded_amount").HasPrecision(18, 2).IsRequired();
-        // Milestone 68: the expiry sweeper scans exactly this - authorizations
+        // The expiry sweeper scans exactly this - authorizations
         // past their window - so it is a hot-path index, not reporting.
         payment.HasIndex(item => new { item.State, item.AuthorizationExpiresAt })
             .HasDatabaseName("ix_payments_pending_authorizations");
         payment.HasIndex(item => item.OrderId).HasDatabaseName("ix_payments_order_id");
-        // Milestone 66: the risk rules read a customer's recent history on
+        // The risk rules read a customer's recent history on
         // every decision, so this index is on the hot path, not a
         // reporting convenience.
         payment.HasIndex(item => new { item.CustomerId, item.DecidedAt })

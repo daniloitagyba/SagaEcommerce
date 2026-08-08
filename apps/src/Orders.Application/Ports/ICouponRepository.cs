@@ -12,7 +12,7 @@ public interface ICouponRepository
 }
 
 /// <summary>
-/// Milestone 67: a checkout's claim on a coupon, reserved in the same
+/// A checkout's claim on a coupon, reserved in the same
 /// transaction that persists the order - it has to be, since reserving
 /// separately and then failing to insert the order would leak a slot the
 /// release path (keyed off the order reaching Cancelled) could never give back.

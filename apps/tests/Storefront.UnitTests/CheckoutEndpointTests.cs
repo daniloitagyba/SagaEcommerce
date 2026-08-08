@@ -9,19 +9,19 @@ using Storefront.Service;
 namespace Storefront.UnitTests;
 
 /// <summary>
-/// Milestone 66: StorefrontEndpoints.CheckoutAsync turns "what's in this
+/// StorefrontEndpoints.CheckoutAsync turns "what's in this
 /// cart" into an order - the one place here where getting the sequencing
 /// wrong has a real consequence (clear the cart too early and the shopper
 /// loses it for nothing; report a clear failure as a checkout failure and
 /// a charged shopper sees an error). Exercised directly, not through HTTP,
 /// since CheckoutAsync takes its collaborators as parameters.
 ///
-/// Milestone 83: the shopper's own bearer token is now the thing that
+/// The shopper's own bearer token is now the thing that
 /// identifies them, forwarded to Orders.Api rather than reconstructed from
 /// a service-account token plus a body-supplied customerId - so every test
 /// here supplies an inbound Authorization header instead of a customerId.
 ///
-/// Milestone 84: Cart.Service resolves "/carts/me" from that same
+/// Cart.Service resolves "/carts/me" from that same
 /// forwarded token, so cartId is gone from the request entirely - every
 /// test that used to pass one now just omits it.
 /// </summary>

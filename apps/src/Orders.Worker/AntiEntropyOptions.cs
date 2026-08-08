@@ -1,7 +1,7 @@
 namespace Orders.Worker;
 
 /// <summary>
-/// Milestone 88: how often, and how much, the anti-entropy sweep looks at
+/// How often, and how much, the anti-entropy sweep looks at
 /// per tick. An audit loop, not a hot path - the interval defaults far
 /// longer than any other sweeper in this codebase (SagaTimeoutSweeper,
 /// BackorderTimeoutSweeper), since it exists to catch a class of bug that
@@ -16,7 +16,7 @@ public sealed class AntiEntropyOptions
     /// <summary>
     /// How many of the most recently transitioned candidate rows each
     /// check examines per tick. Bounded, not paginated across the whole
-    /// table - see the milestone doc for why a full-table sweep was judged
+    /// table - see the design docs for why a full-table sweep was judged
     /// out of scope for this pass.
     /// </summary>
     public int BatchSize { get; init; } = 200;

@@ -15,7 +15,7 @@ public sealed class InvalidPaymentDecisionRequestException(string message, Excep
     : Exception(message, innerException);
 
 /// <summary>
-/// Milestone 65: the orchestrated flow's counterpart to
+/// The orchestrated flow's counterpart to
 /// PaymentMessageProcessor, brought to the same reliability bar - inbox
 /// dedup, a persisted Payment row, an outbox-published reply. The only
 /// genuine difference from choreography left is what it reacts to (an
@@ -85,7 +85,7 @@ public sealed class PaymentDecisionRequestProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        // Milestone 66: the same scored risk rules the choreographed path runs, keeping the two saga paths genuinely comparable.
+        // The same scored risk rules the choreographed path runs, keeping the two saga paths genuinely comparable.
         var riskEvaluator = serviceScope.ServiceProvider.GetRequiredService<PaymentRiskEvaluator>();
         var assessment = await riskEvaluator.EvaluateAsync(
             request.CustomerId,

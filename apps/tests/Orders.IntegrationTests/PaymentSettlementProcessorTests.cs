@@ -12,9 +12,9 @@ using Testcontainers.PostgreSql;
 namespace Orders.IntegrationTests;
 
 /// <summary>
-/// Milestone 76: reproduces the race at its source, in Payments.Service
+/// Reproduces the race at its source, in Payments.Service
 /// itself - a capture command arrives after the authorization has already
-/// expired (the sweeper won the race). Before this milestone,
+/// expired (the sweeper won the race). Before reconciliation was added,
 /// PaymentSettlementProcessor's `if (!changed)` branch logged
 /// "AlreadySettled" and returned without publishing anything, so this
 /// exact outcome was indistinguishable from a harmless redelivered capture
@@ -108,8 +108,8 @@ public sealed class PaymentSettlementProcessorTests : IAsyncLifetime
     [Fact]
     public async Task CancellingAnOrderWithACapturedPixPaymentRefundsItInsteadOfLoggingAHarmlessNoOp()
     {
-        // Milestone 81: reproduces the bug at its source. Before this
-        // milestone, Orders never even sent a settlement command for a Pix
+        // Reproduces the bug at its source. Before the fix,
+        // Orders never even sent a settlement command for a Pix
         // order on cancellation (RequiresCapture gated the whole branch) -
         // this test exercises Payments' side of the fix in isolation: a
         // Cancel command against an already-Captured payment must refund,

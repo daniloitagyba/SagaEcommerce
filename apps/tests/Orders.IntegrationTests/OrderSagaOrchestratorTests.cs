@@ -17,7 +17,7 @@ using Testcontainers.Redpanda;
 namespace Orders.IntegrationTests;
 
 /// <summary>
-/// Milestone 75: proves the property the whole milestone exists for - an
+/// Proves the property the orchestrator exists for - an
 /// order with line items reaching the orchestrator actually results in a
 /// real inventory reservation being requested (the real SKU, persisted and
 /// published), not just an order that quietly confirms because nothing
@@ -116,7 +116,7 @@ public sealed class OrderSagaOrchestratorTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task AMultiLineOrderGetsAReservationForEveryLineNotJustTheLargest()
     {
-        // Milestone 78: before this, only the largest line by value got a
+        // Before this, only the largest line by value got a
         // real reservation - the other lines were never checked against
         // stock at all. This is the regression test that would have caught that.
         var orchestrator = CreateOrchestrator();

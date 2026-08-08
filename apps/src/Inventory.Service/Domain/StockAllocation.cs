@@ -1,7 +1,7 @@
 namespace Inventory.Service.Domain;
 
 /// <summary>
-/// Stock of one SKU in one warehouse. Milestone 72 splits what used to be a
+/// Stock of one SKU in one warehouse. Splits what used to be a
 /// single row per SKU into one row per (SKU, warehouse), because "do we
 /// have 3 of these?" and "can we ship 3 of these from somewhere" stopped
 /// being the same question the moment there was more than one somewhere.
@@ -127,7 +127,7 @@ public sealed class ReservationAllocation
 }
 
 /// <summary>
-/// Milestone 72: decides which warehouses fulfil a reservation. Pure, so
+/// Decides which warehouses fulfil a reservation. Pure, so
 /// the allocation policy is property-testable and two replicas reasoning
 /// about the same stock reach the same answer.
 ///

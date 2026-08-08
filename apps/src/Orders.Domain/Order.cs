@@ -15,7 +15,7 @@ public sealed class Order
     /// <summary>
     /// The grand total actually charged: Subtotal - DiscountTotal +
     /// ShippingTotal + TaxTotal. Named "Amount", not "GrandTotal", since
-    /// every consumer since Milestone 7 already carries that name.
+    /// every consumer already carries that name.
     /// </summary>
     public decimal Amount { get; private set; }
 
@@ -38,7 +38,7 @@ public sealed class Order
     public string? CouponCode { get; private set; }
 
     /// <summary>
-    /// Milestone 68: "Card" or "Pix", deciding whether Payments holds an
+    /// "Card" or "Pix", deciding whether Payments holds an
     /// authorization to capture at shipment or charges outright. A plain
     /// string, not a BuildingBlocks.PaymentMethods reference - Orders.Domain
     /// must not depend on the messaging contracts' wire format.
@@ -46,7 +46,7 @@ public sealed class Order
     public string PaymentMethod { get; private set; } = DefaultPaymentMethod;
 
     /// <summary>
-    /// Milestone 71: where it is going. Null on the amount-only shape,
+    /// Where it is going. Null on the amount-only shape,
     /// which has no destination and falls back to flat shipping and the
     /// global tax rate.
     /// </summary>
@@ -60,11 +60,11 @@ public sealed class Order
     public bool IsFullyReturned => _lines.Count > 0 && _lines.All(line => line.ReturnableQuantity == 0);
 
     /// <summary>
-    /// Milestone 70: builds a return for some of this order's units.
+    /// Builds a return for some of this order's units.
     /// Validation and refund arithmetic share one pass over the same fact -
     /// how much of each line is still returnable - so it's read only once.
     ///
-    /// Milestone 82: refunds each line's tax share alongside its goods
+    /// Refunds each line's tax share alongside its goods
     /// share (previously only LineTotal came back - the discounted goods
     /// price - leaving the tax on those units permanently kept). And on a
     /// return that empties the order, <paramref name="reasonCategory"/>
@@ -151,7 +151,7 @@ public sealed class Order
     }
 
     /// <summary>
-    /// The Milestone 7 amount-only constructor, kept so k6, Pact and the
+    /// The original amount-only constructor, kept so k6, Pact and the
     /// README's quickstart - all still POSTing {customerId, amount,
     /// currency} - don't break. Subtotal is just the amount; everything
     /// else is zero.

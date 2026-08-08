@@ -1,19 +1,17 @@
-using System.Security.Claims;
-using System.Text.Json;
 using BuildingBlocks;
+using BuildingBlocks.WebAuthentication;
 using Confluent.Kafka;
 using Inventory.Service;
 using Inventory.Service.Data;
 using Inventory.Service.Endpoints;
 using Inventory.Service.Messaging;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Milestone 73: same guard Orders.Api has carried since Milestone 69, where
+// Same guard Orders.Api already carries, where
 // one unregistered IProducer took the whole outbox down while the service
 // went on reporting healthy - a background loop cannot fail loudly on its
 // own, so the failure has to happen at startup instead.
@@ -199,40 +197,10 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         [options.ReplenishmentNeededTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
 });
-// Milestone 84: GET /inventory (exact quantities, whole catalog) was
+// GET /inventory (exact quantities, whole catalog) was
 // unauthenticated - commercially sensitive sell-through data for anyone
 // who could reach this pod. Same JWKS-backed validation as Orders.Api.
-var authority = builder.Configuration["Authentication:Authority"]
-    ?? throw new InvalidOperationException("Authentication:Authority is required.");
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.Authority = authority;
-        options.Audience = "inventory-service";
-        options.RequireHttpsMetadata = false;
-        options.Events = new JwtBearerEvents
-        {
-            OnTokenValidated = context =>
-            {
-                var realmAccess = context.Principal?.FindFirst("realm_access")?.Value;
-                if (string.IsNullOrEmpty(realmAccess) || context.Principal?.Identity is not ClaimsIdentity identity)
-                {
-                    return Task.CompletedTask;
-                }
-
-                using var document = JsonDocument.Parse(realmAccess);
-                if (document.RootElement.TryGetProperty("roles", out var roles))
-                {
-                    foreach (var role in roles.EnumerateArray())
-                    {
-                        identity.AddClaim(new Claim(ClaimTypes.Role, role.GetString() ?? string.Empty));
-                    }
-                }
-
-                return Task.CompletedTask;
-            }
-        };
-    });
+builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "inventory-service");
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("inventory:read", policy => policy.RequireRole("inventory:read"));
 

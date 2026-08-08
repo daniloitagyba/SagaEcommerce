@@ -1,8 +1,8 @@
 namespace Cart.Service;
 
 /// <summary>
-/// Milestone 84: the same preferred_username-first identity read
-/// Orders.Api's CallerIdentityExtensions uses (Milestone 83) - this
+/// The same preferred_username-first identity read
+/// Orders.Api's CallerIdentityExtensions uses - this
 /// service has no reference to Orders.Api's assembly, so the handful of
 /// lines are duplicated here rather than shared, the same tradeoff this
 /// codebase already made for the JWT-bearer wiring itself. Keeping the

@@ -5,7 +5,7 @@ using Orders.Infrastructure.RateLimiting;
 namespace Orders.Api.RateLimiting;
 
 /// <summary>
-/// Milestone 38: the cluster-wide counterpart to Milestone 11's per-pod
+/// The cluster-wide counterpart to the per-pod
 /// token bucket (applied via app.UseRateLimiter() just before this runs -
 /// a request has to pass the cheap local check first). Scoped to /orders
 /// only, matching RateLimitingExtensions.OrdersPolicy's endpoint group.

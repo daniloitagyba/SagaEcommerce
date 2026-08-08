@@ -6,17 +6,17 @@ using Microsoft.Extensions.Options;
 namespace Orders.Worker;
 
 /// <summary>
-/// The explicit compensation half of Milestone 22's comparison - the
+/// The explicit compensation half of the choreography-vs-orchestration comparison - the
 /// choreographed saga has no equivalent. If Payments.Service or
 /// Inventory.Service never replies, the orchestrator itself notices and
 /// resolves the order instead of leaving it parked at "Created" forever.
-/// Milestone 36: gated on LeaderElectionService.IsLeader, so every replica
-/// runs this loop but only the leader acts. Milestone 69: resolving now
+/// Gated on LeaderElectionService.IsLeader, so every replica
+/// runs this loop but only the leader acts. Resolving now
 /// also releases the coupon redemption and voids any card hold, since
 /// those hang off the transition.
 ///
 /// <para>
-/// Milestone 77: releases the <em>inventory</em> reservation too, but only
+/// Releases the <em>inventory</em> reservation too, but only
 /// for the two steps where that's provably safe. A blind release for every
 /// timed-out step was the original plan and turned out to be unsafe:
 /// Inventory.Service's settlement path (<c>WarehouseAllocationStore.
@@ -27,7 +27,7 @@ namespace Orders.Worker;
 /// from "this reservation predates per-warehouse tracking." Releasing a
 /// reservation that never happened would decrement a real concurrent
 /// order's <c>ReservedQuantity</c> and conjure phantom <c>AvailableQuantity</c>
-/// - worse than the gap this milestone closes.
+/// - worse than the gap this closes.
 /// </para>
 /// <para>
 /// So: <see cref="SagaStep.DecidePayment"/> and
@@ -41,10 +41,10 @@ namespace Orders.Worker;
 /// direction either loses inventory or corrupts someone else's count.
 /// <see cref="SagaStep.ReserveInventory"/> still gets a plain cancel, no
 /// release attempted - whether anything was ever reserved is unknown, and
-/// that is the one gap this milestone leaves open rather than paper over.
+/// that is the one gap left open rather than papered over.
 /// </para>
 /// <para>
-/// Milestone 78: a saga can now have several lines in flight at once, so
+/// A saga can now have several lines in flight at once, so
 /// every action above that used to touch "the" reservation now loops over
 /// <see cref="SagaOrchestrationRecord.Lines"/> instead - releasing every
 /// line on a DecidePayment/ReleaseInventory timeout, not just one.
@@ -93,7 +93,7 @@ public sealed class SagaTimeoutSweeper(
             case SagaStep.ReleaseInventory:
                 // Every line's reservation certainly exists and certainly
                 // hasn't been committed - DecidePayment is only reached
-                // once every line replied Reserved (Milestone 78), and
+                // once every line replied Reserved, and
                 // ReleaseInventory means a release was already requested
                 // once for every line, so resending is a safe redelivery,
                 // not a guess.

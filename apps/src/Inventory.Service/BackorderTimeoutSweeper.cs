@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 namespace Inventory.Service;
 
 /// <summary>
-/// Milestone 74: gives up on a backorder nobody restocked in time - an
+/// Gives up on a backorder nobody restocked in time - an
 /// order parked in Backordered forever is a support ticket, not a courtesy.
 /// No money is on hold here (payment is decided one step after reservation)
 /// - what this releases is the customer's wait. Reuses
