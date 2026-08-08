@@ -13,11 +13,13 @@ A distributed-systems lab built as a real e-commerce system, one milestone at a 
 - **Delivery guarantees** — transactional Outbox + Inbox, at-least-once Kafka processing, a durable event log.
 - **Polyglot persistence** — Postgres for transactions, MongoDB for the catalog, Redis as a real system of record for carts, not just a cache.
 - **Resilience & chaos engineering** — Polly pipelines proven against real fault injection (Toxiproxy, Chaos Mesh), not just configured.
+- **Anti-entropy reconciliation** — a periodic sweep that catches divergence between services (a payment an order believes happened but Payments never accounted for, stock still committed against an order that's since been cancelled) instead of assuming it can't occur.
+- **CRDTs for offline-tolerant state** — an Add-Wins Observed-Remove Set merges a cart's divergent client and server state instead of one silently overwriting the other.
 - **CQRS, event sourcing, CDC** — a denormalized read model, an append-only event store, Avro schema evolution, Debezium.
 - **Formal & property-based verification** — a TLA+ model of the saga, CsCheck generating 10,000 orders per pricing invariant.
 - **Quality gates in CI** — complexity/size limits, secrets and CVE scanning, mutation testing, coverage — each calibrated against a measurement, not a guess.
 - **GitOps & progressive delivery** — Argo CD + Argo Rollouts canaries with automatic rollback on a Prometheus analysis template.
-- **Service mesh & zero-trust** — Linkerd mTLS, Keycloak JWTs, Kyverno-enforced signed images.
+- **Service mesh & zero-trust** — Linkerd mTLS, Kyverno-enforced signed images, and Keycloak-verified identity for both services and shoppers, not just a service-account token at the edge.
 - **Full observability** — traces, metrics, and logs correlated end to end via OpenTelemetry, in Grafana.
 
 See [`docs/`](docs/) for the full, dated write-up of every milestone.
@@ -101,7 +103,7 @@ Integration tests spin up real, disposable Postgres/MongoDB/Redis/Kafka containe
 
 ## Repository layout
 
-- `apps/src` — the seven services (each with its own `README.md` and architecture diagram) and `BuildingBlocks` (shared contracts, telemetry, resilience pipelines).
+- `apps/src` — the seven services (each with its own `README.md` and architecture diagram) and `BuildingBlocks` (shared contracts, telemetry, resilience, authentication).
 - `apps/tests` — unit tests and Testcontainers-backed integration tests.
 - `compose/` — the full local infrastructure and application stack.
 - `kubernetes/` — production-style manifests: base resources, an Argo CD-managed overlay, cluster policies.
