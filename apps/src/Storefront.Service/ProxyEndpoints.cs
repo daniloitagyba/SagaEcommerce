@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text;
 
 namespace Storefront.Service;
@@ -6,8 +5,14 @@ namespace Storefront.Service;
 /// <summary>
 /// Storefront.Service is a backend-for-frontend: the browser only talks to
 /// this one origin, avoiding CORS and keeping internal cluster addresses
-/// out of client-side code. Every route is a thin, generic forward - the
-/// interesting logic (auth injection) lives in ForwardOrderAsync specifically.
+/// out of client-side code. Every route is a thin, generic forward.
+///
+/// Milestone 83: the direct /api/orders passthrough (kept for k6/Pact/the
+/// README quickstart, which post straight to it rather than going through
+/// StorefrontEndpoints.CheckoutAsync's cart-driven flow) now forwards the
+/// caller's own Authorization header instead of minting a service-account
+/// one - it used to authenticate as Storefront itself and simply relay
+/// whatever customerId the body asserted, the same gap CheckoutAsync had.
 /// </summary>
 public static class ProxyEndpoints
 {
@@ -23,8 +28,8 @@ public static class ProxyEndpoints
         endpoints.MapDelete("/api/cart/{**path}", (string path, HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
             => ForwardAsync(factory.CreateClient("cart"), path, request, cancellationToken));
 
-        endpoints.MapPost("/api/orders", (HttpRequest request, IHttpClientFactory factory, KeycloakTokenProvider tokenProvider, CancellationToken cancellationToken)
-            => ForwardOrderAsync(factory.CreateClient("orders"), request, tokenProvider, cancellationToken));
+        endpoints.MapPost("/api/orders", (HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
+            => ForwardOrderAsync(factory.CreateClient("orders"), request, cancellationToken));
 
         return endpoints;
     }
@@ -41,6 +46,14 @@ public static class ProxyEndpoints
             upstreamRequest.Content = new StringContent(body, Encoding.UTF8, "application/json");
         }
 
+        // Milestone 84: Cart.Service now requires the caller's own token
+        // (catalog stays anonymous for GETs, so this is a no-op there).
+        var authorization = request.Headers.Authorization.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(authorization))
+        {
+            upstreamRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+        }
+
         using var response = await client.SendAsync(upstreamRequest, cancellationToken);
         await WriteResponseAsync(request.HttpContext, response, cancellationToken);
     }
@@ -48,19 +61,21 @@ public static class ProxyEndpoints
     private static async Task ForwardOrderAsync(
         HttpClient client,
         HttpRequest request,
-        KeycloakTokenProvider tokenProvider,
         CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(request.Body);
         var body = await reader.ReadToEndAsync(cancellationToken);
 
-        var token = await tokenProvider.GetTokenAsync(cancellationToken);
-
         using var upstreamRequest = new HttpRequestMessage(HttpMethod.Post, "/orders")
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json")
         };
-        upstreamRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var authorization = request.Headers.Authorization.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(authorization))
+        {
+            upstreamRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+        }
 
         using var response = await client.SendAsync(upstreamRequest, cancellationToken);
         await WriteResponseAsync(request.HttpContext, response, cancellationToken);

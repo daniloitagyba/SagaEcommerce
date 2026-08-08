@@ -14,12 +14,15 @@ public sealed class InvalidSettlementRequestException(string message, Exception?
 
 /// <summary>
 /// Milestone 68: the second half of the two-phase payment flow - capturing
-/// an authorization Orders decided to charge, or voiding one it never will.
-/// Splits "approved" from "money moved", the distinction every card network
-/// makes, which is what makes an expiry sweeper meaningful (see
-/// PaymentAuthorizationSweeper). Both operations are guarded inside the
-/// domain, so a redelivered command is a no-op, not a double charge - the
-/// same reasoning as the inbox, applied to a state transition.
+/// an authorization Orders decided to charge, or settling one it never
+/// will (Milestone 81: cancellation, which may void a hold or refund a
+/// capture depending on what it finds - see Payment.TryCancel) or partially
+/// giving one back (Milestone 70: refund). Splits "approved" from "money
+/// moved", the distinction every card network makes, which is what makes an
+/// expiry sweeper meaningful (see PaymentAuthorizationSweeper). Every
+/// operation is guarded inside the domain, so a redelivered command is a
+/// no-op, not a double charge - the same reasoning as the inbox, applied to
+/// a state transition.
 /// </summary>
 public sealed class PaymentSettlementProcessor(
     IServiceScopeFactory scopeFactory,
@@ -37,7 +40,8 @@ public sealed class PaymentSettlementProcessor(
         {
             var topic when topic == _options.CaptureRequestedTopic => SettlementOperation.Capture,
             var topic when topic == _options.RefundRequestedTopic => SettlementOperation.Refund,
-            _ => SettlementOperation.Void
+            var topic when topic == _options.CancellationRequestedTopic => SettlementOperation.Cancel,
+            _ => throw new InvalidSettlementRequestException($"'{consumeResult.Topic}' is not a settlement topic this processor subscribes to.")
         };
         var (orderId, correlationId, reason, refundAmount) = Deserialize(consumeResult.Message.Value, operation);
 
@@ -78,7 +82,13 @@ public sealed class PaymentSettlementProcessor(
             SettlementOperation.Capture => payment.TryCapture(settledAt),
             // Milestone 70: guarded cumulatively inside the domain, so a redelivered refund can't exceed what was ever charged.
             SettlementOperation.Refund => payment.TryRefund(refundAmount, settledAt),
-            _ => payment.TrySettleWithoutCapture(PaymentStates.Voided, reason, settledAt)
+            // Milestone 81: decides void vs. refund from the payment's own
+            // current state - see Payment.TryCancel. Replaces the old
+            // method-agnostic "Void" operation entirely: nothing produces
+            // that command any more, since a Pix payment is Captured the
+            // instant it's approved and voiding it was never the right verb.
+            SettlementOperation.Cancel => payment.TryCancel(reason, settledAt),
+            _ => throw new UnreachableException($"Unhandled {nameof(SettlementOperation)} '{operation}'.")
         };
 
         if (!changed)
@@ -93,11 +103,24 @@ public sealed class PaymentSettlementProcessor(
             // That capture can never happen now, and the saga has to be told
             // - the alternative is a shipped order nobody ever charged, with
             // nothing in the system recording that it went wrong.
+            //
+            // Milestone 81: Cancel is different in kind from the other
+            // three - it has no single target state (it might void, might
+            // refund, depending on what it finds), so "did it apply" can't
+            // be compared against one expected outcome the way Capture and
+            // Void can. Every state TryCancel refuses to move from -
+            // Declined (nothing was ever approved), Expired (the hold
+            // already lapsed), Voided or Refunded (already settled) - means
+            // there is genuinely nothing left to do, not that a capture was
+            // silently missed. Cancel-unchanged is therefore always the
+            // benign case; unlike Capture, there is no "money should have
+            // moved and didn't" reading of it that the saga needs to hear about.
             var isRedeliveryOfAlreadyAppliedOperation = operation switch
             {
                 SettlementOperation.Capture => payment.State == PaymentStates.Captured,
                 SettlementOperation.Refund => payment.State == PaymentStates.Refunded && payment.RefundedAmount >= payment.Amount,
-                _ => payment.State == PaymentStates.Voided
+                SettlementOperation.Cancel => true,
+                _ => throw new UnreachableException($"Unhandled {nameof(SettlementOperation)} '{operation}'.")
             };
 
             if (isRedeliveryOfAlreadyAppliedOperation)
@@ -183,12 +206,15 @@ public sealed class PaymentSettlementProcessor(
                     return (request.OrderId, request.CorrelationId, request.Reason, request.Amount);
                 }
 
-                default:
+                case SettlementOperation.Cancel:
                 {
-                    var request = JsonSerializer.Deserialize<PaymentVoidRequested>(payload, SerializerOptions)
-                        ?? throw new JsonException("Empty void request.");
+                    var request = JsonSerializer.Deserialize<PaymentCancellationRequested>(payload, SerializerOptions)
+                        ?? throw new JsonException("Empty cancellation request.");
                     return (request.OrderId, request.CorrelationId, request.Reason, 0m);
                 }
+
+                default:
+                    throw new UnreachableException($"Unhandled {nameof(SettlementOperation)} '{operation}'.");
             }
         }
         catch (JsonException exception)
@@ -200,8 +226,8 @@ public sealed class PaymentSettlementProcessor(
     private enum SettlementOperation
     {
         Capture,
-        Void,
-        Refund
+        Refund,
+        Cancel
     }
 
     private static string? GetHeader(Headers headers, string key)

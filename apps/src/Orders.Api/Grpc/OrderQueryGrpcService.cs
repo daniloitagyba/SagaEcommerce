@@ -27,12 +27,16 @@ public sealed class OrderQueryGrpcService(GetOrderHandler handler, IConfiguratio
         }
 
         var result = await handler.HandleAsync(id, context.CancellationToken);
-        if (result.Order is null)
+        var httpContext = context.GetHttpContext();
+
+        // Milestone 83: same 404-hides-ownership reasoning as the REST
+        // GetByIdAsync this service mirrors - a gRPC transport for the same
+        // read is still the same read, and inherits the same gap otherwise.
+        if (result.Order is null || !httpContext.MayAccess(result.Order.CustomerId))
         {
             throw new RpcException(new Status(StatusCode.NotFound, $"Order '{id}' was not found."));
         }
 
-        var httpContext = context.GetHttpContext();
         var order = result.Order;
 
         return new GetOrderResponse

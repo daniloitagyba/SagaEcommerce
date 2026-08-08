@@ -8,9 +8,10 @@ public sealed class PaymentSettlementOptions
 
     public string CaptureRequestedTopic { get; init; } = "payments.capture-requested.v1";
 
-    public string VoidRequestedTopic { get; init; } = "payments.void-requested.v1";
-
     public string RefundRequestedTopic { get; init; } = "payments.refund-requested.v1";
+
+    /// <summary>Milestone 81: the order was cancelled - void the hold or refund the capture, whichever the payment's state calls for.</summary>
+    public string CancellationRequestedTopic { get; init; } = "payments.cancellation-requested.v1";
 
     public string SettlementRepliedTopic { get; init; } = "payments.settlement-replied.v1";
 

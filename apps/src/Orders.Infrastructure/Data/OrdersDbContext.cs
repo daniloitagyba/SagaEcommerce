@@ -115,6 +115,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         line.Property(item => item.LineSubtotal).HasColumnName("line_subtotal").HasPrecision(18, 2).IsRequired();
         line.Property(item => item.LineDiscount).HasColumnName("line_discount").HasPrecision(18, 2).IsRequired();
         line.Property(item => item.LineTotal).HasColumnName("line_total").HasPrecision(18, 2).IsRequired();
+        line.Property(item => item.LineTax).HasColumnName("line_tax").HasPrecision(18, 2).IsRequired();
         line.HasIndex(item => item.OrderId).HasDatabaseName("ix_order_lines_order_id");
         line.HasIndex(item => item.Sku).HasDatabaseName("ix_order_lines_sku");
         line.Property(item => item.ReturnedQuantity).HasColumnName("returned_quantity").IsRequired();
@@ -143,6 +144,8 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         orderReturn.Property(item => item.OrderId).HasColumnName("order_id").IsRequired();
         orderReturn.Property(item => item.CustomerId).HasColumnName("customer_id").HasMaxLength(100).IsRequired();
         orderReturn.Property(item => item.Reason).HasColumnName("reason").HasMaxLength(256).IsRequired();
+        orderReturn.Property(item => item.ReasonCategory).HasColumnName("reason_category").HasConversion<string>().HasMaxLength(16).IsRequired();
+        orderReturn.Property(item => item.ShippingRefund).HasColumnName("shipping_refund").HasPrecision(18, 2).IsRequired();
         orderReturn.Property(item => item.RefundTotal).HasColumnName("refund_total").HasPrecision(18, 2).IsRequired();
         orderReturn.Property(item => item.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
         orderReturn.Property(item => item.RequestedAt).HasColumnName("requested_at").IsRequired();

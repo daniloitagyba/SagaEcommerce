@@ -1,9 +1,12 @@
 using BuildingBlocks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Orders.Application.Ports;
 using Orders.Domain;
 
 namespace Orders.Application.UseCases.ReturnOrder;
+
+using Orders.Application; // CallerIdentity - a nested file-scoped namespace does not implicitly see its parent's types.
 
 public sealed record ReturnItemRequest(string Sku, int Quantity);
 
@@ -20,16 +23,23 @@ public sealed record ReturnOrderResult(
 /// The refund arithmetic lives in the domain (Order.TryReturn ->
 /// ReturnRefundCalculator), since it needs the order's own per-line
 /// charged totals, which nothing outside the aggregate should recompute.
+/// Milestone 82: the regret window's length is the one piece of that
+/// policy this handler supplies - everything else (whether this return
+/// actually falls inside it) is decided in the domain, from the order's
+/// own CreatedAt.
 /// </summary>
 public sealed class ReturnOrderHandler(
     IOrderReturnRepository repository,
     IOrderCache orderCache,
+    IOptions<ReturnOptions> returnOptions,
     ILogger<ReturnOrderHandler> logger)
 {
     public async Task<ReturnOrderResult> HandleAsync(
         Guid orderId,
         IReadOnlyList<ReturnItemRequest> items,
         string reason,
+        ReturnReasonCategory reasonCategory,
+        CallerIdentity caller,
         string correlationId,
         CancellationToken cancellationToken)
     {
@@ -39,9 +49,22 @@ public sealed class ReturnOrderHandler(
             return new ReturnOrderResult(ReturnRejectionReason.None, null, null, 0m, false, OrderNotFound: true);
         }
 
+        // Milestone 83: checked before TryReturn mutates anything, not
+        // after - the order is read either way to know whose it is, but a
+        // non-owner's request must never reach the mutation, even
+        // transiently. Reported the same as a genuinely missing order (see
+        // OrderEndpoints.GetByIdAsync's identical reasoning) so probing an
+        // id can't distinguish "not yours" from "doesn't exist."
+        if (!caller.MayAccess(order.CustomerId))
+        {
+            return new ReturnOrderResult(ReturnRejectionReason.None, null, null, 0m, false, OrderNotFound: true);
+        }
+
         var (orderReturn, rejection, offendingSku) = order.TryReturn(
             [.. items.Select(item => (item.Sku, item.Quantity))],
             string.IsNullOrWhiteSpace(reason) ? "customer return" : reason.Trim(),
+            reasonCategory,
+            TimeSpan.FromDays(returnOptions.Value.RegretWindowDays),
             DateTimeOffset.UtcNow);
 
         if (rejection != ReturnRejectionReason.None)

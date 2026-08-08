@@ -68,7 +68,7 @@ public class DomainNamespaceTests
         // own (Milestone 45), so the rule here is "never own persistence or
         // messaging at all" - a regression guard against a future project
         // reference reintroducing one of these dependencies transitively.
-        var assembly = typeof(Storefront.Service.KeycloakTokenProvider).Assembly;
+        var assembly = typeof(Storefront.Service.StorefrontEndpoints).Assembly;
 
         var result = Types.InAssembly(assembly)
             .ShouldNot()

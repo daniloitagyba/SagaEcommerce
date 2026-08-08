@@ -26,7 +26,22 @@ public sealed class OrderReturn
 
     public string Reason { get; private set; } = string.Empty;
 
-    /// <summary>What the customer gets back, summed across the returned lines.</summary>
+    /// <summary>
+    /// Milestone 82: what refund policy this return is under - separate
+    /// from the free-text <see cref="Reason"/>, which is a description for
+    /// the record, not something arithmetic can branch on.
+    /// </summary>
+    public ReturnReasonCategory ReasonCategory { get; private set; }
+
+    /// <summary>
+    /// Milestone 82: this order's outbound shipping, refunded only on a
+    /// complete return under a policy that owes it (see
+    /// <see cref="Order.TryReturn"/>) - shipping is charged once, at the
+    /// order level, never per line, so there is nothing to prorate here.
+    /// </summary>
+    public decimal ShippingRefund { get; private set; }
+
+    /// <summary>What the customer gets back: every returned line's goods and tax, plus ShippingRefund when owed.</summary>
     public decimal RefundTotal { get; private set; }
 
     public string Currency { get; private set; } = string.Empty;
@@ -40,6 +55,8 @@ public sealed class OrderReturn
         string customerId,
         string currency,
         string reason,
+        ReturnReasonCategory reasonCategory,
+        decimal shippingRefund,
         DateTimeOffset requestedAt,
         IReadOnlyList<OrderReturnLine> lines)
     {
@@ -50,6 +67,8 @@ public sealed class OrderReturn
             CustomerId = customerId,
             Currency = currency,
             Reason = reason,
+            ReasonCategory = reasonCategory,
+            ShippingRefund = shippingRefund,
             RequestedAt = requestedAt
         };
 
@@ -59,8 +78,58 @@ public sealed class OrderReturn
             orderReturn._lines.Add(line);
         }
 
-        orderReturn.RefundTotal = orderReturn._lines.Sum(line => line.RefundAmount);
+        orderReturn.RefundTotal = orderReturn._lines.Sum(line => line.RefundAmount) + shippingRefund;
         return orderReturn;
+    }
+}
+
+/// <summary>
+/// Milestone 82: the policy that decides whether outbound shipping comes
+/// back on a complete return, alongside the goods and their tax. Not a
+/// free-text description - see <see cref="OrderReturn.Reason"/> for that.
+/// </summary>
+public enum ReturnReasonCategory
+{
+    /// <summary>The item was faulty or wrong. Shipping refunds in full on a complete return, no window.</summary>
+    Defect,
+
+    /// <summary>The shopper changed their mind - CDC art. 49's arrependimento. Shipping refunds in full on a complete return, but only inside the regret window.</summary>
+    Regret,
+
+    /// <summary>A discretionary return outside any legal entitlement. Goods and tax come back; shipping does not.</summary>
+    Unwanted
+}
+
+/// <summary>
+/// Milestone 82: whether outbound shipping is owed on a return, pulled out
+/// of <see cref="Order.TryReturn"/> as its own pure function - same
+/// reasoning that keeps <see cref="ReturnRefundCalculator"/> a standalone,
+/// directly testable piece of arithmetic rather than inline logic no test
+/// can reach without first getting an <see cref="Order"/> all the way to
+/// <c>Delivered</c>, which nothing in this aggregate's public API can do.
+/// </summary>
+public static class ShippingRefundPolicy
+{
+    public static bool IsOwed(
+        bool orderFullyReturned,
+        ReturnReasonCategory reasonCategory,
+        DateTimeOffset orderCreatedAt,
+        DateTimeOffset requestedAt,
+        TimeSpan regretWindow)
+    {
+        if (!orderFullyReturned)
+        {
+            // A partial return keeps the order open for more shipments to
+            // come back on - shipping was for the whole parcel, not this slice of it.
+            return false;
+        }
+
+        return reasonCategory switch
+        {
+            ReturnReasonCategory.Defect => true,
+            ReturnReasonCategory.Regret => requestedAt - orderCreatedAt <= regretWindow,
+            _ => false
+        };
     }
 }
 

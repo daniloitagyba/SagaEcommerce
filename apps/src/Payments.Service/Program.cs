@@ -68,8 +68,8 @@ builder.Services.AddOptions<PaymentSettlementOptions>()
     .Bind(builder.Configuration.GetSection(PaymentSettlementOptions.SectionName))
     .Validate(options => !string.IsNullOrWhiteSpace(options.BootstrapServers), "Kafka bootstrap servers are required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.CaptureRequestedTopic), "Capture-requested topic is required.")
-    .Validate(options => !string.IsNullOrWhiteSpace(options.VoidRequestedTopic), "Void-requested topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.RefundRequestedTopic), "Refund-requested topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.CancellationRequestedTopic), "Cancellation-requested topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.SettlementRepliedTopic), "Settlement-replied topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.DeadLetterTopic), "Settlement dead-letter topic is required.")
     .Validate(options => options.ExpirySweepIntervalSeconds > 0, "Expiry sweep interval must be positive.")
@@ -187,7 +187,7 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Payments.Service.PaymentSettlementConsumer");
     return new KafkaConsumerHost<string>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
-        [options.CaptureRequestedTopic, options.VoidRequestedTopic, options.RefundRequestedTopic], options.DeadLetterTopic,
+        [options.CaptureRequestedTopic, options.RefundRequestedTopic, options.CancellationRequestedTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
 });
 builder.Services.AddHostedService<PaymentAuthorizationSweeper>();
@@ -217,5 +217,26 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
     Predicate = registration => registration.Tags.Contains("ready")
 });
 app.MapGet("/", () => Results.Ok(new { service = "Payments.Service", instanceId }));
+
+// Milestone 88: the one read this service otherwise has no reason to
+// serve - Payments is Kafka-only everywhere else, but Orders.Worker's
+// anti-entropy sweeper needs to ask "what does Payments think happened to
+// this order" without a second copy of payment state living in Orders'
+// own database. Unauthenticated, unlike every other cross-service surface
+// this lab protects (Milestones 83-84) - a deliberate, named scope gap:
+// this is meant for one internal caller, and this pass did not extend
+// Milestone 26's JWT wiring to Payments.Service to close it properly.
+app.MapGet("/payments/by-order/{orderId:guid}", async (Guid orderId, PaymentsDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var payment = await dbContext.Payments
+        .AsNoTracking()
+        .Where(item => item.OrderId == orderId)
+        .OrderByDescending(item => item.DecidedAt)
+        .FirstOrDefaultAsync(cancellationToken);
+
+    return payment is null
+        ? Results.NotFound()
+        : Results.Ok(new { payment.OrderId, payment.State, payment.Amount, payment.Currency, payment.DecidedAt });
+}).WithTags("Payments");
 
 await app.RunAsync();

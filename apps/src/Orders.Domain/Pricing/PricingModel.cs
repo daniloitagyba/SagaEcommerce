@@ -81,7 +81,10 @@ public sealed record AppliedCharge(string Code, string Description, Money Amount
 /// <summary>
 /// The priced result. GrandTotal is computed here, never supplied, and the
 /// per-line discount allocation is guaranteed to sum to exactly
-/// DiscountTotal - see AllocateDiscounts.
+/// DiscountTotal - see AllocateDiscounts. LineTaxes is the same guarantee
+/// for TaxTotal (Milestone 82) - stored per line at checkout time, same
+/// reasoning as LineDiscounts, so a later return can refund a line's tax
+/// share without re-deriving it from a rate that may have changed since.
 /// </summary>
 public sealed record PricingBreakdown(
     Money Subtotal,
@@ -91,7 +94,8 @@ public sealed record PricingBreakdown(
     Money ShippingTotal,
     Money TaxTotal,
     Money GrandTotal,
-    IReadOnlyList<Money> LineDiscounts);
+    IReadOnlyList<Money> LineDiscounts,
+    IReadOnlyList<Money> LineTaxes);
 
 public static class PricingAllocation
 {
@@ -127,6 +131,45 @@ public static class PricingAllocation
             .ToArray();
 
         return MoneyAllocation.Allocate(discountTotal, weights, currency);
+    }
+
+    /// <summary>
+    /// Milestone 82: spreads the order's tax across lines weighted by each
+    /// line's <em>discounted</em> value, not its raw subtotal - tax itself
+    /// is computed on the discounted subtotal (see NRulesPricingEngine), so
+    /// a heavily-discounted line should carry proportionally less of it.
+    /// <paramref name="lineDiscounts"/> must already be aligned with
+    /// <paramref name="lines"/>, index for index, the same list
+    /// <see cref="AllocateDiscounts"/> returns.
+    /// </summary>
+    public static IReadOnlyList<Money> AllocateTax(
+        Money taxTotal,
+        IReadOnlyList<PricingLine> lines,
+        IReadOnlyList<Money> lineDiscounts,
+        Currency currency)
+    {
+        var zero = new Money(0m, currency);
+
+        if (lines.Count == 0)
+        {
+            return [];
+        }
+
+        if (taxTotal == zero)
+        {
+            return [.. lines.Select(_ => zero)];
+        }
+
+        // Each line's discounted value can never be negative: LineDiscounts
+        // is itself an allocation of an order-level discount already capped
+        // at the subtotal, so no line's share of it can exceed that line's
+        // own subtotal.
+        var weights = lines
+            .Select((line, index) => (long)decimal.Round(
+                (line.LineSubtotal.Amount - lineDiscounts[index].Amount) * 100m, 0, MidpointRounding.AwayFromZero))
+            .ToArray();
+
+        return MoneyAllocation.Allocate(taxTotal, weights, currency);
     }
 }
 

@@ -137,21 +137,32 @@ public sealed class OrderStatusStore(
             }
         }
 
-        // Only a card leaves money on hold; asking Payments to settle a Pix
-        // payment is harmless but achieves nothing.
-        if (paymentMethod is null || !PaymentMethods.RequiresCapture(paymentMethod))
+        if (paymentMethod is null)
         {
             return;
         }
 
-        // Milestone 69 moved capture from Confirmed to Shipped - the whole point of a hold is taking the money when the goods actually leave.
-        if (targetStatus == OrderStatuses.Shipped)
+        // Milestone 69 moved capture from Confirmed to Shipped - the whole
+        // point of a hold is taking the money when the goods actually
+        // leave. Only a card/boleto leaves a hold; asking Payments to
+        // capture a Pix payment is harmless but achieves nothing, since it
+        // was captured the instant it was approved.
+        if (targetStatus == OrderStatuses.Shipped && PaymentMethods.RequiresCapture(paymentMethod))
         {
             await settlementRequester.RequestCaptureAsync(orderId, correlationId, cancellationToken);
         }
         else if (targetStatus == OrderStatuses.Cancelled)
         {
-            await settlementRequester.RequestVoidAsync(orderId, correlationId, "order cancelled", cancellationToken);
+            // Milestone 81: unlike capture, cancellation is not
+            // method-gated - a Pix payment is Captured the moment it's
+            // approved, so cancelling it has to refund, not void a hold
+            // that was never placed. Payments decides which of the two
+            // from the payment's own state (Payment.TryCancel); every
+            // caller here is always from Created (see OrderStatusStore's
+            // callers - the saga's own compensation already released
+            // whatever inventory was reserved before reaching this point),
+            // so there is nothing else to compensate on this path.
+            await settlementRequester.RequestCancellationAsync(orderId, correlationId, "order cancelled", cancellationToken);
         }
     }
 }

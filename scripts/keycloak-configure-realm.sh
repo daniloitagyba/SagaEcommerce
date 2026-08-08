@@ -21,6 +21,62 @@ curl_json() {
   curl --fail --silent --show-error --header "Content-Type: application/json" "$@"
 }
 
+# Milestone 84: one client now needs an audience claim recognized by up to
+# three services (orders-api, catalog-service, inventory-service), each
+# validating its own Audience so a token minted for one can't be replayed
+# against another - so this is a function, not three more copy-pasted
+# blocks like Milestone 83 already had once for orders-api alone.
+create_audience_mapper() {
+  local internal_id=$1
+  local audience=$2
+  local mapper_name="${audience}-audience"
+
+  local existing
+  existing=$(
+    curl --fail --silent --header "$auth_header" \
+      "$keycloak_url/admin/realms/$realm_name/clients/$internal_id/protocol-mappers/models" |
+      jq --raw-output --arg name "$mapper_name" '.[] | select(.name == $name) | .id // empty'
+  )
+  if [[ -z "$existing" ]]; then
+    curl_json --header "$auth_header" \
+      --data "{\"name\":\"$mapper_name\",\"protocol\":\"openid-connect\",\"protocolMapper\":\"oidc-audience-mapper\",\"config\":{\"included.custom.audience\":\"$audience\",\"access.token.claim\":\"true\",\"id.token.claim\":\"false\"}}" \
+      "$keycloak_url/admin/realms/$realm_name/clients/$internal_id/protocol-mappers/models"
+    printf 'Created %s audience mapper (client %s).\n' "$audience" "$internal_id"
+  else
+    printf 'Audience mapper %s already exists (client %s).\n' "$audience" "$internal_id"
+  fi
+}
+
+# Milestone 84: adds every role in $2... to user $1 that it doesn't already hold.
+assign_missing_roles() {
+  local user_id=$1
+  shift
+  local existing
+  existing=$(
+    curl --fail --silent --header "$auth_header" \
+      "$keycloak_url/admin/realms/$realm_name/users/$user_id/role-mappings/realm" |
+      jq --raw-output '.[].name'
+  )
+
+  local to_assign="[]"
+  for role_name in "$@"; do
+    if grep --quiet --fixed-strings --line-regexp "$role_name" <<<"$existing"; then
+      continue
+    fi
+    local role_json
+    role_json=$(curl --fail --silent --header "$auth_header" "$keycloak_url/admin/realms/$realm_name/roles/$role_name")
+    to_assign=$(jq --argjson role "$role_json" '. + [$role]' <<<"$to_assign")
+  done
+
+  if [[ "$(jq 'length' <<<"$to_assign")" -gt 0 ]]; then
+    curl_json --header "$auth_header" --data "$to_assign" \
+      "$keycloak_url/admin/realms/$realm_name/users/$user_id/role-mappings/realm"
+    printf 'Assigned roles to user %s.\n' "$user_id"
+  else
+    printf 'User %s already has every requested role.\n' "$user_id"
+  fi
+}
+
 admin_token=$(
   curl --fail --silent --show-error \
     --data-urlencode "client_id=admin-cli" \
@@ -41,7 +97,19 @@ else
   printf 'Created realm %s.\n' "$realm_name"
 fi
 
-for role_name in "orders:read" "orders:write"; do
+# Milestone 83: orders:admin - cross-customer access (a support agent, the
+# warehouse's fulfilment tooling), distinct from a plain shopper's
+# orders:read/orders:write. Orders.Api's policies accept it in place of
+# either, so a single role covers everything a shopper's token can do plus
+# what an admin-only route (POST /orders/{id}/fulfillment) requires.
+#
+# Milestone 84: catalog:admin gates catalog writes (POST /products,
+# POST /categories) - unauthenticated before this milestone, and a product
+# price a client could inject is a price OrderPricingService then trusts.
+# inventory:read gates GET /inventory (the full-catalog listing with exact
+# quantities); the per-SKU lookup stays open to any caller, coarsened to an
+# availability band rather than an exact count for one that isn't authenticated.
+for role_name in "orders:read" "orders:write" "orders:admin" "catalog:admin" "inventory:read"; do
   if curl --fail --silent --header "$auth_header" "$keycloak_url/admin/realms/$realm_name/roles/$role_name" >/dev/null 2>&1; then
     printf 'Role %s already exists.\n' "$role_name"
   else
@@ -78,21 +146,14 @@ else
 fi
 
 # client_credentials tokens default to "aud": "account" - a hardcoded
-# audience mapper is what makes Orders.Api's Audience="orders-api" check
+# audience mapper is what makes each service's own Audience check
 # meaningful, rather than accepting any token this realm ever issues.
-existing_mapper_id=$(
-  curl --fail --silent --header "$auth_header" \
-    "$keycloak_url/admin/realms/$realm_name/clients/$client_internal_id/protocol-mappers/models" |
-    jq --raw-output '.[] | select(.name == "orders-api-audience") | .id // empty'
-)
-if [[ -z "$existing_mapper_id" ]]; then
-  curl_json --header "$auth_header" \
-    --data '{"name":"orders-api-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.custom.audience":"orders-api","access.token.claim":"true","id.token.claim":"false"}}' \
-    "$keycloak_url/admin/realms/$realm_name/clients/$client_internal_id/protocol-mappers/models"
-  printf 'Created orders-api audience mapper.\n'
-else
-  printf 'Audience mapper already exists.\n'
-fi
+# Milestone 84: catalog-service, inventory-service and cart-service join
+# orders-api - this client (trusted backend tooling) needs to reach all four.
+create_audience_mapper "$client_internal_id" "orders-api"
+create_audience_mapper "$client_internal_id" "catalog-service"
+create_audience_mapper "$client_internal_id" "inventory-service"
+create_audience_mapper "$client_internal_id" "cart-service"
 
 service_account_user_id=$(
   curl --fail --silent --header "$auth_header" \
@@ -100,28 +161,77 @@ service_account_user_id=$(
     jq --raw-output '.id'
 )
 
-existing_role_names=$(
+# Milestone 83/84: this service account is this lab's stand-in for trusted
+# backend tooling (an operator, a warehouse integration) - every role a
+# backend caller might legitimately need across all three protected services.
+assign_missing_roles "$service_account_user_id" \
+  "orders:read" "orders:write" "orders:admin" "catalog:admin" "inventory:read"
+
+# Milestone 83: orders-storefront - a public client (no secret; PKCE
+# instead, since a browser can't keep one) so a shopper authenticates as
+# themselves rather than Storefront.Service asserting an identity on their
+# behalf. Direct access grants (Resource Owner Password Credentials) are
+# also enabled here - not something a real production realm would turn on,
+# but this lab's non-interactive smoke/k6 scripts have no browser to drive
+# an authorization-code redirect through, and ROPC is the only way they can
+# obtain a genuine per-shopper token without one.
+storefront_client_id=orders-storefront
+storefront_internal_id=$(
   curl --fail --silent --header "$auth_header" \
-    "$keycloak_url/admin/realms/$realm_name/users/$service_account_user_id/role-mappings/realm" |
-    jq --raw-output '.[].name'
+    "$keycloak_url/admin/realms/$realm_name/clients?clientId=$storefront_client_id" |
+    jq --raw-output '.[0].id // empty'
 )
 
-roles_to_assign="[]"
-for role_name in "orders:read" "orders:write"; do
-  if grep --quiet --fixed-strings --line-regexp "$role_name" <<<"$existing_role_names"; then
-    continue
-  fi
-  role_json=$(curl --fail --silent --header "$auth_header" "$keycloak_url/admin/realms/$realm_name/roles/$role_name")
-  roles_to_assign=$(jq --argjson role "$role_json" '. + [$role]' <<<"$roles_to_assign")
-done
-
-if [[ "$(jq 'length' <<<"$roles_to_assign")" -gt 0 ]]; then
+if [[ -z "$storefront_internal_id" ]]; then
   curl_json --header "$auth_header" \
-    --data "$roles_to_assign" \
-    "$keycloak_url/admin/realms/$realm_name/users/$service_account_user_id/role-mappings/realm"
-  printf 'Assigned roles to %s service account.\n' "$client_id"
+    --data "{\"clientId\":\"$storefront_client_id\",\"publicClient\":true,\"serviceAccountsEnabled\":false,\"standardFlowEnabled\":true,\"directAccessGrantsEnabled\":true,\"attributes\":{\"pkce.code.challenge.method\":\"S256\"}}" \
+    "$keycloak_url/admin/realms/$realm_name/clients"
+  storefront_internal_id=$(
+    curl --fail --silent --header "$auth_header" \
+      "$keycloak_url/admin/realms/$realm_name/clients?clientId=$storefront_client_id" |
+      jq --raw-output '.[0].id'
+  )
+  printf 'Created client %s.\n' "$storefront_client_id"
 else
-  printf 'Service account already has both roles.\n'
+  printf 'Client %s already exists.\n' "$storefront_client_id"
 fi
 
-printf '\nRealm ready. Client ID: %s (secret is KEYCLOAK_CLIENT_SECRET in .env).\n' "$client_id"
+# orders-api (checkout) and cart-service (Milestone 84: the shopper's own
+# cart, keyed by their own identity) - not catalog-service or
+# inventory-service, which stay anonymous through Storefront's proxy.
+create_audience_mapper "$storefront_internal_id" "orders-api"
+create_audience_mapper "$storefront_internal_id" "cart-service"
+
+# Milestone 83: a demo shopper, username matching the customerId this lab's
+# quickstart and coupon seeds have used since Milestone 7
+# ("customer-42") - Orders.Api reads preferred_username as the order's
+# customerId (CallerIdentityExtensions), so this is the bridge that keeps
+# every existing consumer of that string (coupons, loyalty tiers, order
+# history) working unchanged under real identity, no parallel migration.
+demo_username=customer-42
+demo_user_id=$(
+  curl --fail --silent --header "$auth_header" \
+    "$keycloak_url/admin/realms/$realm_name/users?username=$demo_username&exact=true" |
+    jq --raw-output '.[0].id // empty'
+)
+
+if [[ -z "$demo_user_id" ]]; then
+  curl_json --header "$auth_header" \
+    --data "{\"username\":\"$demo_username\",\"enabled\":true,\"emailVerified\":true,\"credentials\":[{\"type\":\"password\",\"value\":\"$KEYCLOAK_DEMO_CUSTOMER_PASSWORD\",\"temporary\":false}]}" \
+    "$keycloak_url/admin/realms/$realm_name/users"
+  demo_user_id=$(
+    curl --fail --silent --header "$auth_header" \
+      "$keycloak_url/admin/realms/$realm_name/users?username=$demo_username&exact=true" |
+      jq --raw-output '.[0].id'
+  )
+  printf 'Created demo user %s.\n' "$demo_username"
+else
+  printf 'Demo user %s already exists.\n' "$demo_username"
+fi
+
+assign_missing_roles "$demo_user_id" "orders:read" "orders:write"
+
+printf '\nRealm ready.\n'
+printf 'Confidential client: %s (secret is KEYCLOAK_CLIENT_SECRET in .env) - orders:read, orders:write, orders:admin, catalog:admin, inventory:read.\n' "$client_id"
+printf 'Public client: %s (PKCE, no secret) - the shopper-facing client. orders-api + cart-service audiences.\n' "$storefront_client_id"
+printf 'Demo shopper: %s / KEYCLOAK_DEMO_CUSTOMER_PASSWORD in .env.\n' "$demo_username"

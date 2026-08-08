@@ -12,7 +12,7 @@ public static class CategoryEndpoints
         var group = endpoints.MapGroup("/categories").WithTags("Categories");
 
         group.MapGet("", ListAsync);
-        group.MapPost("", CreateAsync);
+        group.MapPost("", CreateAsync).RequireAuthorization("catalog:admin");
 
         return endpoints;
     }

@@ -132,6 +132,57 @@ public sealed class BackorderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CancellingTheWaitingOrderRemovesItsBackorderSoARestockNeverReservesOnItsBehalf()
+    {
+        // Milestone 81: the order this backorder belonged to was cancelled
+        // while still waiting on stock. Before this milestone nothing ever
+        // told Inventory that - the row sat there until a restock came in
+        // and blindly reserved for a saga that no longer existed, ahead of
+        // whoever was actually still waiting (strict FIFO means it would
+        // have been served first).
+        var processor = CreateProcessor();
+        var reservationId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+
+        var backorderResult = await processor.ProcessAsync(
+            CreateReserveConsumeResult(reservationId, "SKU-TEST-001", 5, orderId), CancellationToken.None);
+        Assert.Equal(MessageProcessingResult.Processed, backorderResult);
+
+        var cancelResult = await processor.ProcessBackorderCancellationAsync(
+            CreateBackorderCancellationConsumeResult(orderId), CancellationToken.None);
+        Assert.Equal(MessageProcessingResult.Processed, cancelResult);
+
+        await using (var scope = _serviceProvider.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            Assert.Empty(dbContext.Backorders);
+        }
+
+        // A later restock must not reserve on behalf of the cancelled order - there is no waiting backorder left to release.
+        var restockResult = await processor.ProcessRestockAsync(
+            CreateRestockConsumeResult(Guid.NewGuid(), "SKU-TEST-001", 4, orderId), CancellationToken.None);
+        Assert.Equal(MessageProcessingResult.Processed, restockResult);
+
+        await using var finalScope = _serviceProvider.CreateAsyncScope();
+        var finalDbContext = finalScope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var item = await finalDbContext.InventoryItems.SingleAsync(i => i.Sku == "SKU-TEST-001");
+        // 3 original + 4 restocked, nothing reserved on the cancelled order's behalf.
+        Assert.Equal(7, item.AvailableQuantity);
+        Assert.Equal(0, item.ReservedQuantity);
+    }
+
+    [Fact]
+    public async Task CancellingAnOrderWithNoBackorderIsAHarmlessNoOp()
+    {
+        var processor = CreateProcessor();
+
+        var result = await processor.ProcessBackorderCancellationAsync(
+            CreateBackorderCancellationConsumeResult(Guid.NewGuid()), CancellationToken.None);
+
+        Assert.Equal(MessageProcessingResult.Processed, result);
+    }
+
+    [Fact]
     public async Task ARestockThatIsNotEnoughLeavesTheBackorderWaiting()
     {
         var processor = CreateProcessor();
@@ -241,6 +292,19 @@ public sealed class BackorderTests : IAsyncLifetime
             Partition = new Partition(0),
             Offset = new Offset(0),
             Message = new Message<string, string> { Key = sku, Value = JsonSerializer.Serialize(request, SerializerOptions), Headers = new Headers() }
+        };
+    }
+
+    private static ConsumeResult<string, string> CreateBackorderCancellationConsumeResult(Guid orderId)
+    {
+        var request = new BackorderCancellationRequested(orderId, "integration-correlation", DateTimeOffset.UtcNow);
+
+        return new ConsumeResult<string, string>
+        {
+            Topic = "inventory.backorder-cancellation-requested.v1",
+            Partition = new Partition(0),
+            Offset = new Offset(0),
+            Message = new Message<string, string> { Key = orderId.ToString("N"), Value = JsonSerializer.Serialize(request, SerializerOptions), Headers = new Headers() }
         };
     }
 }

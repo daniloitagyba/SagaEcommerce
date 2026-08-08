@@ -25,4 +25,7 @@ public sealed partial class InventoryLog
 
     [LoggerMessage(EventId = 9014, Level = LogLevel.Information, Message = "Released backorder {ReservationId} for sku {Sku} on order {OrderId} after a restock (correlation {CorrelationId})")]
     public static partial void BackorderReleased(ILogger logger, Guid reservationId, string sku, Guid orderId, string correlationId);
+
+    [LoggerMessage(EventId = 9015, Level = LogLevel.Information, Message = "Cancelled {Count} backorder(s) for order {OrderId} - it was cancelled while still waiting on stock (correlation {CorrelationId})")]
+    public static partial void BackordersCancelled(ILogger logger, Guid orderId, int count, string correlationId);
 }

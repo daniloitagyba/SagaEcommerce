@@ -19,11 +19,17 @@ public sealed class OrderOutboxEventDispatcher(
             // rather than being produced inline - a capture command must
             // not survive a rolled-back "Shipped".
             nameof(PaymentCaptureRequested) => PublishCaptureAsync(message, cancellationToken),
-            nameof(PaymentVoidRequested) => PublishVoidAsync(message, cancellationToken),
+            // Milestone 81: replaces PaymentVoidRequested - a cancellation
+            // may need to void a hold or refund a capture, decided by
+            // Payments from the payment's own state.
+            nameof(PaymentCancellationRequested) => PublishCancellationAsync(message, cancellationToken),
             // Milestone 70: a return queues both, in the same transaction
-            // as the return itself.
+            // as the return itself. Milestone 81: a post-commit
+            // cancellation queues a restock the same way.
             nameof(PaymentRefundRequested) => PublishRefundAsync(message, cancellationToken),
             nameof(InventoryRestockRequested) => PublishRestockAsync(message, cancellationToken),
+            // Milestone 81: a cancellation from Backordered queues this instead of a restock - nothing was ever committed to give back.
+            nameof(BackorderCancellationRequested) => PublishBackorderCancellationAsync(message, cancellationToken),
             _ => throw new JsonException($"Unsupported outbox event type '{message.EventType}'.")
         };
     }
@@ -68,12 +74,22 @@ public sealed class OrderOutboxEventDispatcher(
         return new Dictionary<string, object?> { ["OrderId"] = request.OrderId, ["Sku"] = request.Sku };
     }
 
-    private async Task<IReadOnlyDictionary<string, object?>> PublishVoidAsync(OutboxMessage message, CancellationToken cancellationToken)
+    private async Task<IReadOnlyDictionary<string, object?>> PublishCancellationAsync(OutboxMessage message, CancellationToken cancellationToken)
     {
-        var request = JsonSerializer.Deserialize<PaymentVoidRequested>(message.Payload, SerializerOptions)
-            ?? throw new JsonException("The outbox payload did not contain a PaymentVoidRequested command.");
+        var request = JsonSerializer.Deserialize<PaymentCancellationRequested>(message.Payload, SerializerOptions)
+            ?? throw new JsonException("The outbox payload did not contain a PaymentCancellationRequested command.");
 
-        await settlementPublisher.PublishVoidAsync(request, cancellationToken);
+        await settlementPublisher.PublishCancellationAsync(request, cancellationToken);
+
+        return new Dictionary<string, object?> { ["OrderId"] = request.OrderId };
+    }
+
+    private async Task<IReadOnlyDictionary<string, object?>> PublishBackorderCancellationAsync(OutboxMessage message, CancellationToken cancellationToken)
+    {
+        var request = JsonSerializer.Deserialize<BackorderCancellationRequested>(message.Payload, SerializerOptions)
+            ?? throw new JsonException("The outbox payload did not contain a BackorderCancellationRequested command.");
+
+        await settlementPublisher.PublishBackorderCancellationAsync(request, cancellationToken);
 
         return new Dictionary<string, object?> { ["OrderId"] = request.OrderId };
     }

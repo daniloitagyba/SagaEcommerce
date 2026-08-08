@@ -142,7 +142,8 @@ public sealed class OrderPricingService(
                 line.CategorySlug,
                 line.Quantity,
                 line.UnitPrice.Amount,
-                breakdown.LineDiscounts[index].Amount))
+                breakdown.LineDiscounts[index].Amount,
+                breakdown.LineTaxes[index].Amount))
             .ToList();
 
         return (new PricedCheckout(currencyCode, drafts, breakdown, resolvedCoupon?.Code), errors);

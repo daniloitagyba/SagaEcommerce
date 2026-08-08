@@ -190,6 +190,56 @@ namespace Inventory.Service.Data.Migrations
                     b.ToTable("inventory_items", (string)null);
                 });
 
+            modelBuilder.Entity("Inventory.Service.Domain.PurchaseOrder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("correlation_id");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer")
+                        .HasColumnName("quantity");
+
+                    b.Property<DateTimeOffset?>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sku");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("state");
+
+                    b.Property<string>("WarehouseCode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("warehouse_code");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("State", "RequestedAt")
+                        .HasDatabaseName("ix_purchase_orders_state_requested_at");
+
+                    b.ToTable("purchase_orders", (string)null);
+                });
+
             modelBuilder.Entity("Inventory.Service.Domain.ReservationAllocation", b =>
                 {
                     b.Property<Guid>("Id")

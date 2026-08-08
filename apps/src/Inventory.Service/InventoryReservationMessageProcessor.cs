@@ -167,11 +167,12 @@ public sealed partial class InventoryReservationMessageProcessor(
     {
         foreach (var stock in crossedReorderPoint)
         {
+            var eventId = Guid.NewGuid();
             var signal = new WarehouseReplenishmentNeeded(
-                stock.Sku, stock.WarehouseCode, stock.AvailableQuantity, stock.ReorderPoint, correlationId, processedAt);
+                eventId, stock.Sku, stock.WarehouseCode, stock.AvailableQuantity, stock.ReorderPoint, correlationId, processedAt);
 
             dbContext.OutboxMessages.Add(OutboxMessage.Create(
-                Guid.NewGuid(),
+                eventId,
                 nameof(WarehouseReplenishmentNeeded),
                 JsonSerializer.Serialize(signal, SerializerOptions),
                 processedAt,

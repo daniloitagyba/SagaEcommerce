@@ -105,6 +105,99 @@ public sealed class PaymentSettlementProcessorTests : IAsyncLifetime
         Assert.Equal(PaymentStates.Captured, reply!.State);
     }
 
+    [Fact]
+    public async Task CancellingAnOrderWithACapturedPixPaymentRefundsItInsteadOfLoggingAHarmlessNoOp()
+    {
+        // Milestone 81: reproduces the bug at its source. Before this
+        // milestone, Orders never even sent a settlement command for a Pix
+        // order on cancellation (RequiresCapture gated the whole branch) -
+        // this test exercises Payments' side of the fix in isolation: a
+        // Cancel command against an already-Captured payment must refund,
+        // not fall through to a void that would refuse (Captured is not
+        // IsAwaitingSettlement) and leave the reply logged as a harmless duplicate.
+        var orderId = Guid.NewGuid();
+        await SeedApprovedPaymentAsync(orderId, PaymentMethods.Pix, PaymentStates.Captured);
+        var processor = CreateProcessor();
+
+        var result = await processor.ProcessAsync(CancellationConsumeResult(orderId), CancellationToken.None);
+
+        Assert.Equal(MessageProcessingResult.Processed, result);
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
+        var payment = await dbContext.Payments.SingleAsync();
+        Assert.Equal(PaymentStates.Refunded, payment.State);
+        Assert.Equal(payment.Amount, payment.RefundedAmount);
+
+        var outboxMessage = await dbContext.OutboxMessages.SingleAsync();
+        var reply = System.Text.Json.JsonSerializer.Deserialize<PaymentSettlementReplied>(outboxMessage.Payload, SerializerOptions);
+        Assert.Equal(PaymentStates.Refunded, reply!.State);
+    }
+
+    [Fact]
+    public async Task CancellingAnOrderWithAnAuthorizedCardVoidsTheHold()
+    {
+        var orderId = Guid.NewGuid();
+        await SeedPaymentAsync(orderId, PaymentStates.Authorized);
+        var processor = CreateProcessor();
+
+        var result = await processor.ProcessAsync(CancellationConsumeResult(orderId), CancellationToken.None);
+
+        Assert.Equal(MessageProcessingResult.Processed, result);
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
+        var payment = await dbContext.Payments.SingleAsync();
+        Assert.Equal(PaymentStates.Voided, payment.State);
+    }
+
+    [Fact]
+    public async Task CancellingAnOrderWithADeclinedPaymentIsDroppedSilentlyNotReportedAsAMismatch()
+    {
+        // Nothing was ever approved - there is nothing to void or refund,
+        // and unlike a capture mismatch, this must not surface as one:
+        // the order is cancelled either way and there is no money at risk.
+        var orderId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var payment = Payment.Authorize(
+            orderId, "settlement-test-customer", 149.90m, "BRL", PaymentMethods.Card, "01",
+            approved: false, now, TimeSpan.FromMinutes(30), "settlement-test-correlation");
+
+        await using (var seedScope = _serviceProvider.CreateAsyncScope())
+        {
+            var seedDbContext = seedScope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
+            seedDbContext.Payments.Add(payment);
+            await seedDbContext.SaveChangesAsync();
+        }
+
+        var processor = CreateProcessor();
+        var result = await processor.ProcessAsync(CancellationConsumeResult(orderId), CancellationToken.None);
+
+        Assert.Equal(MessageProcessingResult.Duplicate, result);
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
+        Assert.Empty(dbContext.OutboxMessages);
+    }
+
+    private async Task SeedApprovedPaymentAsync(Guid orderId, string method, string targetState)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var payment = Payment.Authorize(
+            orderId, "settlement-test-customer", 149.90m, "BRL", method, "01",
+            approved: true, now.AddMinutes(-5), TimeSpan.FromMinutes(30), "settlement-test-correlation");
+
+        if (targetState != payment.State)
+        {
+            payment.TrySettleWithoutCapture(targetState, "test fixture setup", now);
+        }
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
+        dbContext.Payments.Add(payment);
+        await dbContext.SaveChangesAsync();
+    }
+
     private async Task SeedPaymentAsync(Guid orderId, string targetState)
     {
         var now = DateTimeOffset.UtcNow;
@@ -135,6 +228,23 @@ public sealed class PaymentSettlementProcessorTests : IAsyncLifetime
         return new ConsumeResult<string, string>
         {
             Topic = "payments.capture-requested.v1",
+            Partition = new Partition(0),
+            Offset = new Offset(0),
+            Message = new Message<string, string>
+            {
+                Key = orderId.ToString("N"),
+                Value = System.Text.Json.JsonSerializer.Serialize(request, SerializerOptions),
+                Headers = new Headers()
+            }
+        };
+    }
+
+    private static ConsumeResult<string, string> CancellationConsumeResult(Guid orderId)
+    {
+        var request = new PaymentCancellationRequested(orderId, "order cancelled", "settlement-test-correlation", DateTimeOffset.UtcNow);
+        return new ConsumeResult<string, string>
+        {
+            Topic = "payments.cancellation-requested.v1",
             Partition = new Partition(0),
             Offset = new Offset(0),
             Message = new Message<string, string>

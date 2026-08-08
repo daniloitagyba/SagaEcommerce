@@ -90,8 +90,18 @@ public sealed record PaymentCaptureRequested(
     string CorrelationId,
     DateTimeOffset RequestedAt);
 
-/// <summary>Orders asks Payments to release a hold it will never charge.</summary>
-public sealed record PaymentVoidRequested(
+/// <summary>
+/// Milestone 81: the order was cancelled - settle whatever this payment
+/// actually is, whichever way that turns out to require. Deliberately not
+/// "void": a Pix payment is <c>Captured</c> the instant it is approved, so
+/// cancelling it has to give money back, not release a hold that was never
+/// placed. Orders does not have to know which of the two applies - that
+/// depends on the payment's current state, which only Payments.Service
+/// holds - so this single command replaces the method-keyed void dispatch
+/// that used to skip Pix entirely (see <see cref="PaymentMethods.RequiresCapture"/>
+/// and Payment.TryCancel).
+/// </summary>
+public sealed record PaymentCancellationRequested(
     Guid OrderId,
     string Reason,
     string CorrelationId,

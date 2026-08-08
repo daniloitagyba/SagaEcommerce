@@ -14,6 +14,7 @@ using Orders.Api.Middleware;
 using Orders.Api.RateLimiting;
 using Orders.Application;
 using Orders.Application.Pricing;
+using Orders.Application.UseCases.ReturnOrder;
 using Orders.Infrastructure;
 using Orders.Infrastructure.Data;
 
@@ -77,6 +78,8 @@ var connectionString = builder.Configuration.GetConnectionString("Orders")
 // free-shipping threshold) is configuration, so a campaign changes without
 // a redeploy. Absent config, PricingOptions' own defaults apply.
 builder.Services.Configure<PricingOptions>(builder.Configuration.GetSection(PricingOptions.SectionName));
+// Milestone 82: how long a Regret return still owes shipping. Absent config, ReturnOptions' own 7-day default applies.
+builder.Services.Configure<ReturnOptions>(builder.Configuration.GetSection(ReturnOptions.SectionName));
 builder.Services.AddOptions<CatalogClientOptions>()
     .Bind(builder.Configuration.GetSection(CatalogClientOptions.SectionName))
     .Validate(options => !string.IsNullOrWhiteSpace(options.BaseUrl), "Catalog base URL is required.")
@@ -136,8 +139,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 builder.Services.AddAuthorizationBuilder()
-    .AddPolicy(OrdersAuthorizationPolicies.Read, policy => policy.RequireRole("orders:read", "orders:write"))
-    .AddPolicy(OrdersAuthorizationPolicies.Write, policy => policy.RequireRole("orders:write"));
+    // Milestone 83: orders:admin satisfies both - an admin token needs one role, not three.
+    .AddPolicy(OrdersAuthorizationPolicies.Read, policy => policy.RequireRole("orders:read", "orders:write", OrdersAuthorizationPolicies.Admin))
+    .AddPolicy(OrdersAuthorizationPolicies.Write, policy => policy.RequireRole("orders:write", OrdersAuthorizationPolicies.Admin))
+    .AddPolicy(OrdersAuthorizationPolicies.Admin, policy => policy.RequireRole(OrdersAuthorizationPolicies.Admin));
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Orders"])
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"])
@@ -177,6 +182,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 app.MapGet("/", () => Results.Ok(new { service = "Orders.Api", instanceId }));
 app.MapOrderEndpoints();
 app.MapFulfillmentEndpoints();
+app.MapCancellationEndpoints();
 app.MapReturnEndpoints();
 app.MapOrderSummaryEndpoints();
 app.MapOrderHistoryEndpoints();

@@ -8,7 +8,14 @@ namespace Orders.Api.Endpoints;
 
 public sealed record CreateReturnItemRequest(string? Sku, int Quantity);
 
-public sealed record CreateReturnRequest(IReadOnlyList<CreateReturnItemRequest>? Items, string? Reason);
+/// <summary>
+/// Milestone 82: ReasonCategory drives refund policy (does shipping come
+/// back on a complete return) and defaults to Unwanted - the one category
+/// that owes nothing beyond the goods and their tax, so an old or
+/// unspecified request keeps getting exactly what it got before this
+/// milestone, not a shipping refund it never asked for.
+/// </summary>
+public sealed record CreateReturnRequest(IReadOnlyList<CreateReturnItemRequest>? Items, string? Reason, string? ReasonCategory);
 
 /// <summary>
 /// Milestone 70: a customer (or support agent) sending part of a delivered
@@ -48,6 +55,16 @@ public static class ReturnEndpoints
             });
         }
 
+        ReturnReasonCategory reasonCategory = ReturnReasonCategory.Unwanted;
+        if (!string.IsNullOrWhiteSpace(request.ReasonCategory)
+            && !Enum.TryParse(request.ReasonCategory, ignoreCase: true, out reasonCategory))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                ["reasonCategory"] = [$"'{request.ReasonCategory}' is not a recognized return reason. Valid values: Defect, Regret, Unwanted."]
+            });
+        }
+
         ReturnOrderResult result;
         try
         {
@@ -55,6 +72,8 @@ public static class ReturnEndpoints
                 id,
                 [.. request.Items.Select(item => new ReturnItemRequest(item.Sku!, item.Quantity))],
                 request.Reason ?? string.Empty,
+                reasonCategory,
+                httpContext.GetCallerIdentity(),
                 httpContext.GetCorrelationId(),
                 cancellationToken);
         }

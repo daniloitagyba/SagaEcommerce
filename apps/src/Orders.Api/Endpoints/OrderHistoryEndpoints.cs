@@ -28,11 +28,13 @@ public static class OrderHistoryEndpoints
         Guid id,
         GetOrderHistoryHandler handler,
         DateTimeOffset? asOf,
+        HttpContext httpContext,
         CancellationToken cancellationToken)
     {
         var result = await handler.HandleAsync(id, asOf, cancellationToken);
 
-        if (result.Snapshot is null)
+        // Milestone 83: same 404-hides-ownership reasoning as GetByIdAsync.
+        if (result.Snapshot is null || !httpContext.MayAccess(result.Snapshot.CustomerId))
         {
             return Results.NotFound();
         }

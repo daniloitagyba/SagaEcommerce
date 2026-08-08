@@ -165,4 +165,40 @@ public sealed class Payment
         SettlementReason = reason;
         return true;
     }
+
+    /// <summary>
+    /// Milestone 81: the order was cancelled - make sure this payment owes
+    /// nothing, whichever of the two genuinely different actions that
+    /// takes. A hold (<see cref="PaymentStates.Authorized"/> or
+    /// <see cref="PaymentStates.AwaitingPayment"/>) is voided, same as
+    /// before. Money already moved (<see cref="PaymentStates.Captured"/> -
+    /// the only way a Pix payment can be sitting here, since Pix is
+    /// captured the instant it's approved) is refunded in full through the
+    /// same cumulative <see cref="TryRefund"/> guard a return uses, so a
+    /// cancellation landing on a payment a return has already partially
+    /// refunded gives back only what remains.
+    ///
+    /// Anything else - <see cref="PaymentStates.Declined"/> (nothing was
+    /// ever approved), <see cref="PaymentStates.Expired"/> (the hold
+    /// already lapsed), <see cref="PaymentStates.Voided"/> or
+    /// <see cref="PaymentStates.Refunded"/> (a previous cancellation, or a
+    /// return, already settled it) - has no money left to move. False in
+    /// every one of those cases is correct, not a guard failure to
+    /// investigate: a cancellation's whole job is "make sure nothing is
+    /// owed", and in each of these nothing ever was or already isn't.
+    /// </summary>
+    public bool TryCancel(string reason, DateTimeOffset now)
+    {
+        if (IsAwaitingSettlement)
+        {
+            return TrySettleWithoutCapture(PaymentStates.Voided, reason, now);
+        }
+
+        if (State == PaymentStates.Captured)
+        {
+            return TryRefund(RefundableAmount, now);
+        }
+
+        return false;
+    }
 }

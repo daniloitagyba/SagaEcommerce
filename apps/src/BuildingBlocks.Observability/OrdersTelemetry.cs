@@ -32,6 +32,10 @@ public static class OrdersTelemetry
     private static readonly Counter<long> DistributedRateLimitBypassCounter = Meter.CreateCounter<long>("orders.rate_limit.distributed_bypassed");
     private static readonly Counter<long> PaymentDecidedCounter = Meter.CreateCounter<long>("payments.decided");
     private static readonly Histogram<double> ProjectionLagHistogram = Meter.CreateHistogram<double>("orders.projection.lag_ms");
+    // Milestone 88: one row this sweep found where two services' account of
+    // the same order disagree - never expected to be nonzero for long, the
+    // same alerting shape Milestone 79 already gives the DLQ and outbox backlog.
+    private static readonly Counter<long> AntiEntropyDivergenceCounter = Meter.CreateCounter<long>("anti_entropy.divergences");
 
     public static Activity? StartActivity(
         string name,
@@ -91,6 +95,12 @@ public static class OrdersTelemetry
     public static void RecordCacheHit()
     {
         CacheHitCounter.Add(1);
+    }
+
+    /// <summary>Milestone 88: tagged by which invariant failed, so a dashboard can tell "orders missing a payment" apart from "backorders on a dead order" rather than one undifferentiated count.</summary>
+    public static void RecordAntiEntropyDivergence(string checkName)
+    {
+        AntiEntropyDivergenceCounter.Add(1, new KeyValuePair<string, object?>("check", checkName));
     }
 
     public static void RecordCacheMiss()

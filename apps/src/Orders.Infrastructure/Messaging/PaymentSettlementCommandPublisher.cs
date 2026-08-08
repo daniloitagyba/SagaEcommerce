@@ -12,11 +12,15 @@ public interface IPaymentSettlementCommandPublisher
 {
     Task PublishCaptureAsync(PaymentCaptureRequested request, CancellationToken cancellationToken);
 
-    Task PublishVoidAsync(PaymentVoidRequested request, CancellationToken cancellationToken);
+    /// <summary>Milestone 81: replaces PublishVoidAsync - see PaymentCancellationRequested.</summary>
+    Task PublishCancellationAsync(PaymentCancellationRequested request, CancellationToken cancellationToken);
 
     Task PublishRefundAsync(PaymentRefundRequested request, CancellationToken cancellationToken);
 
     Task PublishRestockAsync(InventoryRestockRequested request, CancellationToken cancellationToken);
+
+    /// <summary>Milestone 81: a backordered order was cancelled - stop waiting for stock on its behalf.</summary>
+    Task PublishBackorderCancellationAsync(BackorderCancellationRequested request, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -37,11 +41,15 @@ public sealed class KafkaPaymentSettlementCommandPublisher(
     public Task PublishCaptureAsync(PaymentCaptureRequested request, CancellationToken cancellationToken) =>
         PublishAsync(options.Value.CaptureRequestedTopic, request.OrderId, request.CorrelationId, request, cancellationToken);
 
-    public Task PublishVoidAsync(PaymentVoidRequested request, CancellationToken cancellationToken) =>
-        PublishAsync(options.Value.VoidRequestedTopic, request.OrderId, request.CorrelationId, request, cancellationToken);
+    public Task PublishCancellationAsync(PaymentCancellationRequested request, CancellationToken cancellationToken) =>
+        PublishAsync(options.Value.CancellationRequestedTopic, request.OrderId, request.CorrelationId, request, cancellationToken);
 
     public Task PublishRefundAsync(PaymentRefundRequested request, CancellationToken cancellationToken) =>
         PublishAsync(options.Value.RefundRequestedTopic, request.OrderId, request.CorrelationId, request, cancellationToken);
+
+    /// <summary>Keyed by OrderId, not Sku - unlike a restock, cancelling backordered lines is not per-SKU serialised in Inventory.</summary>
+    public Task PublishBackorderCancellationAsync(BackorderCancellationRequested request, CancellationToken cancellationToken) =>
+        PublishAsync(options.Value.BackorderCancellationRequestedTopic, request.OrderId, request.CorrelationId, request, cancellationToken);
 
     /// <summary>
     /// Keyed by SKU, not order id - Inventory serialises stock changes by
@@ -106,9 +114,11 @@ public sealed class PaymentSettlementCommandOptions
 
     public string CaptureRequestedTopic { get; init; } = "payments.capture-requested.v1";
 
-    public string VoidRequestedTopic { get; init; } = "payments.void-requested.v1";
+    public string CancellationRequestedTopic { get; init; } = "payments.cancellation-requested.v1";
 
     public string RefundRequestedTopic { get; init; } = "payments.refund-requested.v1";
 
     public string RestockRequestedTopic { get; init; } = "inventory.restock-requested.v1";
+
+    public string BackorderCancellationRequestedTopic { get; init; } = "inventory.backorder-cancellation-requested.v1";
 }

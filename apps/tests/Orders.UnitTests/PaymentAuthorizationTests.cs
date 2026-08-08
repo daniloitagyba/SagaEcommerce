@@ -179,4 +179,101 @@ public class PaymentAuthorizationTests
         Assert.False(payment.TrySettleWithoutCapture(PaymentStates.Voided, "order cancelled", Now.AddMinutes(40)));
         Assert.Equal(PaymentStates.Expired, payment.State);
     }
+
+    // Milestone 81: TryCancel replaces the method-gated void dispatch that
+    // used to skip Pix entirely (a Pix payment is Captured the instant it's
+    // approved, so cancelling it must refund, not void a hold that was
+    // never placed). One entry point, and the payment's own current state
+    // - not the payment method - decides which of void or refund applies.
+
+    [Fact]
+    public void CancellingAnAuthorizedCardVoidsTheHold()
+    {
+        var payment = Authorize(PaymentMethods.Card);
+
+        Assert.True(payment.TryCancel("order cancelled", Now.AddMinutes(1)));
+        Assert.Equal(PaymentStates.Voided, payment.State);
+        Assert.Equal("order cancelled", payment.SettlementReason);
+        Assert.Equal(0m, payment.RefundedAmount);
+    }
+
+    [Fact]
+    public void CancellingAnAwaitingBoletoVoidsIt()
+    {
+        var payment = Authorize(PaymentMethods.Boleto);
+
+        Assert.True(payment.TryCancel("order cancelled", Now.AddMinutes(1)));
+        Assert.Equal(PaymentStates.Voided, payment.State);
+    }
+
+    [Fact]
+    public void CancellingACapturedPixRefundsItInFullRatherThanVoidingNothing()
+    {
+        // The bug this milestone closes: a Pix payment has no hold to void
+        // - it was Captured the instant it was approved - so the only way
+        // to make a cancelled order stop owing money for it is a refund.
+        var payment = Authorize(PaymentMethods.Pix);
+        Assert.Equal(PaymentStates.Captured, payment.State);
+
+        Assert.True(payment.TryCancel("order cancelled", Now.AddMinutes(1)));
+        Assert.Equal(PaymentStates.Refunded, payment.State);
+        Assert.Equal(100m, payment.RefundedAmount);
+        Assert.Equal(0m, payment.RefundableAmount);
+    }
+
+    [Fact]
+    public void CancellingAPartiallyRefundedCapturedPaymentRefundsOnlyWhatRemains()
+    {
+        var payment = Authorize(PaymentMethods.Pix);
+        Assert.True(payment.TryRefund(30m, Now.AddMinutes(1)));
+        Assert.Equal(PaymentStates.Captured, payment.State);
+
+        Assert.True(payment.TryCancel("order cancelled", Now.AddMinutes(2)));
+        Assert.Equal(PaymentStates.Refunded, payment.State);
+        Assert.Equal(100m, payment.RefundedAmount);
+    }
+
+    [Theory]
+    [InlineData(PaymentMethods.Card)]
+    [InlineData(PaymentMethods.Pix)]
+    [InlineData(PaymentMethods.Boleto)]
+    public void CancellingADeclinedPaymentIsANoOpNotAMismatch(string method)
+    {
+        // Nothing was ever approved - there is genuinely nothing to move,
+        // not a guard failure that needs anyone's attention.
+        var payment = Authorize(method, approved: false);
+
+        Assert.False(payment.TryCancel("order cancelled", Now.AddMinutes(1)));
+        Assert.Equal(PaymentStates.Declined, payment.State);
+    }
+
+    [Fact]
+    public void CancellingAnAlreadyExpiredHoldIsANoOp()
+    {
+        var payment = Authorize(PaymentMethods.Card);
+        payment.TrySettleWithoutCapture(PaymentStates.Expired, "sweeper", Now.AddMinutes(35));
+
+        Assert.False(payment.TryCancel("order cancelled", Now.AddMinutes(40)));
+        Assert.Equal(PaymentStates.Expired, payment.State);
+    }
+
+    [Fact]
+    public void CancellingTwiceVoidsOnceAndTheSecondIsANoOp()
+    {
+        var payment = Authorize(PaymentMethods.Card);
+
+        Assert.True(payment.TryCancel("order cancelled", Now.AddMinutes(1)));
+        Assert.False(payment.TryCancel("order cancelled", Now.AddMinutes(2)));
+        Assert.Equal(PaymentStates.Voided, payment.State);
+    }
+
+    [Fact]
+    public void CancellingAnAlreadyCancelledPixDoesNotDoubleRefund()
+    {
+        var payment = Authorize(PaymentMethods.Pix);
+
+        Assert.True(payment.TryCancel("order cancelled", Now.AddMinutes(1)));
+        Assert.False(payment.TryCancel("order cancelled", Now.AddMinutes(2)));
+        Assert.Equal(100m, payment.RefundedAmount);
+    }
 }

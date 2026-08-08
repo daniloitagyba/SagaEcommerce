@@ -1,7 +1,10 @@
+using System.Security.Claims;
+using System.Text.Json;
 using BuildingBlocks;
 using Catalog.Service.Data;
 using Catalog.Service.Endpoints;
 using Catalog.Service.Health;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using MongoDB.Driver;
 
@@ -51,6 +54,47 @@ builder.Services.AddSingleton<ProductRepository>();
 builder.Services.AddSingleton<CategoryRepository>();
 builder.Services.AddOrdersRedis(builder.Configuration);
 builder.Services.AddSingleton<BestsellersReader>();
+
+// Milestone 84: catalog writes were unauthenticated - anyone who could
+// reach this pod could add a product at any price, which
+// OrderPricingService then trusts as the live catalog price. Same JWKS-backed
+// validation as Orders.Api (Milestone 26); catalog:admin is checked, not
+// orders:write, since a shopper's checkout token should never be able to
+// write a product.
+var authority = builder.Configuration["Authentication:Authority"]
+    ?? throw new InvalidOperationException("Authentication:Authority is required.");
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.Authority = authority;
+        options.Audience = "catalog-service";
+        options.RequireHttpsMetadata = false;
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
+            {
+                var realmAccess = context.Principal?.FindFirst("realm_access")?.Value;
+                if (string.IsNullOrEmpty(realmAccess) || context.Principal?.Identity is not ClaimsIdentity identity)
+                {
+                    return Task.CompletedTask;
+                }
+
+                using var document = JsonDocument.Parse(realmAccess);
+                if (document.RootElement.TryGetProperty("roles", out var roles))
+                {
+                    foreach (var role in roles.EnumerateArray())
+                    {
+                        identity.AddClaim(new Claim(ClaimTypes.Role, role.GetString() ?? string.Empty));
+                    }
+                }
+
+                return Task.CompletedTask;
+            }
+        };
+    });
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("catalog:admin", policy => policy.RequireRole("catalog:admin"));
+
 builder.Services.AddHealthChecks()
     .AddCheck<MongoHealthCheck>("mongo", tags: ["ready"]);
 
@@ -68,6 +112,8 @@ if (args.Contains("--seed", StringComparer.Ordinal))
 }
 
 app.UseExceptionHandler();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

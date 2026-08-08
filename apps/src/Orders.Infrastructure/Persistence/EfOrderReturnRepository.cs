@@ -108,10 +108,20 @@ public sealed class EfOrderReturnRepository(
         // One command per SKU rather than one per return: Inventory
         // serialises by SKU partition key (Milestone 41), so a single
         // multi-SKU command would have no correct key to be produced under.
+        //
+        // Milestone 81: each line gets its own fresh id, not
+        // orderReturn.Id shared across all of them. Inventory's restock
+        // inbox is deduplicated on this id
+        // (InventoryReservationMessageProcessor.ProcessSettlementAsync) -
+        // reusing the return's id for every line in a multi-SKU return made
+        // every line past the first look like a redelivered duplicate of
+        // the first and get silently dropped, never restocked. Caught
+        // while building the equivalent cancellation-restock path, which
+        // would otherwise have copied the same bug.
         foreach (var line in orderReturn.Lines)
         {
             var request = new InventoryRestockRequested(
-                orderReturn.Id,
+                Guid.NewGuid(),
                 orderReturn.OrderId,
                 line.Sku,
                 line.Quantity,

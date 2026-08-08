@@ -63,10 +63,25 @@ public sealed class Order
     /// Milestone 70: builds a return for some of this order's units.
     /// Validation and refund arithmetic share one pass over the same fact -
     /// how much of each line is still returnable - so it's read only once.
+    ///
+    /// Milestone 82: refunds each line's tax share alongside its goods
+    /// share (previously only LineTotal came back - the discounted goods
+    /// price - leaving the tax on those units permanently kept). And on a
+    /// return that empties the order, <paramref name="reasonCategory"/>
+    /// decides whether outbound shipping comes back too: always for a
+    /// <see cref="ReturnReasonCategory.Defect"/>, only inside
+    /// <paramref name="regretWindow"/> of <see cref="CreatedAt"/> for a
+    /// <see cref="ReturnReasonCategory.Regret"/>, never for
+    /// <see cref="ReturnReasonCategory.Unwanted"/>. The window length is
+    /// configuration; whether this specific return qualifies is computed
+    /// here, from facts only the aggregate holds - the same reasoning that
+    /// keeps the rest of the refund arithmetic in the domain.
     /// </summary>
     public (OrderReturn? Return, ReturnRejectionReason Rejection, string? OffendingSku) TryReturn(
         IReadOnlyList<(string Sku, int Quantity)> requestedItems,
         string reason,
+        ReturnReasonCategory reasonCategory,
+        TimeSpan regretWindow,
         DateTimeOffset requestedAt)
     {
         ArgumentNullException.ThrowIfNull(requestedItems);
@@ -103,14 +118,21 @@ public sealed class Order
                 return (null, ReturnRejectionReason.ExceedsPurchasedQuantity, sku);
             }
 
-            var refund = ReturnRefundCalculator.RefundForUnits(
+            var goodsRefund = ReturnRefundCalculator.RefundForUnits(
                 new NodaMoney.Money(line.LineTotal, currency),
                 line.Quantity,
                 line.ReturnedQuantity,
                 quantity,
                 currency);
 
-            returnLines.Add(OrderReturnLine.Create(sku, quantity, refund.Amount));
+            var taxRefund = ReturnRefundCalculator.RefundForUnits(
+                new NodaMoney.Money(line.LineTax, currency),
+                line.Quantity,
+                line.ReturnedQuantity,
+                quantity,
+                currency);
+
+            returnLines.Add(OrderReturnLine.Create(sku, quantity, (goodsRefund + taxRefund).Amount));
         }
 
         // Mutate only after every line is validated - no half-returned order.
@@ -120,7 +142,11 @@ public sealed class Order
             _lines.First(item => string.Equals(item.Sku, sku, StringComparison.Ordinal)).RecordReturn(quantity);
         }
 
-        var orderReturn = OrderReturn.Create(Id, CustomerId, Currency, reason, requestedAt, returnLines);
+        var shippingRefundOwed = ShippingRefundPolicy.IsOwed(IsFullyReturned, reasonCategory, CreatedAt, requestedAt, regretWindow);
+        var shippingRefund = shippingRefundOwed ? ShippingTotal : 0m;
+
+        var orderReturn = OrderReturn.Create(
+            Id, CustomerId, Currency, reason, reasonCategory, shippingRefund, requestedAt, returnLines);
         return (orderReturn, ReturnRejectionReason.None, null);
     }
 

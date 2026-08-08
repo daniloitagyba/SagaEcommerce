@@ -19,7 +19,9 @@ public sealed record CreateOrderRequest(
     /// <summary>Milestone 68: "Card" (authorize now, capture on shipment) or "Pix" (charged outright). Defaults to Pix.</summary>
     string? PaymentMethod = null,
     /// <summary>Milestone 71: destination. Decides shipping zone and tax jurisdiction; omitted falls back to flat shipping.</summary>
-    ShippingAddressRequest? ShippingAddress = null);
+    ShippingAddressRequest? ShippingAddress = null,
+    /// <summary>Milestone 85: what the caller's cart last saw the subtotal as. Omitted skips the check; present and disagreeing with the live catalog returns 409, not a silent recharge.</summary>
+    decimal? ExpectedSubtotal = null);
 
 public sealed record ShippingAddressRequest(string? Line1, string? City, string? Region, string? PostalCode);
 

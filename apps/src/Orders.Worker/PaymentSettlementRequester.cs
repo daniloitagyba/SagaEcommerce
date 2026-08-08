@@ -33,10 +33,17 @@ public sealed class PaymentSettlementRequester(
         return PublishAsync(_options.CaptureRequestedTopic, orderId, correlationId, request, cancellationToken);
     }
 
-    public Task RequestVoidAsync(Guid orderId, string correlationId, string reason, CancellationToken cancellationToken)
+    /// <summary>
+    /// Milestone 81: the order was cancelled - let Payments decide whether
+    /// that means voiding a hold or refunding a capture (see
+    /// Payment.TryCancel). Replaces the old RequestVoidAsync call on this
+    /// path, which only fired for methods that leave a hold - Pix is
+    /// captured immediately, so cancelling it needs a refund, not a void.
+    /// </summary>
+    public Task RequestCancellationAsync(Guid orderId, string correlationId, string reason, CancellationToken cancellationToken)
     {
-        var request = new PaymentVoidRequested(orderId, reason, correlationId, DateTimeOffset.UtcNow);
-        return PublishAsync(_options.VoidRequestedTopic, orderId, correlationId, request, cancellationToken);
+        var request = new PaymentCancellationRequested(orderId, reason, correlationId, DateTimeOffset.UtcNow);
+        return PublishAsync(_options.CancellationRequestedTopic, orderId, correlationId, request, cancellationToken);
     }
 
     private async Task PublishAsync<TRequest>(
@@ -84,7 +91,7 @@ public sealed class PaymentSettlementRequestOptions
 
     public string CaptureRequestedTopic { get; init; } = "payments.capture-requested.v1";
 
-    public string VoidRequestedTopic { get; init; } = "payments.void-requested.v1";
+    public string CancellationRequestedTopic { get; init; } = "payments.cancellation-requested.v1";
 }
 
 public sealed partial class SettlementRequestLog

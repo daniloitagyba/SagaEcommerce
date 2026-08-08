@@ -390,11 +390,12 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-requested.dlq.v1 --partitions 1 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.capture-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.void-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.cancellation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.settlement-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.settlement.dlq.v1 --partitions 1 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.refund-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.restock-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.backorder-cancellation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.restock-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
@@ -746,6 +747,7 @@ services:
       Mongo__ConnectionString: mongodb://mongodb:27017
       Mongo__DatabaseName: catalog
       Redis__ConnectionString: redis:6379
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
       InstanceId: catalog-service-1
     depends_on:
       mongodb:
@@ -776,6 +778,7 @@ services:
       Kafka__DeadLetterTopic: inventory.reservation.dlq.v1
       Kafka__ConsumerGroup: inventory-service
       Kafka__ClientId: inventory-service-1
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
       InstanceId: inventory-service-1
     depends_on:
       kafka-init:
@@ -797,6 +800,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       Redis__ConnectionString: redis:6379
       Catalog__BaseUrl: http://catalog-service:8080
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
       InstanceId: cart-service-1
     depends_on:
       catalog-service:
@@ -826,9 +830,6 @@ services:
       OrdersProxy__BaseUrl: http://orders-api-1:8080
       InventoryProxy__BaseUrl: ${INVENTORY_PROXY_BASE_URL:-http://inventory-service:8080}
       ProductSummary__HedgeDelayMilliseconds: ${PRODUCT_SUMMARY_HEDGE_DELAY_MS:-0}
-      Keycloak__TokenUrl: http://keycloak:8080/realms/orders-lab/protocol/openid-connect/token
-      Keycloak__ClientId: orders-api-clients
-      Keycloak__ClientSecret: ${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET is required}
       InstanceId: storefront-service-1
     depends_on:
       catalog-service:

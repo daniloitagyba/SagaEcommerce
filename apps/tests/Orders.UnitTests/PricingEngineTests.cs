@@ -193,4 +193,61 @@ public class PricingEngineTests
             breakdown.DiscountTotal,
             breakdown.Discounts.Aggregate(new Money(0m, Brl), (running, d) => running + d.Amount));
     }
+
+    // Milestone 82: LineTaxes - the per-line share of TaxTotal a return
+    // refunds alongside LineDiscounts' goods share.
+
+    [Fact]
+    public void TaxIsProratedAcrossLinesByTheirDiscountedValue()
+    {
+        // No coupon, no per-line discount: tax follows raw subtotal 2:1.
+        var options = new PricingOptions { TaxRatePercentage = 10m, FlatShippingAmount = 0m };
+
+        var breakdown = BuildEngine(options).Price(Request(
+            null,
+            Line("SKU-A", "books", 1, 200m),
+            Line("SKU-B", "books", 1, 100m)));
+
+        Assert.Equal(new Money(30m, Brl), breakdown.TaxTotal);
+        Assert.Equal(new Money(20m, Brl), breakdown.LineTaxes[0]);
+        Assert.Equal(new Money(10m, Brl), breakdown.LineTaxes[1]);
+        Assert.Equal(breakdown.TaxTotal, breakdown.LineTaxes.Aggregate(new Money(0m, Brl), (running, tax) => running + tax));
+    }
+
+    [Fact]
+    public void ADiscountFallsProportionallyAcrossLinesByRawSubtotalSoEqualSizedLinesSplitTaxEvenlyEvenUnderATargetedPromotion()
+    {
+        // AllocateDiscounts (Milestone 66) spreads the order-level discount
+        // total by each line's raw subtotal, regardless of which rule
+        // actually granted it - a category promotion that only matched the
+        // electronics line still shows up as an even split here, because
+        // both lines carry the same subtotal. This is the existing
+        // discount-allocation behaviour, not new to this milestone; the
+        // test exists so a change to that allocation is forced to notice
+        // it changes tax refunds on returns too, not just discount receipts.
+        var options = new PricingOptions
+        {
+            TaxRatePercentage = 10m,
+            FlatShippingAmount = 0m,
+            CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["electronics"] = 50m }
+        };
+
+        var breakdown = BuildEngine(options).Price(Request(
+            null,
+            Line("SKU-ELEC", "electronics", 1, 100m),
+            Line("SKU-BOOK", "books", 1, 100m)));
+
+        Assert.Equal(new Money(15m, Brl), breakdown.TaxTotal);
+        Assert.Equal(new Money(7.50m, Brl), breakdown.LineTaxes[0]);
+        Assert.Equal(new Money(7.50m, Brl), breakdown.LineTaxes[1]);
+    }
+
+    [Fact]
+    public void NoTaxRateMeansEveryLinesTaxIsZero()
+    {
+        var breakdown = BuildEngine().Price(Request(null, Line("SKU-A", "books", 3, 40m)));
+
+        Assert.Equal(new Money(0m, Brl), breakdown.TaxTotal);
+        Assert.Equal(new Money(0m, Brl), Assert.Single(breakdown.LineTaxes));
+    }
 }

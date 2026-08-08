@@ -100,10 +100,10 @@ public class OrderStatusTransitionTests
     }
 
     [Fact]
-    public void OnlyShippingCapturesAndOnlyCancellingVoids()
+    public void OnlyShippingCapturesAndOnlyCancellingCancels()
     {
         Assert.Equal(OrderSettlementAction.Capture, OrderStatuses.SettlementActionFor(OrderStatuses.Shipped));
-        Assert.Equal(OrderSettlementAction.Void, OrderStatuses.SettlementActionFor(OrderStatuses.Cancelled));
+        Assert.Equal(OrderSettlementAction.Cancel, OrderStatuses.SettlementActionFor(OrderStatuses.Cancelled));
 
         // Milestone 68 captured at Confirmed because Shipped didn't exist - must not any more, the whole point of the hold.
         Assert.Equal(OrderSettlementAction.None, OrderStatuses.SettlementActionFor(OrderStatuses.Confirmed));
@@ -129,13 +129,13 @@ public class OrderStatusTransitionTests
     }
 
     [Fact]
-    public void VoidIsRequestedAtMostOnceButRepeatedCaptureRequestsAreSafeOnlyBecausePaymentItselfIsIdempotent()
+    public void CancelIsRequestedAtMostOnceButRepeatedCaptureRequestsAreSafeOnlyBecausePaymentItselfIsIdempotent()
     {
-        // Void only ever fires at Cancelled, and Cancelled is terminal -
+        // Cancel only ever fires at Cancelled, and Cancelled is terminal -
         // never a predecessor of anything else in AllowedPredecessors - so
         // once a path reaches it, no further transition (and so no further
-        // void) can ever fire. That half of the original claim still holds
-        // structurally.
+        // cancellation) can ever fire. That half of the original claim
+        // still holds structurally.
         //
         // Capture is a different story since Milestone 76 added
         // Shipped -> FulfillmentHold. Combined with the pre-existing
@@ -163,7 +163,7 @@ public class OrderStatusTransitionTests
             path =>
             {
                 var current = OrderStatuses.Created;
-                var voids = 0;
+                var cancellations = 0;
 
                 foreach (var next in path)
                 {
@@ -172,15 +172,15 @@ public class OrderStatusTransitionTests
                         continue;
                     }
 
-                    if (OrderStatuses.SettlementActionFor(next) == OrderSettlementAction.Void)
+                    if (OrderStatuses.SettlementActionFor(next) == OrderSettlementAction.Cancel)
                     {
-                        voids++;
+                        cancellations++;
                     }
 
                     current = next;
                 }
 
-                return voids <= 1;
+                return cancellations <= 1;
             },
             iter: 10_000);
     }

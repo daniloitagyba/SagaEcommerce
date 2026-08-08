@@ -36,6 +36,23 @@ public sealed class CreateOrderHandler(
             {
                 return new CreateOrderResult(null, Guid.Empty, pricingErrors);
             }
+
+            // Milestone 85: compared against the subtotal specifically, not
+            // the grand total - shipping, tax and discounts are expected to
+            // apply and differ from whatever a cart last saw; that isn't a
+            // price change, a moved catalog price is. Checked before the
+            // idempotency gate for the same reason pricing itself is: a
+            // replayed request must never re-litigate a price the first
+            // attempt already confirmed or rejected.
+            if (command.ExpectedSubtotal is { } expectedSubtotal
+                && expectedSubtotal != checkout!.Breakdown.Subtotal.Amount)
+            {
+                return new CreateOrderResult(
+                    null,
+                    Guid.Empty,
+                    errors,
+                    PriceMismatch: new PriceMismatch(expectedSubtotal, checkout.Breakdown.Subtotal.Amount));
+            }
         }
 
         var idempotencyEnabled = await featureManager.IsEnabledAsync(FeatureFlags.IdempotencyKey);

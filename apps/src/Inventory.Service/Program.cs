@@ -1,9 +1,12 @@
+using System.Security.Claims;
+using System.Text.Json;
 using BuildingBlocks;
 using Confluent.Kafka;
 using Inventory.Service;
 using Inventory.Service.Data;
 using Inventory.Service.Endpoints;
 using Inventory.Service.Messaging;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -43,6 +46,7 @@ builder.Services.AddOptions<InventoryKafkaOptions>()
     .Validate(options => !string.IsNullOrWhiteSpace(options.CommitRepliedTopic), "Kafka commit-replied topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.ReleaseRequestedTopic), "Kafka release-requested topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.ReleaseRepliedTopic), "Kafka release-replied topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.BackorderCancellationRequestedTopic), "Kafka backorder-cancellation-requested topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.DeadLetterTopic), "Kafka dead-letter topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.ConsumerGroup), "Kafka consumer group is required.")
     .ValidateOnStart();
@@ -64,6 +68,13 @@ builder.Services.AddOptions<BackorderOptions>()
     .Validate(options => options.TimeoutSweepIntervalSeconds > 0, "Backorder timeout sweep interval must be positive.")
     .Validate(options => options.TimeoutSweepBatchSize > 0, "Backorder timeout sweep batch size must be positive.")
     .Validate(options => options.TimeoutMinutes > 0, "Backorder timeout window must be positive.")
+    .ValidateOnStart();
+builder.Services.AddOptions<ReplenishmentOptions>()
+    .Bind(builder.Configuration.GetSection(ReplenishmentOptions.SectionName))
+    .Validate(options => options.LeadTimeSeconds > 0, "Replenishment lead time must be positive.")
+    .Validate(options => options.ReceivingSweepIntervalSeconds > 0, "Replenishment receiving sweep interval must be positive.")
+    .Validate(options => options.ReceivingSweepBatchSize > 0, "Replenishment receiving sweep batch size must be positive.")
+    .Validate(options => options.TargetMultiplier > 1, "Replenishment target multiplier must be greater than one.")
     .ValidateOnStart();
 
 var connectionString = builder.Configuration.GetConnectionString("Inventory")
@@ -114,6 +125,8 @@ builder.Services.AddSingleton<InventoryReservationMessageProcessor>();
 builder.Services.AddScoped<IOutboxEventDispatcher, InventoryOutboxEventDispatcher>();
 builder.Services.AddHostedService<OutboxPublisher<InventoryDbContext>>();
 builder.Services.AddHostedService<BackorderTimeoutSweeper>();
+builder.Services.AddSingleton<ReplenishmentRequestProcessor>();
+builder.Services.AddHostedService<PurchaseOrderReceivingSweeper>();
 builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
@@ -162,6 +175,67 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         [options.RestockRequestedTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessRestockAsync, deadLetterPublisher.PublishAsync, logger);
 });
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.BackorderCancellationRequestedConsumer");
+    return new KafkaConsumerHost<string>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.BackorderCancellationRequestedTopic], options.DeadLetterTopic,
+        processingOptions, processor.ProcessBackorderCancellationAsync, deadLetterPublisher.PublishAsync, logger);
+});
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<ReplenishmentRequestProcessor>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.ReplenishmentNeededConsumer");
+    return new KafkaConsumerHost<string>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.ReplenishmentNeededTopic], options.DeadLetterTopic,
+        processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
+});
+// Milestone 84: GET /inventory (exact quantities, whole catalog) was
+// unauthenticated - commercially sensitive sell-through data for anyone
+// who could reach this pod. Same JWKS-backed validation as Orders.Api.
+var authority = builder.Configuration["Authentication:Authority"]
+    ?? throw new InvalidOperationException("Authentication:Authority is required.");
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.Authority = authority;
+        options.Audience = "inventory-service";
+        options.RequireHttpsMetadata = false;
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
+            {
+                var realmAccess = context.Principal?.FindFirst("realm_access")?.Value;
+                if (string.IsNullOrEmpty(realmAccess) || context.Principal?.Identity is not ClaimsIdentity identity)
+                {
+                    return Task.CompletedTask;
+                }
+
+                using var document = JsonDocument.Parse(realmAccess);
+                if (document.RootElement.TryGetProperty("roles", out var roles))
+                {
+                    foreach (var role in roles.EnumerateArray())
+                    {
+                        identity.AddClaim(new Claim(ClaimTypes.Role, role.GetString() ?? string.Empty));
+                    }
+                }
+
+                return Task.CompletedTask;
+            }
+        };
+    });
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("inventory:read", policy => policy.RequireRole("inventory:read"));
+
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Inventory"])
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"]);
@@ -185,6 +259,8 @@ if (args.Contains("--seed", StringComparer.Ordinal))
 }
 
 app.UseExceptionHandler();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

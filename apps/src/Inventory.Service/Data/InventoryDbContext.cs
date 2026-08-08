@@ -15,6 +15,8 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
 
     public DbSet<Backorder> Backorders => Set<Backorder>();
 
+    public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
+
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -22,6 +24,7 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
         ConfigureInventoryItem(modelBuilder);
         ConfigureWarehouseStock(modelBuilder);
         ConfigureBackorder(modelBuilder);
+        ConfigurePurchaseOrder(modelBuilder);
         ConfigureOutbox(modelBuilder);
         ConfigureInbox(modelBuilder);
     }
@@ -82,6 +85,25 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
         // this it is a sequential scan every time a restock lands.
         backorder.HasIndex(entity => new { entity.Sku, entity.RequestedAt })
             .HasDatabaseName("ix_backorders_sku_requested_at");
+    }
+
+    private static void ConfigurePurchaseOrder(ModelBuilder modelBuilder)
+    {
+        var purchaseOrder = modelBuilder.Entity<PurchaseOrder>();
+
+        purchaseOrder.ToTable("purchase_orders");
+        purchaseOrder.HasKey(entity => entity.Id);
+        purchaseOrder.Property(entity => entity.Id).HasColumnName("id").ValueGeneratedNever();
+        purchaseOrder.Property(entity => entity.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();
+        purchaseOrder.Property(entity => entity.WarehouseCode).HasColumnName("warehouse_code").HasMaxLength(16).IsRequired();
+        purchaseOrder.Property(entity => entity.Quantity).HasColumnName("quantity").IsRequired();
+        purchaseOrder.Property(entity => entity.State).HasColumnName("state").HasMaxLength(16).IsRequired();
+        purchaseOrder.Property(entity => entity.CorrelationId).HasColumnName("correlation_id").HasMaxLength(128).IsRequired();
+        purchaseOrder.Property(entity => entity.RequestedAt).HasColumnName("requested_at").IsRequired();
+        purchaseOrder.Property(entity => entity.ReceivedAt).HasColumnName("received_at");
+        // The receiving sweep's whole query shape: oldest-still-Requested first.
+        purchaseOrder.HasIndex(entity => new { entity.State, entity.RequestedAt })
+            .HasDatabaseName("ix_purchase_orders_state_requested_at");
     }
 
     private static void ConfigureOutbox(ModelBuilder modelBuilder)

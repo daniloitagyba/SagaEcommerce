@@ -48,13 +48,6 @@ builder.Services.AddOptions<ProductSummaryOptions>()
     .Bind(builder.Configuration.GetSection(ProductSummaryOptions.SectionName))
     .Validate(options => options.HedgeDelayMilliseconds >= 0, "Hedge delay cannot be negative.")
     .ValidateOnStart();
-builder.Services.AddOptions<KeycloakOptions>()
-    .Bind(builder.Configuration.GetSection(KeycloakOptions.SectionName))
-    .Validate(options => !string.IsNullOrWhiteSpace(options.TokenUrl), "Keycloak token URL is required.")
-    .Validate(options => !string.IsNullOrWhiteSpace(options.ClientId), "Keycloak client id is required.")
-    .Validate(options => !string.IsNullOrWhiteSpace(options.ClientSecret), "Keycloak client secret is required.")
-    .ValidateOnStart();
-
 builder.Services.AddHttpClient("catalog", (serviceProvider, client) =>
 {
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<CatalogProxyOptions>>().Value.BaseUrl);
@@ -87,8 +80,6 @@ builder.Services.AddHttpClient("inventory", (serviceProvider, client) =>
 // roll happen per request, matching the fault this benchmark models.
 .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMilliseconds(1) })
 .AddStandardResilienceHandler();
-
-builder.Services.AddHttpClient<KeycloakTokenProvider>().AddStandardResilienceHandler();
 
 builder.Services.AddHealthChecks();
 

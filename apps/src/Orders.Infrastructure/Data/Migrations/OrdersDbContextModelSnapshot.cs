@@ -384,6 +384,11 @@ namespace Orders.Infrastructure.Data.Migrations
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("line_subtotal");
 
+                    b.Property<decimal>("LineTax")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("line_tax");
+
                     b.Property<decimal>("LineTotal")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)")
@@ -457,6 +462,12 @@ namespace Orders.Infrastructure.Data.Migrations
                         .HasColumnType("character varying(256)")
                         .HasColumnName("reason");
 
+                    b.Property<string>("ReasonCategory")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("reason_category");
+
                     b.Property<decimal>("RefundTotal")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)")
@@ -465,6 +476,11 @@ namespace Orders.Infrastructure.Data.Migrations
                     b.Property<DateTimeOffset>("RequestedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("requested_at");
+
+                    b.Property<decimal>("ShippingRefund")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("shipping_refund");
 
                     b.HasKey("Id");
 

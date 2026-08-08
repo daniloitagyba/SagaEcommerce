@@ -25,7 +25,8 @@ public static class ProductEndpoints
         group.MapGet("/by-sku/{sku}", GetBySkuAsync);
         group.MapGet("/bestsellers", GetBestsellersAsync);
         group.MapGet("/{id}", GetByIdAsync);
-        group.MapPost("", CreateAsync);
+        // Milestone 84: writes are catalog:admin-gated; every GET above stays open - browsing the catalog is not a privileged action.
+        group.MapPost("", CreateAsync).RequireAuthorization("catalog:admin");
 
         return endpoints;
     }

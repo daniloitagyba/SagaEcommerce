@@ -25,6 +25,9 @@ public sealed class InventoryKafkaOptions
     /// <summary>Milestone 73: where WarehouseReplenishmentNeeded lands.</summary>
     public string ReplenishmentNeededTopic { get; init; } = "inventory.replenishment-needed.v1";
 
+    /// <summary>Milestone 81: a backordered order was cancelled - stop waiting for stock on its behalf.</summary>
+    public string BackorderCancellationRequestedTopic { get; init; } = "inventory.backorder-cancellation-requested.v1";
+
     public string DeadLetterTopic { get; init; } = "inventory.reservation.dlq.v1";
 
     public string ConsumerGroup { get; init; } = "inventory-service";

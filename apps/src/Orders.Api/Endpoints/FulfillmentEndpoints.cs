@@ -14,6 +14,12 @@ public sealed record AdvanceFulfillmentRequest(string? Status);
 /// an explicit endpoint rather than a timer pretending orders ship
 /// themselves; the interesting part is that an illegal move is refused by
 /// the same compare-and-set that performs a legal one.
+///
+/// Milestone 83: Admin-gated, not Write - this is the warehouse's endpoint,
+/// able to move <em>any</em> customer's order and reach every fulfilment
+/// state including Picking and Shipped, neither of which a shopper should
+/// ever trigger themselves. A shopper cancelling their own order has its
+/// own, narrower route - see CancellationEndpoints.
 /// </summary>
 public static class FulfillmentEndpoints
 {
@@ -21,7 +27,7 @@ public static class FulfillmentEndpoints
     {
         endpoints.MapPost("/orders/{id:guid}/fulfillment", AdvanceAsync)
             .WithTags("Fulfillment")
-            .RequireAuthorization(OrdersAuthorizationPolicies.Write);
+            .RequireAuthorization(OrdersAuthorizationPolicies.Admin);
 
         return endpoints;
     }

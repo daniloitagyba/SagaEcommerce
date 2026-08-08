@@ -110,7 +110,7 @@ builder.Services.AddSingleton<InboxStore>();
 builder.Services.AddOptions<PaymentSettlementRequestOptions>()
     .Bind(builder.Configuration.GetSection(PaymentSettlementRequestOptions.SectionName))
     .Validate(options => !string.IsNullOrWhiteSpace(options.CaptureRequestedTopic), "Capture-requested topic is required.")
-    .Validate(options => !string.IsNullOrWhiteSpace(options.VoidRequestedTopic), "Void-requested topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.CancellationRequestedTopic), "Cancellation-requested topic is required.")
     .ValidateOnStart();
 builder.Services.AddSingleton<PaymentSettlementRequester>();
 builder.Services.AddSingleton<CouponRedemptionStore>();
@@ -129,6 +129,28 @@ builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, 
     client.BaseAddress = new Uri(options.BaseUrl);
     client.Timeout = TimeSpan.FromSeconds(3);
 }).AddStandardResilienceHandler();
+
+// Milestone 88: the anti-entropy sweep's two cross-service reads.
+builder.Services.AddOptions<AntiEntropyOptions>()
+    .Bind(builder.Configuration.GetSection(AntiEntropyOptions.SectionName))
+    .Validate(options => options.SweepIntervalSeconds > 0, "Anti-entropy sweep interval must be positive.")
+    .Validate(options => options.BatchSize > 0, "Anti-entropy batch size must be positive.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.PaymentsBaseUrl), "Payments base URL is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.InventoryBaseUrl), "Inventory base URL is required.")
+    .ValidateOnStart();
+builder.Services.AddHttpClient("anti-entropy-payments", (serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<AntiEntropyOptions>>().Value;
+    client.BaseAddress = new Uri(options.PaymentsBaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(5);
+}).AddStandardResilienceHandler();
+builder.Services.AddHttpClient("anti-entropy-inventory", (serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<AntiEntropyOptions>>().Value;
+    client.BaseAddress = new Uri(options.InventoryBaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(5);
+}).AddStandardResilienceHandler();
+builder.Services.AddHostedService<AntiEntropySweeper>();
 
 builder.Services.AddSingleton<IProducer<string, string>>(serviceProvider =>
 {

@@ -110,7 +110,12 @@ public static class OrderStatuses
         // Capture when the goods actually leave - the entire reason for
         // holding an authorization rather than charging at checkout.
         Shipped => OrderSettlementAction.Capture,
-        Cancelled => OrderSettlementAction.Void,
+        // Milestone 81: "Cancel", not "Void" - a Pix payment is already
+        // Captured the instant it's approved, so cancelling it has to
+        // refund, not void a hold that was never placed. Which of the two
+        // applies depends on the payment's own current state, which only
+        // Payments.Service holds; see Payment.TryCancel.
+        Cancelled => OrderSettlementAction.Cancel,
         _ => OrderSettlementAction.None
     };
 }
@@ -119,5 +124,5 @@ public enum OrderSettlementAction
 {
     None,
     Capture,
-    Void
+    Cancel
 }

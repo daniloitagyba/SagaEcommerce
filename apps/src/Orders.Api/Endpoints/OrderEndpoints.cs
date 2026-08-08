@@ -32,8 +32,16 @@ public static class OrderEndpoints
         var correlationId = httpContext.GetCorrelationId();
         var instanceId = configuration["InstanceId"] ?? Environment.MachineName;
         var idempotencyKey = httpContext.Request.Headers["Idempotency-Key"].FirstOrDefault();
+
+        // Milestone 83: a plain shopper token places an order for exactly
+        // one customer - itself. The body's customerId is honored only for
+        // an admin caller (a support agent creating an order on someone
+        // else's behalf); for everyone else it is overwritten, not merely
+        // validated against, so there is no window where a crafted body
+        // value is ever used even transiently.
+        var customerId = httpContext.IsAdmin() ? request.CustomerId : httpContext.GetCustomerId();
         var command = new CreateOrderCommand(
-            request.CustomerId,
+            customerId,
             request.Amount,
             request.Currency,
             correlationId,
@@ -44,7 +52,8 @@ public static class OrderEndpoints
             request.PaymentMethod,
             request.ShippingAddress is { } address
                 ? new ShippingAddress(address.Line1 ?? "", address.City ?? "", address.Region ?? "", address.PostalCode ?? "")
-                : null);
+                : null,
+            request.ExpectedSubtotal);
 
         CreateOrderResult result;
         try
@@ -66,6 +75,24 @@ public static class OrderEndpoints
                 detail: exception.Message,
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Coupon Unavailable");
+        }
+
+        // Milestone 85: distinct from a validation error - nothing about
+        // the request is malformed, the catalog moved under it. 409, the
+        // same "well-formed but the world changed" status M67 already uses
+        // for a coupon losing its last slot mid-request, not a 400 that
+        // would tell the caller to fix a request that was never wrong.
+        if (result.PriceMismatch is { } mismatch)
+        {
+            return Results.Problem(
+                detail: $"The price has changed since it was last seen. Expected subtotal {mismatch.ExpectedSubtotal:0.00}, now {mismatch.ActualSubtotal:0.00}.",
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Price Changed",
+                extensions: new Dictionary<string, object?>
+                {
+                    ["expectedSubtotal"] = mismatch.ExpectedSubtotal,
+                    ["actualSubtotal"] = mismatch.ActualSubtotal
+                });
         }
 
         if (!result.IsValid)
@@ -100,7 +127,12 @@ public static class OrderEndpoints
             return ServiceUnavailable(httpContext, "PostgreSQL is currently unavailable.");
         }
 
-        if (result.Order is null)
+        // Milestone 83: 404, not 403 - a non-owner gets the same answer as
+        // a genuinely missing id, so probing ids can't be used to learn
+        // which ones exist. This is deliberately checked after the cache
+        // lookup, not before: the order still has to be fetched to know
+        // whose it is, the same as any other field on it.
+        if (result.Order is null || !httpContext.MayAccess(result.Order.CustomerId))
         {
             return Results.NotFound();
         }

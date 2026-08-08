@@ -76,17 +76,38 @@ public sealed record InventoryReservationReleaseReplied(
     DateTimeOffset DecidedAt);
 
 /// <summary>
-/// Milestone 73: a warehouse has fallen to or below its reorder point - the
-/// signal a replenishment process would consume, though nothing in this lab
-/// consumes it yet; the event is emitted durably, and the consumer is
-/// somebody else's milestone. Emitted on the <em>crossing</em>, not on
-/// every reservation that finds a warehouse already low, or a brisk-selling
-/// depleted warehouse would publish one per order.
+/// Milestone 73: a warehouse has fallen to or below its reorder point.
+/// Emitted on the <em>crossing</em>, not on every reservation that finds a
+/// warehouse already low, or a brisk-selling depleted warehouse would
+/// publish one per order.
+///
+/// Milestone 89: EventId is what finally consumes this signal -
+/// ReplenishmentRequestProcessor's inbox dedup needs a stable identifier,
+/// which this event never carried while nothing consumed it. Minted once,
+/// at publish time (EnqueueReplenishmentSignals), so a redelivery carries
+/// the same id rather than minting a new one that would look like a second, distinct crossing.
 /// </summary>
 public sealed record WarehouseReplenishmentNeeded(
+    Guid EventId,
     string Sku,
     string WarehouseCode,
     int AvailableQuantity,
     int ReorderPoint,
     string CorrelationId,
     DateTimeOffset DetectedAt);
+
+/// <summary>
+/// Milestone 81: an order sitting in <see cref="OrderStatuses.Backordered"/>
+/// was cancelled - stop waiting for stock on its behalf. Carries only
+/// OrderId, not a per-line reservation id: a backordered order can have
+/// several waiting lines (Milestone 78), and the FIFO release path
+/// (<c>ReleaseBackordersAsync</c>) indexes backorders by Sku, not by any id
+/// Orders holds, so there is nothing more specific to reuse. Inventory
+/// deletes every backorder row for this OrderId in one statement - plain
+/// idempotent by construction, since deleting rows that are already gone is
+/// a no-op.
+/// </summary>
+public sealed record BackorderCancellationRequested(
+    Guid OrderId,
+    string CorrelationId,
+    DateTimeOffset RequestedAt);

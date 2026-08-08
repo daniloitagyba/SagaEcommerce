@@ -22,6 +22,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 - [Milestone 58: Deterministic Simulation Testing of the Saga](architecture/milestone-58-deterministic-simulation.md)
 - [Milestone 60: DDD Architecture Fitness Functions](architecture/milestone-60-ddd-architecture-fitness-functions.md)
 - [Milestone 61: Domain-Boundary Guardrails Across Every Service](architecture/milestone-61-service-domain-boundaries.md)
+- [Milestone 86: Carts That Merge Instead of Overwrite](architecture/milestone-86-crdt-cart.md)
 - [Continuous Profiling with Grafana Pyroscope](architecture/continuous-profiling.md) — reference doc, not tied to one milestone
 - [Feature Flags with Microsoft.FeatureManagement](architecture/feature-flags.md) — reference doc
 - [Idempotency-Key for POST /orders](architecture/idempotency-key.md) — reference doc
@@ -48,6 +49,10 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 - [Milestone 73: Closing the Gaps the Plan Left Open](domain/milestone-73-closing-the-plan-gaps.md)
 - [Milestone 74: Waiting Is a State, Not a Cancellation](domain/milestone-74-backorders.md)
 - [Milestone 76: A Capture That Fails Is Now Visible, Not Silent](domain/milestone-76-settlement-reconciliation.md)
+- [Milestone 81: Cancelling an Order Gives Back Everything It Took](domain/milestone-81-cancellation-compensation.md)
+- [Milestone 82: A Refund Is the Whole Charge, Not Just the Line](domain/milestone-82-full-amount-returns.md)
+- [Milestone 85: The BFF Carries What the Domain Already Models](domain/milestone-85-bff-checkout-completeness.md)
+- [Milestone 89: The Replenishment Loop Closes](domain/milestone-89-replenishment-loop.md)
 
 ## cqrs
 
@@ -85,6 +90,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 - [Milestone 50: Clock Skew via Chaos Mesh TimeChaos](resilience/milestone-50-clock-skew.md)
 - [Milestone 65: Topology Spread Constraints](resilience/milestone-65-topology-spread.md)
 - [Milestone 79: Alerting Beyond the One Golden Signal Orders.Api Had](resilience/milestone-79-operational-alerts.md)
+- [Milestone 88: Divergence Between Services Stops Being Silent](resilience/milestone-88-anti-entropy-sweep.md)
 
 ## load-shedding
 
@@ -103,6 +109,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 ## scaling
 
 - [Milestone 14: Kafka Partitioning + KEDA Autoscaling](scaling/milestone-14-partitioning-keda.md)
+- [Milestone 87: Escrow for Hot SKUs](scaling/milestone-87-escrow-hot-skus.md)
 
 ## gitops
 
@@ -117,6 +124,8 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 ## security
 
 - [Milestone 26: AuthN/AuthZ and Zero-Trust](security/milestone-26-authn-authz.md)
+- [Milestone 83: The Shopper Stops Being Self-Asserted](security/milestone-83-end-user-identity.md)
+- [Milestone 84: Every Service Gets a Door](security/milestone-84-catalog-cart-inventory-authz.md)
 
 ## slo
 

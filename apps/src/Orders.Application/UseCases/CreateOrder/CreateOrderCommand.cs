@@ -20,7 +20,15 @@ public sealed record CreateOrderCommand(
     /// <summary>Milestone 68: Card or Pix. Null means Pix - see PaymentMethods.</summary>
     string? PaymentMethod = null,
     /// <summary>Milestone 71: destination. Null falls back to flat shipping and the global tax rate.</summary>
-    Orders.Domain.ShippingAddress? ShippingAddress = null)
+    Orders.Domain.ShippingAddress? ShippingAddress = null,
+    /// <summary>
+    /// Milestone 85: what the caller believes the subtotal (before
+    /// shipping, tax, and discounts - see CreateOrderHandler for why
+    /// specifically the subtotal) is, from whatever catalog prices it last
+    /// saw. Null skips the check entirely - only a caller that actually
+    /// snapshotted prices earlier (Storefront's cart) has grounds to assert one.
+    /// </summary>
+    decimal? ExpectedSubtotal = null)
 {
     /// <summary>
     /// Milestone 66 runs both request shapes side by side - the expand half

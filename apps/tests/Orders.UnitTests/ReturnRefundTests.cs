@@ -125,4 +125,93 @@ public class ReturnRefundTests
             },
             iter: 10_000);
     }
+
+    // Milestone 82: a return refunds a line's tax share alongside its
+    // goods share - previously only LineTotal came back, leaving the tax
+    // on returned units permanently kept.
+
+    [Fact]
+    public void ALineWithTaxRefundsGoodsAndTaxTogether()
+    {
+        var order = Order.CreateWithLines(
+            "customer-1", "BRL", DateTimeOffset.UtcNow, null,
+            [new OrderLineDraft("SKU-BOOK-001", "Livro", "books", 2, 100m, LineDiscount: 0m, LineTax: 18m)],
+            discountTotal: 0m, shippingTotal: 0m, taxTotal: 18m, paymentMethod: "Pix", shippingAddress: null);
+        var line = Assert.Single(order.Lines);
+
+        Assert.Equal(200m, line.LineTotal);
+        Assert.Equal(18m, line.LineTax);
+
+        // What Order.TryReturn actually does for each line: goods share + tax share.
+        var goodsRefund = ReturnRefundCalculator.RefundForUnits(Money(line.LineTotal), line.Quantity, 0, 2, Brl);
+        var taxRefund = ReturnRefundCalculator.RefundForUnits(Money(line.LineTax), line.Quantity, 0, 2, Brl);
+
+        Assert.Equal(Money(200m), goodsRefund);
+        Assert.Equal(Money(18m), taxRefund);
+        Assert.Equal(Money(218m), goodsRefund + taxRefund);
+    }
+
+    [Fact]
+    public void APartialReturnRefundsAProportionalShareOfTheLinesTaxToo()
+    {
+        // 3 units, 9.00 total tax (3.00/unit) - returning 1 of 3 refunds exactly its share, not the whole line's tax.
+        var taxRefund = ReturnRefundCalculator.RefundForUnits(Money(9m), 3, alreadyReturned: 0, returningNow: 1, Brl);
+
+        Assert.Equal(Money(3m), taxRefund);
+    }
+}
+
+/// <summary>
+/// Milestone 82: ShippingRefundPolicy in isolation. Order.TryReturn cannot
+/// be exercised end-to-end from a unit test - nothing in Order's public API
+/// can advance a fresh order to Delivered, which TryReturn requires - so
+/// the policy decision was pulled out as its own pure function specifically
+/// so it has somewhere to be tested at all.
+/// </summary>
+public class ShippingRefundPolicyTests
+{
+    private static readonly DateTimeOffset CreatedAt = new(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+    private static readonly TimeSpan SevenDays = TimeSpan.FromDays(7);
+
+    [Fact]
+    public void APartialReturnNeverOwesShippingRegardlessOfReason()
+    {
+        Assert.False(ShippingRefundPolicy.IsOwed(
+            orderFullyReturned: false, ReturnReasonCategory.Defect, CreatedAt, CreatedAt.AddDays(1), SevenDays));
+    }
+
+    [Fact]
+    public void ACompleteDefectReturnAlwaysOwesShippingNoWindow()
+    {
+        Assert.True(ShippingRefundPolicy.IsOwed(
+            orderFullyReturned: true, ReturnReasonCategory.Defect, CreatedAt, CreatedAt.AddDays(400), SevenDays));
+    }
+
+    [Fact]
+    public void ACompleteRegretReturnInsideTheWindowOwesShipping()
+    {
+        Assert.True(ShippingRefundPolicy.IsOwed(
+            orderFullyReturned: true, ReturnReasonCategory.Regret, CreatedAt, CreatedAt.AddDays(6), SevenDays));
+    }
+
+    [Fact]
+    public void ACompleteRegretReturnExactlyAtTheWindowBoundaryOwesShipping()
+    {
+        Assert.True(ShippingRefundPolicy.IsOwed(
+            orderFullyReturned: true, ReturnReasonCategory.Regret, CreatedAt, CreatedAt.Add(SevenDays), SevenDays));
+    }
+
+    [Fact]
+    public void ACompleteRegretReturnPastTheWindowOwesNothing()
+    {
+        Assert.False(ShippingRefundPolicy.IsOwed(
+            orderFullyReturned: true, ReturnReasonCategory.Regret, CreatedAt, CreatedAt.Add(SevenDays).AddSeconds(1), SevenDays));
+    }
+
+    [Fact]
+    public void ACompleteUnwantedReturnNeverOwesShippingRegardlessOfTiming()
+    {
+        Assert.False(ShippingRefundPolicy.IsOwed(
+            orderFullyReturned: true, ReturnReasonCategory.Unwanted, CreatedAt, CreatedAt.AddMinutes(1), SevenDays));
+    }
 }

@@ -85,6 +85,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
 
         var grandTotal = discountedSubtotal + shippingTotal + taxTotal;
         var lineDiscounts = PricingAllocation.AllocateDiscounts(discountTotal, request.Lines, currency);
+        var lineTaxes = PricingAllocation.AllocateTax(taxTotal, request.Lines, lineDiscounts, currency);
 
         return new PricingBreakdown(
             subtotal,
@@ -94,7 +95,8 @@ public sealed class NRulesPricingEngine : IPricingEngine
             shippingTotal,
             taxTotal,
             grandTotal,
-            lineDiscounts);
+            lineDiscounts,
+            lineTaxes);
     }
 
     /// <summary>Milestone 71: shipping follows the destination, falling back to the flat rate when the amount-only checkout shape supplies no address.</summary>

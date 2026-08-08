@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
@@ -143,62 +142,82 @@ public static class StorefrontEndpoints
         return await response.Content.ReadFromJsonAsync<object>(cancellationToken);
     }
 
-    internal sealed record CheckoutRequest(string? CartId, string? CustomerId, string? CouponCode);
+/// <summary>Milestone 85: mirrors Orders.Api's ShippingAddressRequest shape - Storefront has no reference to that assembly to reuse it directly.</summary>
+    internal sealed record CheckoutShippingAddress(string? Line1, string? City, string? Region, string? PostalCode);
 
-    internal sealed record CartSnapshot(IReadOnlyList<CartSnapshotItem> Items);
+    internal sealed record CheckoutRequest(
+        string? CouponCode,
+        /// <summary>Milestone 68/71: Card, Pix, or Boleto. Null defaults to Pix, same as Orders.Api.</summary>
+        string? PaymentMethod = null,
+        CheckoutShippingAddress? ShippingAddress = null);
 
-    internal sealed record CartSnapshotItem(string Sku, int Quantity);
+    internal sealed record CartSnapshot(IReadOnlyList<CartSnapshotItem> Items, long Version);
 
-    internal sealed record CheckoutOrderRequest(string CustomerId, IReadOnlyList<CheckoutOrderItem> Items, string? CouponCode);
+    /// <summary>UnitPrice travels with the snapshot so this layer can assert an ExpectedSubtotal without a second Catalog round trip.</summary>
+    internal sealed record CartSnapshotItem(string Sku, int Quantity, decimal UnitPrice);
+
+    internal sealed record CheckoutOrderRequest(
+        IReadOnlyList<CheckoutOrderItem> Items,
+        string? CouponCode,
+        string? PaymentMethod,
+        CheckoutShippingAddress? ShippingAddress,
+        decimal ExpectedSubtotal);
 
     internal sealed record CheckoutOrderItem(string Sku, int Quantity);
 
     /// <summary>
     /// Cart.Service and Orders.Api know nothing of each other; this turns
-    /// "what's in this shopper's cart" into Orders.Api's checkout call,
-    /// injecting the Keycloak token here so the browser never needs to know
-    /// Orders.Api requires auth. The cart is cleared only after Orders.Api
-    /// accepts the order - clearing it first and having the order call
-    /// then fail would strand the shopper with an empty cart and nothing
-    /// purchased.
+    /// "what's in this shopper's cart" into Orders.Api's checkout call.
+    ///
+    /// Milestone 83: forwards the shopper's own bearer token to Orders.Api
+    /// rather than minting a service-account one - replacing a design
+    /// where Storefront authenticated as itself and simply asserted
+    /// whatever customerId the request body carried, which any caller
+    /// could set to anyone. Orders.Api now derives the order's customerId
+    /// from that same forwarded token's claims, so there is nothing left
+    /// for this layer to assert on the shopper's behalf. One fewer trusted
+    /// intermediary: Orders.Api validates the shopper's own token directly,
+    /// the same JWKS-backed check every other caller goes through, not a
+    /// second-hand claim Storefront re-signs.
+    ///
+    /// The cart is cleared only after Orders.Api accepts the order -
+    /// clearing it first and having the order call then fail would strand
+    /// the shopper with an empty cart and nothing purchased.
     /// </summary>
     internal static async Task CheckoutAsync(
         CheckoutRequest request,
         HttpContext httpContext,
         IHttpClientFactory httpClientFactory,
-        KeycloakTokenProvider tokenProvider,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
         var logger = loggerFactory.CreateLogger("Storefront.Service.StorefrontEndpoints");
 
-        if (string.IsNullOrWhiteSpace(request.CartId) || string.IsNullOrWhiteSpace(request.CustomerId))
+        var authorization = httpContext.Request.Headers.Authorization.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(authorization))
         {
-            var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
-            if (string.IsNullOrWhiteSpace(request.CartId))
-            {
-                errors["cartId"] = ["cartId is required."];
-            }
-
-            if (string.IsNullOrWhiteSpace(request.CustomerId))
-            {
-                errors["customerId"] = ["customerId is required."];
-            }
-
-            await Results.ValidationProblem(errors).ExecuteAsync(httpContext);
+            await Results.Problem(
+                detail: "Checkout requires a signed-in shopper.",
+                statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(httpContext);
             return;
         }
 
+        // Milestone 84: Cart.Service resolves "/carts/me" from this same
+        // forwarded token - there is no cartId left to pass, the cart IS
+        // the shopper's, the same way the order about to be created is.
         var cartClient = httpClientFactory.CreateClient("cart");
         CartSnapshot? cart;
         try
         {
-            cart = await cartClient.GetFromJsonAsync<CartSnapshot>(
-                $"/carts/{Uri.EscapeDataString(request.CartId)}", JsonOptions, cancellationToken);
+            using var cartRequest = new HttpRequestMessage(HttpMethod.Get, "/carts/me");
+            cartRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+            using var cartResponse = await cartClient.SendAsync(cartRequest, cancellationToken);
+            cartResponse.EnsureSuccessStatusCode();
+            cart = await cartResponse.Content.ReadFromJsonAsync<CartSnapshot>(JsonOptions, cancellationToken);
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
-            StorefrontLog.CartUnavailableDuringCheckout(logger, request.CartId, exception);
+            StorefrontLog.CartUnavailableDuringCheckout(logger, "me", exception);
             await Results.Problem(
                 detail: "The cart service is currently unavailable.",
                 statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(httpContext);
@@ -214,19 +233,37 @@ public static class StorefrontEndpoints
             return;
         }
 
+        var expectedSubtotal = cart.Items.Sum(item => item.UnitPrice * item.Quantity);
         var orderRequest = new CheckoutOrderRequest(
-            request.CustomerId,
             [.. cart.Items.Select(item => new CheckoutOrderItem(item.Sku, item.Quantity))],
-            string.IsNullOrWhiteSpace(request.CouponCode) ? null : request.CouponCode);
+            string.IsNullOrWhiteSpace(request.CouponCode) ? null : request.CouponCode,
+            request.PaymentMethod,
+            request.ShippingAddress,
+            expectedSubtotal);
 
         var ordersClient = httpClientFactory.CreateClient("orders");
-        var token = await tokenProvider.GetTokenAsync(cancellationToken);
 
         using var upstreamRequest = new HttpRequestMessage(HttpMethod.Post, "/orders")
         {
             Content = JsonContent.Create(orderRequest, options: JsonOptions)
         };
-        upstreamRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        upstreamRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+
+        // Milestone 85: deterministic, not client-generated - this exact
+        // cart state ("this shopper, this version") checks out at most
+        // once. A double-submitted click carries the identical version and
+        // replays instead of double-charging; adding or removing an item
+        // bumps the version, so a genuinely new checkout after editing the
+        // cart is never blocked by a stale key. The subject comes from the
+        // same forwarded token, read without verifying it - only
+        // uniqueness per shopper matters here, and Orders.Api verifies the
+        // token itself regardless of what this layer assumed about it.
+        var subject = UnverifiedJwt.TryGetClaim(authorization, "preferred_username")
+            ?? UnverifiedJwt.TryGetClaim(authorization, "sub");
+        if (subject is not null)
+        {
+            upstreamRequest.Headers.TryAddWithoutValidation("Idempotency-Key", $"checkout:{subject}:{cart.Version}");
+        }
 
         using var response = await ordersClient.SendAsync(upstreamRequest, cancellationToken);
 
@@ -240,15 +277,16 @@ public static class StorefrontEndpoints
 
             try
             {
-                using var clearResponse = await cartClient.DeleteAsync(
-                    $"/carts/{Uri.EscapeDataString(request.CartId)}", cancellationToken);
+                using var clearRequest = new HttpRequestMessage(HttpMethod.Delete, "/carts/me");
+                clearRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+                using var clearResponse = await cartClient.SendAsync(clearRequest, cancellationToken);
                 clearResponse.EnsureSuccessStatusCode();
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
                 // The order already succeeded - a failure to clear the cart
                 // afterwards must never read back as a checkout failure.
-                StorefrontLog.CartClearFailedAfterCheckout(logger, request.CartId, orderId ?? "unknown", exception);
+                StorefrontLog.CartClearFailedAfterCheckout(logger, "me", orderId ?? "unknown", exception);
             }
         }
 

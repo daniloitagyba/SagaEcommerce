@@ -20,7 +20,7 @@ public class NamingConventionTests
             typeof(Catalog.Service.Domain.Product).Assembly,
             typeof(Inventory.Service.Domain.InventoryItem).Assembly,
             typeof(Payments.Service.Domain.Payment).Assembly,
-            typeof(Storefront.Service.KeycloakTokenProvider).Assembly,
+            typeof(Storefront.Service.StorefrontEndpoints).Assembly,
             typeof(BuildingBlocks.OrderCreated).Assembly,
         ];
 
