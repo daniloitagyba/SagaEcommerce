@@ -106,6 +106,13 @@ public sealed class OutboxPublisher<TDbContext>(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+
+        // Milestone 79: the real backlog, not just this batch - uses the
+        // same partial index (ix_outbox_messages_pending) the polling query
+        // above filters on, so this is an index-only count, not a table scan.
+        var pending = await dbContext.OutboxMessages.CountAsync(message => message.ProcessedAt == null, cancellationToken);
+        OrdersTelemetry.RecordOutboxPending(pending);
+
         return messages.Count;
     }
 

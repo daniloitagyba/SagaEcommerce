@@ -83,6 +83,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 - [Milestone 48: Fencing Tokens for Redis Distributed Locks](resilience/milestone-48-fencing-tokens.md)
 - [Milestone 50: Clock Skew via Chaos Mesh TimeChaos](resilience/milestone-50-clock-skew.md)
 - [Milestone 65: Topology Spread Constraints](resilience/milestone-65-topology-spread.md)
+- [Milestone 79: Alerting Beyond the One Golden Signal Orders.Api Had](resilience/milestone-79-operational-alerts.md)
 
 ## load-shedding
 

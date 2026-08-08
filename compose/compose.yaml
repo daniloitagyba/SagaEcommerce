@@ -990,6 +990,25 @@ services:
     cpus: 0.25
     stop_grace_period: 10s
 
+  kafka-exporter:
+    # Milestone 79: nothing scraped consumer-group lag before this - a
+    # consumer stuck or falling behind was invisible to Prometheus, only
+    # ever seen by hand in kafka-ui. danielqsj/kafka-exporter exposes
+    # kafka_consumergroup_lag per group/topic/partition, pull-based, no
+    # separate storage of its own.
+    image: danielqsj/kafka-exporter:v1.9.0
+    restart: unless-stopped
+    command:
+      - --kafka.server=kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - backend
+    mem_limit: 64m
+    cpus: 0.25
+    stop_grace_period: 10s
+
   alertmanager:
     image: prom/alertmanager:v0.28.1
     restart: unless-stopped

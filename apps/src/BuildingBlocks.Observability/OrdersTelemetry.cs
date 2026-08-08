@@ -14,6 +14,10 @@ public static class OrdersTelemetry
     private static readonly Counter<long> ProcessedCounter = Meter.CreateCounter<long>("orders.processed");
     private static readonly Counter<long> OutboxPublishedCounter = Meter.CreateCounter<long>("outbox.messages.published");
     private static readonly Counter<long> OutboxRetryCounter = Meter.CreateCounter<long>("outbox.publish.retries");
+    // Milestone 79: a real backlog gauge, not inferred from the published
+    // rate - OutboxPublisher records this once per poll cycle with a COUNT
+    // of unprocessed rows, the same predicate its own polling query filters on.
+    private static readonly Gauge<long> OutboxPendingGauge = Meter.CreateGauge<long>("outbox.messages.pending");
     private static readonly Counter<long> InboxDuplicateCounter = Meter.CreateCounter<long>("inbox.messages.duplicates");
     private static readonly Counter<long> ProcessingRetryCounter = Meter.CreateCounter<long>("messaging.processing.retries");
     private static readonly Counter<long> DeadLetterCounter = Meter.CreateCounter<long>("messaging.dead_letters");
@@ -62,6 +66,11 @@ public static class OrdersTelemetry
     public static void RecordOutboxRetry(string eventType)
     {
         OutboxRetryCounter.Add(1, new KeyValuePair<string, object?>("event.type", eventType));
+    }
+
+    public static void RecordOutboxPending(long count)
+    {
+        OutboxPendingGauge.Record(count);
     }
 
     public static void RecordInboxDuplicate(string consumerName)

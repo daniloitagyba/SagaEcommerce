@@ -1,0 +1,53 @@
+# Milestone 79: SLO burn-rate alerting (Milestone 16) only ever watched
+# orders-api's HTTP error rate - every asynchronous path (Kafka consumers,
+# the outbox, the DLQ) had no alerting at all. A consumer stuck mid-poison-message
+# loop, an outbox publisher that stopped running, or a message that landed
+# in the DLQ were all silent unless someone happened to look at kafka-ui or
+# grep logs by hand.
+#
+# Thresholds below were calibrated against this lab's own steady-state
+# traffic (see docs/resilience/milestone-79-operational-alerts.md's Live
+# validation section), not guessed - each is set well above the noise floor
+# actually observed, so "for:" duration plus threshold together separate a
+# real, sustained problem from a normal momentary blip.
+groups:
+  - name: messaging-ops-alerts
+    rules:
+      # Any dead letter is actionable - Milestone 62 built redrive
+      # specifically because a DLQ message doesn't resolve itself. This
+      # fires on the first one, not a rate.
+      - alert: DeadLetterMessagesDetected
+        expr: increase(messaging_dead_letters_total[5m]) > 0
+        for: 0s
+        labels:
+          severity: ticket
+        annotations:
+          summary: "A message landed in a dead-letter topic"
+          description: "{{ $value }} message(s) dead-lettered on {{ $labels.messaging_destination_name }} in the last 5m - see docs/messaging/milestone-62-dlq-redrive.md for the redrive procedure."
+
+      # The outbox publisher polls every 500ms in normal operation
+      # (OutboxOptions.PollIntervalMilliseconds) - a backlog that stays
+      # above a small cushion for 5 minutes straight means publishing has
+      # stalled (Kafka unreachable, the publisher crashed) rather than
+      # just lagging behind a burst.
+      - alert: OutboxBacklogGrowing
+        expr: max(outbox_messages_pending) > 25
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Outbox backlog has stayed above 25 pending messages for 5 minutes"
+          description: "{{ $value }} messages are waiting to be published. The outbox publisher may have stopped, or Kafka may be unreachable - check outbox_publish_retries_total and the publisher's own logs for the underlying cause."
+
+      # Every consumer group in this lab processes in well under a second
+      # per message (Milestone 51's rebalance-vs-serialization measurement).
+      # Lag climbing into the hundreds and staying there for 5 minutes is a
+      # consumer that has stopped keeping up, not normal jitter around zero.
+      - alert: KafkaConsumerGroupLagHigh
+        expr: max by (consumergroup, topic) (kafka_consumergroup_lag) > 200
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Consumer group {{ $labels.consumergroup }} is falling behind on {{ $labels.topic }}"
+          description: "Lag has been above 200 messages for 5 minutes straight ({{ $value }} now) - the consumer may be stuck, crashed, or too slow for current throughput."
