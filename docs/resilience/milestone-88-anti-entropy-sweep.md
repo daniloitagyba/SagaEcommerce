@@ -51,6 +51,16 @@ This milestone's own audit (Milestone 81 finding 1.2: committed inventory belong
 
 Verified with `InventoryReservationLedgerTests` (5 facts) against a real Postgres on the Ubuntu host this addendum was done on: a commit writes an entry; a release never does; a matching restock removes it; a partial restock reduces rather than removes it; a restock for an unrelated order id (the Milestone 89 case) leaves an unrelated entry untouched. The full `Inventory.IntegrationTests` suite (33/33, including these) and a real `docker build` of Inventory.Service both pass. Not verified: `AntiEntropySweeper.CheckCommittedInventoryBelongsToLiveOrdersAsync` itself against a live Inventory.Service and a live Orders database together - the same live-cluster boundary every check in this milestone has always had, unchanged by this addendum.
 
+**Named but not fixed at the time**: `inventory_reservation_ledger` has no way to shrink. A `Delivered` order that's never returned keeps its entry forever - `ResolveLedgerOnRestockAsync` only removes a row when a restock actually references it, and a legitimately-fulfilled order never gets one. The follow-up addendum below closes this.
+
+## Addendum (2026-08-08): the ledger's own unbounded growth is closed
+
+Re-auditing this pass after the two addenda above found the gap the second one's own text pointed at without naming: nothing ever shrinks `inventory_reservation_ledger`. Every other append-only table in this codebase (`outbox_messages`, `inbox_messages`) already had this problem and already had `RetentionSweeper` (Milestone 63) solve it - the ledger just never got added as a third target.
+
+**Not a plain drop-in, and worth saying why.** `RetentionSweeper` deletes everything past one shared `RetentionDays` cutoff (7, sized for message-replay history that's safe to lose within hours of being processed). The ledger is a different kind of row: it is the evidence the anti-entropy check above reads, and it is what a late return still needs to find in order to give stock back correctly. Pruning it on the same 7-day clock as outbox/inbox risks deleting a still-open order's only committed-stock record before either of those things gets to use it. `RetentionTarget` gained an optional `RetentionDaysOverride` - null for every existing target (outbox/inbox keep their shared 7 days unchanged), 60 for the ledger. 60 days is generous, not measured (unlike the outbox/inbox number, which this codebase's own load tests set) - long enough that no legitimately in-flight order and no realistic late return should still need the row, while the anti-entropy sweep itself only ever needed a few minutes of it to catch a real divergence in the first place, the same "sufficient to catch a *new* divergence, not audit history" reasoning this milestone already applies to `BatchSize`.
+
+Verified with a full solution build (0/0) after the change; `RetentionSweeper` itself inherits the same test coverage it has always had - none, an existing gap from Milestone 63 this addendum did not take on fixing.
+
 ## See also
 
 - [Milestone 76: A Capture That Fails Is Now Visible, Not Silent](../domain/milestone-76-settlement-reconciliation.md) — the one reconciliation this system had before this milestone, reactive rather than periodic, and the precedent for "make the divergence visible, let something else decide what to do about it."

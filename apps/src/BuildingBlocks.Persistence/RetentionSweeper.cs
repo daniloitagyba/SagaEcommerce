@@ -12,7 +12,16 @@ namespace BuildingBlocks;
 // verified against the live database before writing this). Shared here
 // rather than duplicated three times because the cleanup is the exact
 // same statement shape everywhere, just a different table/column name.
-public sealed record RetentionTarget(string TableName, string TimestampColumn);
+//
+// RetentionDaysOverride exists for Inventory.Service's
+// inventory_reservation_ledger, a third kind of table sharing this
+// mechanism: unlike outbox/inbox (safe to prune within hours of being
+// processed), a ledger row is what an anti-entropy sweep still-open orders
+// against, so pruning it on the same short window as message replay
+// history could delete evidence of a real divergence before that sweep
+// - or a legitimate late return - ever got to see it. Null falls back to
+// the service-wide RetentionDays, unchanged for every target that doesn't need this.
+public sealed record RetentionTarget(string TableName, string TimestampColumn, int? RetentionDaysOverride = null);
 
 public sealed class RetentionOptions
 {
@@ -72,7 +81,7 @@ public sealed class RetentionSweeper(IOptions<RetentionOptions> options, ILogger
         await using var connection = new NpgsqlConnection(_options.ConnectionString);
         await connection.OpenAsync(cancellationToken);
 
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-_options.RetentionDays);
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-(target.RetentionDaysOverride ?? _options.RetentionDays));
         long totalDeleted = 0;
 
         while (!cancellationToken.IsCancellationRequested)

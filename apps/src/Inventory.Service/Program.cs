@@ -88,7 +88,16 @@ builder.Services.Configure<RetentionOptions>(options =>
     options.Targets =
     [
         new RetentionTarget("outbox_messages", "processed_at"),
-        new RetentionTarget("inbox_messages", "processed_at")
+        new RetentionTarget("inbox_messages", "processed_at"),
+        // A committed reservation stops being useful audit evidence once
+        // both the anti-entropy sweep (a cancelled-order divergence is
+        // caught within one sweep interval of occurring, not months later)
+        // and the return window (7 days, ReturnOptions.RegretWindowDays)
+        // have had every realistic chance to act on it. 60 days is
+        // generous on both counts, not a measured number - unlike
+        // outbox/inbox, there is no load-test data yet for how fast this
+        // table actually grows.
+        new RetentionTarget("inventory_reservation_ledger", "committed_at", RetentionDaysOverride: 60)
     ];
     options.RetentionDays = builder.Configuration.GetValue("Retention:RetentionDays", 7);
 });

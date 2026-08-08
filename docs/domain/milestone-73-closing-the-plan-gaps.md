@@ -99,7 +99,7 @@ All 24 containers came up after the change, so there were no latent gaps to find
 
 ## What was deliberately not done
 
-**Partial fulfilment (Phase 6).** The plan asked for it; Milestone 72 implemented all-or-nothing instead. A partial reservation confirms an order the warehouse cannot fill, and the missing units need somewhere to wait — a backorder state, and a replenishment loop to release them. `WarehouseReplenishmentNeeded` is the first half of that; the rest is a milestone, not a gap.
+**~~Partial fulfilment (Phase 6).~~ Resolved by Milestones 74 and 89.** The plan asked for it; Milestone 72 implemented all-or-nothing instead, and this milestone's own gap list said the missing units needed somewhere to wait — a backorder state, and a replenishment loop to release them — and that `WarehouseReplenishmentNeeded` was only the first half of that. Milestone 74 built the backorder state; Milestone 89 built the replenishment loop that consumes the event this milestone emitted and closes it. Left here, struck through rather than deleted, so the plan-vs-built history this document exists to record stays intact.
 
 **A `Paid` order state (Phase 3).** The plan listed `Created → Confirmed → Paid → Picking`. With authorize/capture, the money moves at `Shipped` — that is where capture runs. A `Paid` state sitting before `Picking` would assert something false about where the money is. The state machine is right and the plan was written before Milestone 68 existed.
 

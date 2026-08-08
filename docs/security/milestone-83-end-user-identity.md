@@ -46,7 +46,7 @@ Same constraint as Milestones 81-82: no Docker here, and this milestone specific
 
 ## What was deliberately not done
 
-- **Cart ownership.** `cartId` is still a client-supplied opaque string with no verified owner - the enumeration surface that lets one shopper read or clear another's cart is untouched. This is Milestone 84's fix (deriving the cart key from the shopper's own identity), not this one's; M83 stops short of it because Cart.Service has no authentication at all yet to derive anything from.
+- ~~**Cart ownership.**~~ **Resolved by Milestone 84.** `cartId` was a client-supplied opaque string with no verified owner - the enumeration surface that let one shopper read or clear another's cart - at the time this milestone shipped, deliberately: Cart.Service had no authentication at all yet to derive an owner from. Milestone 84 gave it that authentication and derived the cart's key from the shopper's own identity, closing the gap named here.
 - **Revoking or migrating existing non-Keycloak-backed `customerId` values.** Every `customerId` this lab has ever seeded or generated (`customer-42`, `race-customer-{i}`, k6's synthetic ids) keeps working exactly as before under an admin token; only a *non-admin* caller is now bound to their own verified identity. No backfill, no forced re-authentication of historical data.
 - **A UI.** Nothing in this lab has a browser-based frontend to actually drive the authorization-code+PKCE flow through; `orders-storefront`'s standard flow is provisioned and ready for one, unexercised.
 
