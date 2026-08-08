@@ -65,6 +65,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 ## data-platform
 
 - [Milestone 27: Data Layer HA, Backup, and Restore Drill](data-platform/milestone-27-postgres-ha.md)
+- [Milestone 80: The Backup/Restore Drill Postgres Had and Mongo/Redis Didn't](data-platform/milestone-80-nosql-backup-restore.md)
 
 ## messaging
 
