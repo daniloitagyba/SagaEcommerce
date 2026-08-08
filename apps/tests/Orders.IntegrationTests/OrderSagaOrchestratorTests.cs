@@ -91,10 +91,10 @@ public sealed class OrderSagaOrchestratorTests : IAsyncLifetime, IDisposable
         await using var scope = _dataSource.CreateConnection();
         await scope.OpenAsync();
         await using var command = scope.CreateCommand();
-        command.CommandText = "SELECT sku, quantity FROM saga_orchestration_states WHERE order_id = @order_id";
+        command.CommandText = "SELECT sku, quantity FROM saga_orchestration_lines WHERE order_id = @order_id";
         command.Parameters.AddWithValue("order_id", orderId);
         await using var reader = await command.ExecuteReaderAsync();
-        Assert.True(await reader.ReadAsync(), "expected a saga_orchestration_states row for this order");
+        Assert.True(await reader.ReadAsync(), "expected a saga_orchestration_lines row for this order");
         Assert.Equal("SKU-INTEG-001", reader.GetString(0));
         Assert.Equal(3, reader.GetInt32(1));
         await reader.CloseAsync();
@@ -111,6 +111,58 @@ public sealed class OrderSagaOrchestratorTests : IAsyncLifetime, IDisposable
         Assert.NotNull(published);
         Assert.Equal("SKU-INTEG-001", published.Message.Key);
         Assert.Contains("\"quantity\":3", published.Message.Value);
+    }
+
+    [Fact]
+    public async Task AMultiLineOrderGetsAReservationForEveryLineNotJustTheLargest()
+    {
+        // Milestone 78: before this, only the largest line by value got a
+        // real reservation - the other lines were never checked against
+        // stock at all. This is the regression test that would have caught that.
+        var orchestrator = CreateOrchestrator();
+        var orderId = Guid.NewGuid();
+        var consumeResult = await CreateConsumeResultAsync(
+            orderId,
+            [
+                new OrderCreatedLine("SKU-MULTI-BIG", "Big Line", 1, 500.00m, 500.00m),
+                new OrderCreatedLine("SKU-MULTI-SMALL", "Small Line", 5, 10.00m, 50.00m)
+            ]);
+
+        await orchestrator.RequestReservationAsync(consumeResult, CancellationToken.None);
+
+        await using var scope = _dataSource.CreateConnection();
+        await scope.OpenAsync();
+        await using var command = scope.CreateCommand();
+        command.CommandText = "SELECT sku, quantity, line_index FROM saga_orchestration_lines WHERE order_id = @order_id ORDER BY line_index";
+        command.Parameters.AddWithValue("order_id", orderId);
+        await using var reader = await command.ExecuteReaderAsync();
+
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("SKU-MULTI-BIG", reader.GetString(0));
+        Assert.Equal(1, reader.GetInt32(1));
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("SKU-MULTI-SMALL", reader.GetString(0));
+        Assert.Equal(5, reader.GetInt32(1));
+        Assert.False(await reader.ReadAsync(), "expected exactly two line rows, not just the largest");
+        await reader.CloseAsync();
+
+        using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
+        {
+            BootstrapServers = _redpanda.GetBootstrapAddress(),
+            GroupId = $"test-verify-multi-{Guid.NewGuid():N}",
+            AutoOffsetReset = AutoOffsetReset.Earliest
+        }).Build();
+        consumer.Subscribe("inventory.reservation-requested.v1");
+
+        var publishedKeys = new HashSet<string>();
+        for (var i = 0; i < 2; i++)
+        {
+            var published = consumer.Consume(TimeSpan.FromSeconds(10));
+            Assert.NotNull(published);
+            publishedKeys.Add(published.Message.Key);
+        }
+
+        Assert.Equal(["SKU-MULTI-BIG", "SKU-MULTI-SMALL"], publishedKeys.OrderBy(key => key, StringComparer.Ordinal));
     }
 
     [Fact]

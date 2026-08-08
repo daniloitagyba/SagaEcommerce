@@ -29,6 +29,8 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
 
     public DbSet<SagaOrchestrationState> SagaOrchestrationStates => Set<SagaOrchestrationState>();
 
+    public DbSet<SagaOrchestrationLine> SagaOrchestrationLines => Set<SagaOrchestrationLine>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureOrder(modelBuilder);
@@ -41,6 +43,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         ConfigureOrderSummary(modelBuilder);
         ConfigureOrderEvent(modelBuilder);
         ConfigureSagaOrchestrationState(modelBuilder);
+        ConfigureSagaOrchestrationLine(modelBuilder);
     }
 
     private static void ConfigureOrder(ModelBuilder modelBuilder)
@@ -285,13 +288,30 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         saga.Property(item => item.ShippingPostalPrefix).HasColumnName("shipping_postal_prefix").HasMaxLength(8).IsRequired();
         saga.Property(item => item.RequestedAt).HasColumnName("requested_at").IsRequired();
         saga.Property(item => item.Step).HasColumnName("step").HasMaxLength(32).IsRequired();
-        saga.Property(item => item.ReservationId).HasColumnName("reservation_id").IsRequired();
-        saga.Property(item => item.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();
-        saga.Property(item => item.Quantity).HasColumnName("quantity").IsRequired();
         saga.Property(item => item.Amount).HasColumnName("amount").HasPrecision(18, 2).IsRequired();
         saga.Property(item => item.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
         saga.HasIndex(item => item.RequestedAt)
             .HasDatabaseName("ix_saga_orchestration_states_requested_at");
+    }
+
+    private static void ConfigureSagaOrchestrationLine(ModelBuilder modelBuilder)
+    {
+        var line = modelBuilder.Entity<SagaOrchestrationLine>();
+
+        line.ToTable("saga_orchestration_lines");
+        line.HasKey(item => new { item.OrderId, item.LineIndex });
+        line.Property(item => item.OrderId).HasColumnName("order_id").ValueGeneratedNever();
+        line.Property(item => item.LineIndex).HasColumnName("line_index").ValueGeneratedNever();
+        line.Property(item => item.ReservationId).HasColumnName("reservation_id").IsRequired();
+        line.Property(item => item.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();
+        line.Property(item => item.Quantity).HasColumnName("quantity").IsRequired();
+        line.Property(item => item.Reserved).HasColumnName("reserved");
+        line.Property(item => item.Committed).HasColumnName("committed");
+        line.Property(item => item.Released).HasColumnName("released");
+        line.HasOne<SagaOrchestrationState>().WithMany().HasForeignKey(item => item.OrderId).OnDelete(DeleteBehavior.Cascade);
+        line.HasIndex(item => item.ReservationId)
+            .IsUnique()
+            .HasDatabaseName("ix_saga_orchestration_lines_reservation_id");
     }
 }
 

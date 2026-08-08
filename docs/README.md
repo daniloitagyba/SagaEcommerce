@@ -34,6 +34,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 - [Milestone 56: TLA+ Formal Verification of the 4-Step Saga](saga/milestone-56-tla-plus-saga-verification.md)
 - [Milestone 75: Saga:Mode=Both Is the Default Now, Not Choreography](saga/milestone-75-saga-mode-both-by-default.md)
 - [Milestone 77: Inventory Timeout Compensation Was the One Cancelled Order That Never Released Its Stock](saga/milestone-77-inventory-timeout-compensation.md)
+- [Milestone 78: Every Line Gets Reserved Now, Not Just the Biggest One](saga/milestone-78-multi-line-saga.md)
 
 ## domain
 

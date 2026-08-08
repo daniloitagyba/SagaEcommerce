@@ -93,26 +93,21 @@ public sealed class OrderSagaOrchestrator(
         }
 
         var requestedAt = DateTimeOffset.UtcNow;
-        var reservationId = Guid.NewGuid();
 
-        // Milestone 66: reserve what the customer actually ordered, not a
-        // hashed stand-in SKU. The saga still tracks only a single line
-        // (SagaOrchestrationState is one row per order), so taking the
-        // largest line by value is a stated simplification, not a hidden one.
-        var primaryLine = orderCreated.LinesOrEmpty
-            .OrderByDescending(line => line.LineTotal)
-            .ThenBy(line => line.Sku, StringComparer.Ordinal)
-            .FirstOrDefault();
-
-        if (primaryLine is null)
+        if (orderCreated.LinesOrEmpty.Count == 0)
         {
-            // An amount-only order has nothing to reserve - inventing a SKU is exactly the behaviour this milestone removed.
+            // An amount-only order has nothing to reserve - inventing a SKU is exactly the behaviour Milestone 66 removed.
             SagaOrchestratorLog.SkippedOrderWithoutLines(logger, orderCreated.OrderId, orderCreated.CorrelationId);
             return;
         }
 
-        var sku = primaryLine.Sku;
-        var quantity = primaryLine.Quantity;
+        // Milestone 78: every line gets its own reservation, not just the
+        // largest by value - SagaOrchestrationState.Lines is one row per
+        // SKU, each with its own ReservationId, so Commit/Release act on
+        // the specific line they're replying to.
+        var lines = orderCreated.LinesOrEmpty
+            .Select(line => new SagaReservationLine(Guid.NewGuid(), line.Sku, line.Quantity))
+            .ToList();
 
         await store.TrackReserveRequestedAsync(
             orderCreated.OrderId,
@@ -120,42 +115,43 @@ public sealed class OrderSagaOrchestrator(
             orderCreated.CustomerId,
             orderCreated.PaymentMethod,
             orderCreated.ShippingPostalPrefix,
-            reservationId,
-            sku,
-            quantity,
+            lines,
             orderCreated.Amount,
             orderCreated.Currency,
             requestedAt,
             cancellationToken);
 
-        var request = new InventoryReservationRequested(
-            reservationId,
-            orderCreated.OrderId,
-            sku,
-            quantity,
-            orderCreated.CorrelationId,
-            requestedAt);
-
         using var activity = OrdersTelemetry.StartActivity("saga.orchestrator.reserve", ActivityKind.Producer, null, null);
         activity?.SetTag("order.id", orderCreated.OrderId);
-        activity?.SetTag("inventory.sku", sku);
+        activity?.SetTag("inventory.line_count", lines.Count);
         activity?.SetTag("correlation.id", orderCreated.CorrelationId);
 
-        // Keyed by Sku, not OrderId - see BuildingBlocks/InventoryContracts.cs.
-        var message = new Message<string, string>
+        foreach (var line in lines)
         {
-            Key = sku,
-            Value = JsonSerializer.Serialize(request, SerializerOptions)
-        };
+            var request = new InventoryReservationRequested(
+                line.ReservationId,
+                orderCreated.OrderId,
+                line.Sku,
+                line.Quantity,
+                orderCreated.CorrelationId,
+                requestedAt);
 
-        try
-        {
-            await producer.ProduceAsync(_options.ReservationRequestedTopic, message, cancellationToken);
-            SagaOrchestratorLog.ReservationRequested(logger, orderCreated.OrderId, sku, orderCreated.CorrelationId);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            SagaOrchestratorLog.RequestPublishFailed(logger, orderCreated.OrderId, exception);
+            // Keyed by Sku, not OrderId - see BuildingBlocks/InventoryContracts.cs.
+            var message = new Message<string, string>
+            {
+                Key = line.Sku,
+                Value = JsonSerializer.Serialize(request, SerializerOptions)
+            };
+
+            try
+            {
+                await producer.ProduceAsync(_options.ReservationRequestedTopic, message, cancellationToken);
+                SagaOrchestratorLog.ReservationRequested(logger, orderCreated.OrderId, line.Sku, orderCreated.CorrelationId);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                SagaOrchestratorLog.RequestPublishFailed(logger, orderCreated.OrderId, exception);
+            }
         }
     }
 }

@@ -91,7 +91,7 @@ public sealed class SagaTimeoutSweeperTests : IAsyncLifetime, IDisposable
         await _sweeper.ResolveAsync(orderId, saga, CancellationToken.None);
 
         Assert.Equal(OrderStatuses.Cancelled, await CurrentStatusAsync(orderId));
-        AssertReleasePublished(saga.ReservationId);
+        AssertReleasePublished(saga.Lines[0].ReservationId);
     }
 
     [Fact]
@@ -102,7 +102,7 @@ public sealed class SagaTimeoutSweeperTests : IAsyncLifetime, IDisposable
         await _sweeper.ResolveAsync(orderId, saga, CancellationToken.None);
 
         Assert.Equal(OrderStatuses.Cancelled, await CurrentStatusAsync(orderId));
-        AssertReleasePublished(saga.ReservationId);
+        AssertReleasePublished(saga.Lines[0].ReservationId);
     }
 
     [Fact]
@@ -135,15 +135,17 @@ public sealed class SagaTimeoutSweeperTests : IAsyncLifetime, IDisposable
 
         var reservationId = Guid.NewGuid();
         var requestedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var line = new SagaReservationLine(reservationId, "SKU-TIMEOUT-001", 3);
         await _sagaStore.TrackReserveRequestedAsync(
             order.Id, "saga-timeout-correlation", order.CustomerId, PaymentMethods.Card, "01",
-            reservationId, "SKU-TIMEOUT-001", 3, order.Amount, order.Currency, requestedAt, CancellationToken.None);
+            [line], order.Amount, order.Currency, requestedAt, CancellationToken.None);
 
         var record = step switch
         {
             SagaStep.ReserveInventory => new SagaOrchestrationRecord(
                 "saga-timeout-correlation", order.CustomerId, PaymentMethods.Card, "01", requestedAt,
-                SagaStep.ReserveInventory, reservationId, "SKU-TIMEOUT-001", 3, order.Amount, order.Currency),
+                SagaStep.ReserveInventory, order.Amount, order.Currency,
+                [new SagaLineRecord(0, reservationId, "SKU-TIMEOUT-001", 3, Reserved: null, Committed: null, Released: null)]),
             _ => await _sagaStore.TryAdvanceAsync(order.Id, SagaStep.ReserveInventory, step, requestedAt, CancellationToken.None)
                  ?? throw new InvalidOperationException($"Failed to advance seeded saga row to {step}")
         };

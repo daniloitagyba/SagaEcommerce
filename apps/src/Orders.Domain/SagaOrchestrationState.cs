@@ -6,9 +6,10 @@ namespace Orders.Domain;
 /// survive a pod restart. EF Core owns this table's schema only; runtime
 /// reads/writes go through raw Npgsql in SagaOrchestrationStore, matching
 /// the OrderEvent/order_events pattern. Milestone 43: one row per OrderId,
-/// since only one reply is ever outstanding at a time - Step says which
-/// reply is expected, and ReservationId/Sku/Quantity are set once and
-/// carried through since Commit/Release act on the same reservation.
+/// since only one reply is ever outstanding *per line* at a time - Step
+/// says which reply is expected. Milestone 78: ReservationId/Sku/Quantity
+/// moved out to <see cref="SagaOrchestrationLine"/> - a multi-line order
+/// now has one line row per SKU, not one reservation for the whole order.
 /// </summary>
 public sealed class SagaOrchestrationState
 {
@@ -32,12 +33,6 @@ public sealed class SagaOrchestrationState
     public DateTimeOffset RequestedAt { get; private set; }
 
     public string Step { get; private set; } = string.Empty;
-
-    public Guid ReservationId { get; private set; }
-
-    public string Sku { get; private set; } = string.Empty;
-
-    public int Quantity { get; private set; }
 
     public decimal Amount { get; private set; }
 

@@ -43,6 +43,12 @@ namespace Orders.Worker;
 /// release attempted - whether anything was ever reserved is unknown, and
 /// that is the one gap this milestone leaves open rather than paper over.
 /// </para>
+/// <para>
+/// Milestone 78: a saga can now have several lines in flight at once, so
+/// every action above that used to touch "the" reservation now loops over
+/// <see cref="SagaOrchestrationRecord.Lines"/> instead - releasing every
+/// line on a DecidePayment/ReleaseInventory timeout, not just one.
+/// </para>
 /// </summary>
 public sealed class SagaTimeoutSweeper(
     IOptions<SagaOrchestrationOptions> options,
@@ -85,12 +91,17 @@ public sealed class SagaTimeoutSweeper(
         {
             case SagaStep.DecidePayment:
             case SagaStep.ReleaseInventory:
-                // A reservation certainly exists and certainly hasn't been
-                // committed - DecidePayment hasn't reached CommitInventory
-                // yet, and ReleaseInventory means a release was already
-                // requested once, so resending it is a safe redelivery,
+                // Every line's reservation certainly exists and certainly
+                // hasn't been committed - DecidePayment is only reached
+                // once every line replied Reserved (Milestone 78), and
+                // ReleaseInventory means a release was already requested
+                // once for every line, so resending is a safe redelivery,
                 // not a guess.
-                await PublishReleaseAsync(orderId, saga, cancellationToken);
+                foreach (var line in saga.Lines)
+                {
+                    await PublishReleaseAsync(orderId, saga.CorrelationId, line, cancellationToken);
+                }
+
                 await orderStatusStore.TryCancelAsync(orderId, saga.CorrelationId, cancellationToken);
                 break;
 
@@ -114,21 +125,21 @@ public sealed class SagaTimeoutSweeper(
         }
     }
 
-    private async Task PublishReleaseAsync(Guid orderId, SagaOrchestrationRecord saga, CancellationToken cancellationToken)
+    private async Task PublishReleaseAsync(Guid orderId, string correlationId, SagaLineRecord line, CancellationToken cancellationToken)
     {
         var request = new InventoryReservationReleaseRequested(
-            saga.ReservationId, orderId, saga.Sku, saga.Quantity, saga.CorrelationId, DateTimeOffset.UtcNow);
+            line.ReservationId, orderId, line.Sku, line.Quantity, correlationId, DateTimeOffset.UtcNow);
 
         var message = new Message<string, string>
         {
-            Key = saga.Sku,
+            Key = line.Sku,
             Value = JsonSerializer.Serialize(request, SerializerOptions)
         };
 
         try
         {
             await producer.ProduceAsync(_options.ReleaseRequestedTopic, message, cancellationToken);
-            SagaOrchestratorLog.TimeoutReleaseRequested(logger, orderId, saga.Sku, saga.CorrelationId);
+            SagaOrchestratorLog.TimeoutReleaseRequested(logger, orderId, line.Sku, correlationId);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
