@@ -203,6 +203,25 @@ else
   printf 'Client %s already exists.\n' "$storefront_client_id"
 fi
 
+# storefront-web's own follow-up: this client's create call above never set
+# redirectUris/webOrigins - Keycloak leaves both empty when omitted, which
+# fails the authorization-code+PKCE flow outright with "invalid
+# redirect_uri" the moment a real browser tries it, whether the client was
+# just created above or already existed from an earlier run. Idempotent
+# either way: fetch-merge-PUT, not create-only, so re-running this script
+# after the frontend's origins change (or against an already-configured
+# realm) still converges instead of silently doing nothing.
+curl --fail --silent --header "$auth_header" \
+  "$keycloak_url/admin/realms/$realm_name/clients/$storefront_internal_id" |
+  jq '.redirectUris = ["http://localhost:5173/*", "http://localhost:8089/*"]
+    | .webOrigins = ["http://localhost:5173", "http://localhost:8089"]' \
+  > /tmp/orders-storefront-client.json
+curl --fail --silent --request PUT --header "$auth_header" --header "Content-Type: application/json" \
+  --data @/tmp/orders-storefront-client.json \
+  "$keycloak_url/admin/realms/$realm_name/clients/$storefront_internal_id"
+rm -f /tmp/orders-storefront-client.json
+printf 'Set redirectUris/webOrigins on %s for the Vite dev server (5173) and the compose-served build (8089).\n' "$storefront_client_id"
+
 # orders-api (checkout) and cart-service (Milestone 84: the shopper's own
 # cart, keyed by their own identity) - not catalog-service or
 # inventory-service, which stay anonymous through Storefront's proxy.
@@ -223,8 +242,13 @@ demo_user_id=$(
 )
 
 if [[ -z "$demo_user_id" ]]; then
+  # email/firstName/lastName, not just username: this realm's User Profile
+  # config requires them, and a user created without them fails every
+  # login - including the direct-grant one this same script's ROPC callers
+  # use - with "resolve_required_actions"/"Account is not fully set up",
+  # a Keycloak error that names neither the missing field nor the fix.
   curl_json --header "$auth_header" \
-    --data "{\"username\":\"$demo_username\",\"enabled\":true,\"emailVerified\":true,\"credentials\":[{\"type\":\"password\",\"value\":\"$KEYCLOAK_DEMO_CUSTOMER_PASSWORD\",\"temporary\":false}]}" \
+    --data "{\"username\":\"$demo_username\",\"enabled\":true,\"email\":\"$demo_username@example.invalid\",\"emailVerified\":true,\"firstName\":\"Demo\",\"lastName\":\"Shopper\",\"credentials\":[{\"type\":\"password\",\"value\":\"$KEYCLOAK_DEMO_CUSTOMER_PASSWORD\",\"temporary\":false}]}" \
     "$keycloak_url/admin/realms/$realm_name/users"
   demo_user_id=$(
     curl --fail --silent --header "$auth_header" \

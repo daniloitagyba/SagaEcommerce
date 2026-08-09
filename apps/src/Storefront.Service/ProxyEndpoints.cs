@@ -31,6 +31,18 @@ public static class ProxyEndpoints
         endpoints.MapPost("/api/orders", (HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
             => ForwardOrderAsync(factory.CreateClient("orders"), request, cancellationToken));
 
+        // Order management the frontend needs beyond checkout itself -
+        // GET .../{id}, GET .../{id}/history, GET .../summary all fall out
+        // of the one wildcard GET below; POST covers .../{id}/cancellation
+        // (self-service cancel) and .../{id}/returns (both bodyless or
+        // JSON-bodied, ForwardAsync now reads either). Deliberately a
+        // wildcard rather than one route per sub-path: Orders.Api owns the
+        // actual shape of what's under /orders/, this is just a forward.
+        endpoints.MapGet("/api/orders/{**path}", (string path, HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
+            => ForwardAsync(factory.CreateClient("orders"), path, request, cancellationToken));
+        endpoints.MapPost("/api/orders/{**path}", (string path, HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
+            => ForwardAsync(factory.CreateClient("orders"), path, request, cancellationToken));
+
         return endpoints;
     }
 
@@ -39,7 +51,7 @@ public static class ProxyEndpoints
         var target = $"/{path}{request.QueryString}";
         using var upstreamRequest = new HttpRequestMessage(new HttpMethod(request.Method), target);
 
-        if (HttpMethods.IsPut(request.Method) && request.ContentLength is > 0)
+        if ((HttpMethods.IsPut(request.Method) || HttpMethods.IsPost(request.Method)) && request.ContentLength is > 0)
         {
             using var reader = new StreamReader(request.Body);
             var body = await reader.ReadToEndAsync(cancellationToken);
