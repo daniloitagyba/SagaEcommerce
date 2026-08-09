@@ -8,11 +8,11 @@ compose_directory="$project_directory/compose"
 # shellcheck disable=SC1091
 source "$compose_directory/.env"
 
-# The published host port (127.0.0.1:18081, matching KEYCLOAK_PORT) records
-# a correct binding in `docker inspect` but doesn't actually get programmed
-# on this host - the same class of quirk already hit with Alertmanager
-# (Milestone 16) and Debezium's connector API (Milestone 21). The k3s-bridge
-# network's fixed IP is host-routable and reliably reachable instead.
+# The k3s-bridge fixed IP, not the published host port: this script runs
+# against the real host (not a browser), and the fixed IP is reachable
+# without depending on compose.yaml's Keycloak service also being on a
+# non-internal network - see the "frontend" note on that service for why
+# that matters for a browser instead.
 keycloak_url=${KEYCLOAK_URL:-http://172.30.0.17:8080}
 realm_name=orders-lab
 client_id=orders-api-clients
@@ -211,16 +211,26 @@ fi
 # either way: fetch-merge-PUT, not create-only, so re-running this script
 # after the frontend's origins change (or against an already-configured
 # realm) still converges instead of silently doing nothing.
+storefront_origins=("http://localhost:5173" "http://localhost:8089")
+# PUBLIC_STOREFRONT_URL (.env, optional): a LAN address a phone or another
+# device can reach storefront-web at - only meaningful alongside
+# PUBLIC_KEYCLOAK_URL and LAB_BIND_ADDRESS=0.0.0.0 (see .env.example). Not
+# added unless set, so this is a no-op for the default localhost-only setup.
+if [[ -n "${PUBLIC_STOREFRONT_URL:-}" ]]; then
+  storefront_origins+=("$PUBLIC_STOREFRONT_URL")
+fi
+storefront_redirect_uris=$(printf '%s/*\n' "${storefront_origins[@]}" | jq --raw-input --slurp 'split("\n") | map(select(length > 0))')
+storefront_web_origins=$(printf '%s\n' "${storefront_origins[@]}" | jq --raw-input --slurp 'split("\n") | map(select(length > 0))')
 curl --fail --silent --header "$auth_header" \
   "$keycloak_url/admin/realms/$realm_name/clients/$storefront_internal_id" |
-  jq '.redirectUris = ["http://localhost:5173/*", "http://localhost:8089/*"]
-    | .webOrigins = ["http://localhost:5173", "http://localhost:8089"]' \
+  jq --argjson redirectUris "$storefront_redirect_uris" --argjson webOrigins "$storefront_web_origins" \
+    '.redirectUris = $redirectUris | .webOrigins = $webOrigins' \
   > /tmp/orders-storefront-client.json
 curl --fail --silent --request PUT --header "$auth_header" --header "Content-Type: application/json" \
   --data @/tmp/orders-storefront-client.json \
   "$keycloak_url/admin/realms/$realm_name/clients/$storefront_internal_id"
 rm -f /tmp/orders-storefront-client.json
-printf 'Set redirectUris/webOrigins on %s for the Vite dev server (5173) and the compose-served build (8089).\n' "$storefront_client_id"
+printf 'Set redirectUris/webOrigins on %s for: %s\n' "$storefront_client_id" "${storefront_origins[*]}"
 
 # orders-api (checkout) and cart-service (Milestone 84: the shopper's own
 # cart, keyed by their own identity) - not catalog-service or
