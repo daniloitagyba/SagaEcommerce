@@ -162,15 +162,17 @@ jobs:
 
       - name: enforce coverage threshold
         run: |
-          # 3.5% - a real margin under the 3.8% measured baseline for this
-          # UNIT-TEST-ONLY scope (recalibrated 2026-08-05; was 3%, a full
-          # 0.9pp under baseline, which gated nothing in practice). Coverage
-          # collection deliberately excludes the Integration/Contract test
-          # projects (see the "coverage (unit tests only)" step above), so
-          # this number is intentionally far below what the whole solution's
-          # tests exercise - it only gates Orders.UnitTests/
-          # Storefront.UnitTests regressing, not overall solution coverage.
-          threshold="3.5"
+          # 5.5% - a real margin under the 6.1% measured baseline for this
+          # UNIT-TEST-ONLY scope (recalibrated 2026-08-09, after M76-78 added
+          # real unit-test coverage; was 3.5% against a 3.8% baseline from
+          # 2026-08-05, which had drifted 2.3pp stale and was gating nothing
+          # in practice by this point). Coverage collection deliberately
+          # excludes the Integration/Contract test projects (see the
+          # "coverage (unit tests only)" step above), so this number is
+          # intentionally far below what the whole solution's tests exercise
+          # - it only gates Orders.UnitTests/Storefront.UnitTests
+          # regressing, not overall solution coverage.
+          threshold="5.5"
           line_coverage=$(grep -oE "Line coverage: [0-9.]+%" ./coverage/report/Summary.txt | grep -oE "[0-9.]+")
           echo "Line coverage: ${line_coverage}%"
           awk -v cov="$line_coverage" -v threshold="$threshold" 'BEGIN { exit !(cov >= threshold) }' \

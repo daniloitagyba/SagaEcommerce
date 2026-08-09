@@ -21,7 +21,9 @@ When the network genuinely can't cover an order, it doesn't just fail: the reser
 | Direction | What | Why |
 |---|---|---|
 | in | `inventory.reservation/commit/release-requested.v1`, `restock-requested.v1` | saga steps and order returns |
-| out | `inventory.*-replied.v1`, `restock-replied.v1`, `replenishment-needed.v1` | saga replies and the (currently unconsumed) replenishment signal |
+| out | `inventory.reservation/commit/release-replied.v1` | saga replies - consumed by `Orders.Worker`'s `OrderSagaReplyConsumer` |
+| out | `inventory.restock-replied.v1` | intentionally unconsumed today - each reply's correlation ID is traceable back to its return or purchase order (see `PurchaseOrderReceivingSweeper`) for manual/observability tracing, not automated follow-up |
+| out | `inventory.replenishment-needed.v1` | the reorder-point signal - consumed by this same service (`ReplenishmentRequestProcessor`, Milestone 89), which raises a purchase order from it |
 | out | PostgreSQL (`inventory` db) | per-warehouse stock, backorders, reservation allocations |
 
 ## Run it

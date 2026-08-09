@@ -39,8 +39,18 @@ public class StockEscrowConcurrencyTests
         // makes bucketCount threads available immediately for both runs.
         ThreadPool.SetMinThreads(bucketCount + 2, bucketCount + 2);
 
-        var singleLockElapsed = RunWithLocking(totalOperations, lockCount: 1);
-        var bucketedElapsed = RunWithLocking(totalOperations, lockCount: bucketCount);
+        // A single sample of either side is noisy regardless of thread-pool
+        // warm-up - a GC pause, a scheduler quantum, or another process
+        // stealing CPU for a few milliseconds during just one of the two
+        // runs is enough to blow the margin below, on any machine, not just
+        // a slow one. The median of several independent samples is
+        // insensitive to any one such outlier without hiding a real,
+        // sustained difference in the locking shape.
+        const int sampleCount = 5;
+        var singleLockElapsed = Median(Enumerable.Range(0, sampleCount)
+            .Select(_ => RunWithLocking(totalOperations, lockCount: 1)));
+        var bucketedElapsed = Median(Enumerable.Range(0, sampleCount)
+            .Select(_ => RunWithLocking(totalOperations, lockCount: bucketCount)));
 
         // Not a specific multiplier - bucketCount-fold speedup is the
         // theoretical ceiling, never the measured floor once real
@@ -49,7 +59,13 @@ public class StockEscrowConcurrencyTests
         // is real without the test being one slow CI runner away from flaking.
         Assert.True(
             bucketedElapsed < singleLockElapsed / 2,
-            $"expected bucketed locking to meaningfully outperform a single lock; single={singleLockElapsed.TotalMilliseconds:0}ms, bucketed={bucketedElapsed.TotalMilliseconds:0}ms");
+            $"expected bucketed locking to meaningfully outperform a single lock; single={singleLockElapsed.TotalMilliseconds:0}ms, bucketed={bucketedElapsed.TotalMilliseconds:0}ms (medians of {sampleCount} runs)");
+    }
+
+    private static TimeSpan Median(IEnumerable<TimeSpan> samples)
+    {
+        var sorted = samples.OrderBy(sample => sample).ToArray();
+        return sorted[sorted.Length / 2];
     }
 
     /// <summary>

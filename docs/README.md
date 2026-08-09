@@ -130,6 +130,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 ## slo
 
 - [Milestone 16: SLOs + Multi-Window, Multi-Burn-Rate Alerting](slo/milestone-16-slo-burn-rate-alerting.md)
+- See also [Milestone 79: Alerting Beyond the One Golden Signal Orders.Api Had](resilience/milestone-79-operational-alerts.md) (filed under resilience - simple threshold alerts on async/messaging paths, not multi-window burn-rate SLOs like M16)
 
 ## cicd
 

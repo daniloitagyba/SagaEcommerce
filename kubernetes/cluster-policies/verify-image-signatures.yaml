@@ -52,3 +52,35 @@ spec:
                     issuer: "https://token.actions.githubusercontent.com"
                     rekor:
                       url: https://rekor.sigstore.dev
+
+    # Belt-and-suspenders companion to the rule above: that rule only
+    # *looks at* images matching ghcr.io/daniloitagyba/saga-ecommerce/*, and
+    # by the time one passes signature verification it already carries a
+    # digest via mutateDigest - so a second check scoped to the same
+    # pattern would be a no-op. This rule instead covers what the first one
+    # structurally can't: any pod's container referencing *any* image by
+    # tag alone, saga-ecommerce or not, without a resolved digest. The
+    # local dev loop's own images (kubernetes/overlays/local/, `:local`
+    # tag, imagePullPolicy: Never, built straight into containerd by
+    # scripts/k3s-build-images.sh) are excluded on purpose, for the same
+    # reason the header comment above gives for the first rule - signing
+    # or digest-pinning every local rebuild would defeat fast iteration.
+    - name: require-image-digest
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Container images must be referenced by digest (image@sha256:...) - a tag alone can be repointed after admission, undermining the signature check above."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ contains(element.image, 'saga-ecommerce/') && ends_with(element.image, ':local') }}"
+                    operator: Equals
+                    value: false
+                  - key: "{{ contains(element.image, '@sha256:') }}"
+                    operator: Equals
+                    value: false
