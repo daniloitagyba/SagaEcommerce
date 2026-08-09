@@ -29,6 +29,16 @@ public class StockEscrowConcurrencyTests
         const int operationsPerBucket = 6;
         var totalOperations = bucketCount * operationsPerBucket;
 
+        // The ThreadPool ramps up worker threads gradually (hill-climbing,
+        // roughly one new thread per ~500ms under contention) rather than
+        // handing out bucketCount threads the instant Parallel.For asks for
+        // them. On a busy CI runner that ramp-up can eat into the bucketed
+        // run's short measured window and make it look no faster than the
+        // single-lock run - a starvation artifact, not the locking shape
+        // this test exists to demonstrate. Forcing the minimum up front
+        // makes bucketCount threads available immediately for both runs.
+        ThreadPool.SetMinThreads(bucketCount + 2, bucketCount + 2);
+
         var singleLockElapsed = RunWithLocking(totalOperations, lockCount: 1);
         var bucketedElapsed = RunWithLocking(totalOperations, lockCount: bucketCount);
 
