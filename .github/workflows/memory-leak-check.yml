@@ -1,0 +1,43 @@
+name: memory-leak-check
+
+# scripts/memory-leak-check.sh drives a 5-minute k6 soak against a real K3s
+# deployment and reads gen2/LOH heap trend from Prometheus - it needs
+# kubectl, a live orders-worker Deployment, and Prometheus already scraping
+# it, none of which this repo has ever stood up inside GitHub-hosted CI
+# (no k3d/kind, no KUBECONFIG secret - the k3s-*.sh scripts are home-lab
+# tooling, not cloud-native CI, and this follows the same shape). This job
+# is workflow_dispatch-only, on purpose, with no cron: there's nothing
+# scheduled CI can reach to run it against. Trigger it by hand on a
+# self-hosted runner that already has working kubectl access to the K3s
+# lab (see artifacts on the runner or docs/ for how that cluster is
+# reached) and a Prometheus reachable at PROMETHEUS_URL.
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to check (must match a Deployment name and Prometheus service_name label)"
+        required: false
+        default: orders-api
+      growth-threshold-percent:
+        description: "gen2+LOH heap growth percent across the run that counts as a suspected leak"
+        required: false
+        default: "25"
+
+permissions:
+  contents: read
+
+jobs:
+  memory-leak-check:
+    name: memory leak check (K3s lab)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: verify kubectl reaches the lab
+        run: kubectl get deployment/orders-worker --namespace orders-lab
+
+      - name: run the heap-growth check
+        run: |
+          bash scripts/memory-leak-check.sh \
+            "${{ inputs.service }}" \
+            "${{ inputs.growth-threshold-percent }}"

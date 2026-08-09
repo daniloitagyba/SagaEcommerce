@@ -1,0 +1,61 @@
+name: coupon-redemption-concurrency
+
+# scripts/coupon-redemption-concurrency-test.sh proves Milestone 67's
+# atomic-UPDATE coupon redemption limit holds under real concurrent
+# checkouts. It needs the full Compose stack (Postgres, Kafka, Keycloak,
+# orders-api) up and answering, which is too slow/heavy for every push -
+# same reasoning as mutation-testing.yml, same trigger shape.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  coupon-redemption-concurrency:
+    name: coupon redemption concurrency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: generate throwaway compose credentials
+        working-directory: compose
+        run: |
+          # This stack lives only for this job's duration - random values
+          # are enough, there's nothing to persist or share.
+          {
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
+            echo "KEYCLOAK_ADMIN_PASSWORD=$(openssl rand -hex 24)"
+            echo "KEYCLOAK_CLIENT_SECRET=$(openssl rand -hex 24)"
+            echo "KEYCLOAK_DEMO_CUSTOMER_PASSWORD=$(openssl rand -hex 24)"
+            echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 24)"
+            echo "LAB_BIND_ADDRESS=127.0.0.1"
+          } >> .env
+
+      - name: bring up infrastructure
+        working-directory: compose
+        run: docker compose up --detach --wait
+
+      - name: bring up application services
+        working-directory: compose
+        run: docker compose --profile compose-apps up --detach --wait
+
+      - name: configure the Keycloak realm
+        run: bash scripts/keycloak-configure-realm.sh
+
+      - name: run the concurrency test
+        run: bash scripts/coupon-redemption-concurrency-test.sh
+
+      - name: dump service logs on failure
+        if: failure()
+        working-directory: compose
+        run: docker compose logs --tail 200
+
+      - name: tear down
+        if: always()
+        working-directory: compose
+        run: |
+          docker compose --profile compose-apps down --volumes
+          docker compose down --volumes
