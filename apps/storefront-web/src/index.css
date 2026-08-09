@@ -1,0 +1,13 @@
+/* Preflight deliberately skipped: MUI's own <CssBaseline /> is the reset
+   this app uses, and Tailwind's preflight fighting it (both normalize
+   margins/line-height/box-sizing differently) is exactly the class of
+   conflict this project avoids by only taking Tailwind's utility layer -
+   spacing/flex/grid classes alongside MUI components, not a second reset. */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+html,
+body,
+#root {
+  height: 100%;
+}

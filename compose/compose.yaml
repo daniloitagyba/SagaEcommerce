@@ -822,10 +822,15 @@ services:
 
   storefront-service:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/storefront-service:milestone-45-storefront-token-fix
+    image: saga-ecommerce/storefront-service:milestone-46-storefront-web
     build:
       context: ..
       dockerfile: apps/src/Storefront.Service/Dockerfile
+      args:
+        # Baked into the Vite build - the shopper's browser hits Keycloak
+        # directly on its published host port, not through the backend
+        # network Storefront.Service itself uses to validate tokens.
+        VITE_KEYCLOAK_URL: http://${LAB_BIND_ADDRESS:-127.0.0.1}:${KEYCLOAK_PORT:-18081}
     restart: unless-stopped
     ports:
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${STOREFRONT_PORT:-8089}:8080"
