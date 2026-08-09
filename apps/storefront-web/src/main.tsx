@@ -10,6 +10,7 @@ import { App } from './App.tsx';
 import { theme } from './theme.ts';
 import { oidcConfig } from './auth/oidcConfig.ts';
 import { TokenSync } from './auth/TokenSync.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,7 +32,9 @@ createRoot(document.getElementById('root')!).render(
         <ThemeProvider theme={theme}>
           <CssBaseline />
           <BrowserRouter>
-            <App />
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
           </BrowserRouter>
         </ThemeProvider>
       </QueryClientProvider>
