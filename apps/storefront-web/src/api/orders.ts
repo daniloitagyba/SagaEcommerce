@@ -28,7 +28,7 @@ export function useCheckout() {
       // Storefront clears the cart server-side on a successful checkout;
       // this just tells the client it's now stale rather than re-fetching
       // eagerly (the order confirmation page has no cart to show anyway).
-      queryClient.invalidateQueries({ queryKey: ['cart'] });
+      void queryClient.invalidateQueries({ queryKey: ['cart'] });
     },
   });
 }
@@ -83,9 +83,9 @@ export function useCancelOrder() {
   return useMutation({
     mutationFn: cancelOrder,
     onSuccess: (_result, orderId) => {
-      queryClient.invalidateQueries({ queryKey: ['order', orderId] });
-      queryClient.invalidateQueries({ queryKey: ['order-history', orderId] });
-      queryClient.invalidateQueries({ queryKey: ['order-summaries'] });
+      void queryClient.invalidateQueries({ queryKey: ['order', orderId] });
+      void queryClient.invalidateQueries({ queryKey: ['order-history', orderId] });
+      void queryClient.invalidateQueries({ queryKey: ['order-summaries'] });
     },
   });
 }
@@ -100,8 +100,8 @@ export function useReturnOrder() {
   return useMutation({
     mutationFn: ({ id, request }: { id: string; request: CreateReturnRequest }) => returnOrder(id, request),
     onSuccess: (_result, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['order', id] });
-      queryClient.invalidateQueries({ queryKey: ['order-history', id] });
+      void queryClient.invalidateQueries({ queryKey: ['order', id] });
+      void queryClient.invalidateQueries({ queryKey: ['order-history', id] });
     },
   });
 }

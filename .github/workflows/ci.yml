@@ -176,9 +176,42 @@ jobs:
           awk -v cov="$line_coverage" -v threshold="$threshold" 'BEGIN { exit !(cov >= threshold) }' \
             || { echo "Line coverage ${line_coverage}% is below the ${threshold}% threshold."; exit 1; }
 
+  frontend:
+    name: storefront-web (lint, typecheck, build, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/storefront-web/package-lock.json
+
+      - name: install
+        working-directory: apps/storefront-web
+        run: npm ci
+
+      - name: lint
+        working-directory: apps/storefront-web
+        run: npm run lint
+
+      - name: build (includes tsc typecheck)
+        working-directory: apps/storefront-web
+        run: npm run build
+
+      - name: test
+        working-directory: apps/storefront-web
+        run: npm test
+
   build-and-push:
     name: build, scan, sign (${{ matrix.service }})
-    needs: test
+    # storefront-service's image bakes in the storefront-web build (see its
+    # Dockerfile), so a broken frontend must block that image the same way
+    # a broken backend test blocks the rest - gating the whole matrix on
+    # both jobs is simpler than splitting storefront-service into its own
+    # job just to scope this dependency to one matrix entry.
+    needs: [test, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

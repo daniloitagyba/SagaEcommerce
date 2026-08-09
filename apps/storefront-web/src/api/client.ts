@@ -1,5 +1,5 @@
 import axios, { AxiosError } from 'axios';
-import { getAccessToken } from '../auth/tokenStore';
+import { getAccessToken, setAccessToken, triggerSigninRedirect } from '../auth/tokenStore';
 import type { ProblemDetails } from './types';
 
 // Base "/api" - same-origin in production (Storefront.Service serves this
@@ -18,6 +18,21 @@ apiClient.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// A 401 while we believed we had a token means the session expired mid-use
+// (not an anonymous shopper hitting a protected route - RequireAuth already
+// redirects those before the request fires). Re-prompt login instead of
+// leaving the shopper looking at a generic "Something went wrong".
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (error.response?.status === 401 && getAccessToken()) {
+      setAccessToken(null);
+      triggerSigninRedirect();
+    }
+    return Promise.reject(error);
+  },
+);
 
 /** True for the one 409 shape this app treats as a distinct, recoverable outcome rather than a generic failure. */
 export function isPriceMismatch(

@@ -12,3 +12,17 @@ export function setAccessToken(token: string | null): void {
 export function getAccessToken(): string | null {
   return currentAccessToken;
 }
+
+// Same reasoning as the token above: the axios response interceptor needs
+// to trigger a real sign-in redirect on a 401, outside a component and
+// without importing react-oidc-context's hook-only API into a plain
+// module. TokenSync wires the real auth.signinRedirect in; nothing else writes to it.
+let signinRedirectCallback: (() => void) | null = null;
+
+export function setSigninRedirectCallback(callback: (() => void) | null): void {
+  signinRedirectCallback = callback;
+}
+
+export function triggerSigninRedirect(): void {
+  signinRedirectCallback?.();
+}

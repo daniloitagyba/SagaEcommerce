@@ -39,6 +39,8 @@ docker compose --profile compose-apps up --detach --wait    # all seven applicat
 ../scripts/keycloak-configure-realm.sh                      # one-time: creates the auth realm/client the API expects
 ```
 
+Then shop at `http://localhost:8089` - `Storefront.Service` serves the React storefront (`apps/storefront-web`) and its own API from that one origin.
+
 Then get a token and create an order:
 
 ```bash
