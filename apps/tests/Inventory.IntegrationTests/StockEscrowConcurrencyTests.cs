@@ -55,7 +55,17 @@ public class StockEscrowConcurrencyTests
         var locks = Enumerable.Range(0, lockCount).Select(_ => new object()).ToArray();
         var stopwatch = Stopwatch.StartNew();
 
-        Parallel.For(0, totalOperations, i =>
+        // MaxDegreeOfParallelism explicit, not defaulted: Parallel.For
+        // otherwise caps concurrency at Environment.ProcessorCount
+        // regardless of how many locks exist, which on a 2-vCPU CI runner
+        // made the "bucketed" case just as serialized as the single-lock
+        // one - the test wasn't measuring the locking shape any more, it
+        // was measuring the runner's core count. The work itself is
+        // Thread.Sleep, not CPU-bound, so the thread pool can genuinely
+        // run this many concurrently regardless of core count.
+        var options = new ParallelOptions { MaxDegreeOfParallelism = lockCount };
+
+        Parallel.For(0, totalOperations, options, i =>
         {
             lock (locks[i % lockCount])
             {
