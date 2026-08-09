@@ -454,15 +454,16 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
       KC_HTTP_ENABLED: "true"
-      # Fixed rather than left to reflect the connecting client's Host
-      # header: K3s pods reach this service as "keycloak" (the Service
-      # name), while host-run scripts must use the k3s-bridge fixed IP
-      # directly (the published host port doesn't actually bind - see
-      # scripts/keycloak-configure-realm.sh). Without a fixed hostname,
-      # tokens obtained through each path would carry a different "iss"
-      # claim and fail Orders.Api's issuer validation depending on which
-      # address was used to request them.
-      KC_HOSTNAME: keycloak
+      # Deliberately NOT fixed: with KC_HOSTNAME_STRICT=false and no
+      # KC_HOSTNAME override, Keycloak derives the hostname (and "iss"
+      # claim) per request from whatever Host header actually reached it -
+      # "keycloak:8080" for services calling it over the Compose network,
+      # or this host's LAN-published address for a shopper's own browser.
+      # KeycloakJwtBearerExtensions.AddKeycloakJwtBearer's
+      # Authentication:AlternateAuthority is what makes accepting both
+      # issuers from the same token-validating services safe - fixing the
+      # hostname instead would collapse every path back to one issuer, but
+      # a browser can't resolve "keycloak" and never could.
       KC_HOSTNAME_STRICT: "false"
       KC_HEALTH_ENABLED: "true"
     command: ["start-dev"]
@@ -475,6 +476,14 @@ services:
       retries: 20
       start_period: 30s
     networks:
+      # frontend (not internal) is what actually makes the ports: mapping
+      # below bind at all - a container whose only networks are internal:
+      # true ones (backend, k3s-bridge) can declare a port mapping all day
+      # without Docker ever programming the host-side NAT/DNAT rules for
+      # it, silently. nginx already proved this pattern (it's frontend-only
+      # and its publish has always worked); this had simply never been
+      # exercised for Keycloak's own port before.
+      frontend:
       backend:
       k3s-bridge:
         ipv4_address: 172.30.0.17
@@ -618,6 +627,7 @@ services:
       # not k3s-bridge. Override to the Compose-internal DNS name both are
       # already on the same network as.
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
+      Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       # Milestone 66: checkout prices line items server-side against the
       # catalog, so orders-api now needs to reach it. CatalogClientOptions
       # defaults to localhost:5080, which resolves inside this container
@@ -637,6 +647,7 @@ services:
       SchemaRegistry__Url: http://schema-registry:8081
       Redis__ConnectionString: redis:6379
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
+      Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-2
 
@@ -733,6 +744,7 @@ services:
       # comment.
       Saga__Mode: Both
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
+      Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -757,6 +769,7 @@ services:
       Mongo__DatabaseName: catalog
       Redis__ConnectionString: redis:6379
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
+      Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       InstanceId: catalog-service-1
     depends_on:
       mongodb:
@@ -788,6 +801,7 @@ services:
       Kafka__ConsumerGroup: inventory-service
       Kafka__ClientId: inventory-service-1
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
+      Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       InstanceId: inventory-service-1
     depends_on:
       kafka-init:
@@ -810,6 +824,7 @@ services:
       Redis__ConnectionString: redis:6379
       Catalog__BaseUrl: http://catalog-service:8080
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
+      Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       InstanceId: cart-service-1
     depends_on:
       catalog-service:
@@ -830,7 +845,10 @@ services:
         # Baked into the Vite build - the shopper's browser hits Keycloak
         # directly on its published host port, not through the backend
         # network Storefront.Service itself uses to validate tokens.
-        VITE_KEYCLOAK_URL: http://${LAB_BIND_ADDRESS:-127.0.0.1}:${KEYCLOAK_PORT:-18081}
+        # PUBLIC_KEYCLOAK_URL (see .env.example), not LAB_BIND_ADDRESS: that
+        # var is a bind address (can be 0.0.0.0), which a browser can never
+        # actually connect to - this needs a real, reachable destination.
+        VITE_KEYCLOAK_URL: ${PUBLIC_KEYCLOAK_URL:-http://127.0.0.1:18081}
         # Must match scripts/keycloak-configure-realm.sh's realm_name and
         # storefront_client_id (the public, PKCE orders-storefront client -
         # not orders-api-clients, the confidential one) - spelled out here
@@ -857,7 +875,10 @@ services:
         condition: service_started
       cart-service:
         condition: service_started
+    # frontend (not internal) is what actually makes the ports: mapping
+    # above bind - see the same note on the keycloak service.
     networks:
+      - frontend
       - backend
     mem_limit: 128m
     cpus: 0.25

@@ -27,12 +27,26 @@ public static class KeycloakJwtBearerExtensions
     /// minted for another client is rejected on audience alone. Keycloak
     /// nests realm roles under "realm_access": { "roles": [...] }, not as
     /// flat claims; without the OnTokenValidated below, RequireRole() always 403s.
+    ///
+    /// Authentication:AlternateAuthority (optional) is a second issuer this
+    /// service also trusts, without changing where it fetches JWKS from
+    /// (still Authentication:Authority - that address has to be reachable
+    /// from inside the service's own network either way). It exists for
+    /// exactly one reason: a shopper's browser and this service reach
+    /// Keycloak by different addresses (the service via the internal
+    /// "keycloak" Docker DNS name, a browser via Keycloak's LAN-published
+    /// port), and with KC_HOSTNAME_STRICT=false and no fixed KC_HOSTNAME,
+    /// Keycloak mints a token whose "iss" claim reflects whichever address
+    /// actually issued it - so a token minted through the browser's path
+    /// carries an issuer this service's default single-Authority validation
+    /// would otherwise reject outright.
     /// </summary>
     public static AuthenticationBuilder AddKeycloakJwtBearer(
         this IServiceCollection services, IConfiguration configuration, string audience)
     {
         var authority = configuration["Authentication:Authority"]
             ?? throw new InvalidOperationException("Authentication:Authority is required.");
+        var alternateAuthority = configuration["Authentication:AlternateAuthority"];
 
         return services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
@@ -40,6 +54,10 @@ public static class KeycloakJwtBearerExtensions
                 options.Authority = authority;
                 options.Audience = audience;
                 options.RequireHttpsMetadata = false;
+                if (!string.IsNullOrWhiteSpace(alternateAuthority))
+                {
+                    options.TokenValidationParameters.ValidIssuers = [authority, alternateAuthority];
+                }
                 options.Events = new JwtBearerEvents
                 {
                     OnTokenValidated = context =>
