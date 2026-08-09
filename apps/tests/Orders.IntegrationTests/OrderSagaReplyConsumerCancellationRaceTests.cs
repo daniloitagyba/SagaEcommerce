@@ -83,14 +83,19 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime
         await CancelFromOutsideTheSagaAsync(orderId);
         var consumer = CreateConsumer();
 
-        using var releaseConsumer = SubscribeTo(_options.ReleaseRequestedTopic);
-
         await consumer.DispatchAsync(ReservationReply(orderId, lineA, "SKU-A", reserved: true), CancellationToken.None);
         await consumer.DispatchAsync(ReservationReply(orderId, lineB, "SKU-B", reserved: true), CancellationToken.None);
 
         // Gone, not sitting at DecidePayment waiting for a decision nobody asked for any more.
         Assert.Equal(0, await SagaRowCountAsync(orderId));
 
+        // Subscribed only now, after the dispatches above have already
+        // produced to this topic - subscribing to a topic that doesn't
+        // exist yet races the consumer's own metadata cache (Confluent.Kafka
+        // "Unknown topic or partition" even after the topic is created a
+        // moment later), the same reason OrderSagaReplyConsumerMultiLineTests'
+        // own release-assert consumer is created this late, not earlier.
+        using var releaseConsumer = SubscribeTo(_options.ReleaseRequestedTopic);
         var releasedIds = new HashSet<Guid>();
         for (var i = 0; i < 2; i++)
         {
@@ -110,14 +115,14 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime
         await CancelFromOutsideTheSagaAsync(orderId);
         var consumer = CreateConsumer();
 
-        using var restockConsumer = SubscribeTo(_options.RestockRequestedTopic);
-
         await consumer.DispatchAsync(CommitReply(orderId, lineA, "SKU-A", committed: true), CancellationToken.None);
         await consumer.DispatchAsync(CommitReply(orderId, lineB, "SKU-B", committed: false), CancellationToken.None);
 
         // Still Cancelled - the commit reply must never move it to Confirmed or FulfillmentHold.
         Assert.Equal(OrderStatuses.Cancelled, await CurrentOrderStatusAsync(orderId));
 
+        // Subscribed only now - see the release test's own comment for why.
+        using var restockConsumer = SubscribeTo(_options.RestockRequestedTopic);
         var restocked = restockConsumer.Consume(TimeSpan.FromSeconds(15));
         Assert.NotNull(restocked);
         var restock = System.Text.Json.JsonSerializer.Deserialize<InventoryRestockRequested>(restocked.Message.Value, SerializerOptions);

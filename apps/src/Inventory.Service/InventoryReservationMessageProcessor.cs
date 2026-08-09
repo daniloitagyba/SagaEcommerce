@@ -368,24 +368,9 @@ public sealed partial class InventoryReservationMessageProcessor(
         var succeeded = item is not null && mutate(item, quantity, processedAt);
         var reason = succeeded ? null : insufficientReason;
 
-        // The permanent ledger's two write sides -
-        // a commit records what it actually drew down; a restock (the
-        // "else" of settleAllocation, same as the TryRestockAsync call
-        // above) resolves whatever of it the order is giving back. Both
-        // gated on succeeded, same as the reply below - nothing recorded
-        // or resolved for a mutation that didn't actually happen.
-        if (succeeded)
-        {
-            var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
-            if (settleAllocation && commitAllocation)
-            {
-                await allocationStore.RecordCommittedAsync(reservationId, orderId, sku, quantity, processedAt, cancellationToken);
-            }
-            else if (!settleAllocation)
-            {
-                await allocationStore.ResolveLedgerOnRestockAsync(orderId, sku, quantity, cancellationToken);
-            }
-        }
+        await UpdateReservationLedgerAsync(
+            scope.ServiceProvider, succeeded, settleAllocation, commitAllocation,
+            reservationId, orderId, sku, quantity, processedAt, cancellationToken);
 
         var (eventType, reply) = makeReply(reservationId, orderId, sku, quantity, succeeded, reason, correlationId, processedAt);
         var outboxMessage = OutboxMessage.Create(
@@ -417,6 +402,42 @@ public sealed partial class InventoryReservationMessageProcessor(
         OrdersTelemetry.RecordProcessed("success");
         logDecided(reservationId, sku, succeeded, correlationId);
         return MessageProcessingResult.Processed;
+    }
+
+    // The permanent ledger's two write sides, split out of
+    // ProcessSettlementAsync itself to keep that method under this
+    // codebase's own complexity gate - a commit records what it actually
+    // drew down; a restock (the "else" of settleAllocation, same branch
+    // the TryRestockAsync call above takes) resolves whatever of it the
+    // order is giving back. Both gated on succeeded, same as the reply
+    // ProcessSettlementAsync builds - nothing recorded or resolved for a
+    // mutation that didn't actually happen.
+    private static async Task UpdateReservationLedgerAsync(
+        IServiceProvider serviceProvider,
+        bool succeeded,
+        bool settleAllocation,
+        bool commitAllocation,
+        Guid reservationId,
+        Guid orderId,
+        string sku,
+        int quantity,
+        DateTimeOffset processedAt,
+        CancellationToken cancellationToken)
+    {
+        if (!succeeded)
+        {
+            return;
+        }
+
+        var allocationStore = serviceProvider.GetRequiredService<WarehouseAllocationStore>();
+        if (settleAllocation && commitAllocation)
+        {
+            await allocationStore.RecordCommittedAsync(reservationId, orderId, sku, quantity, processedAt, cancellationToken);
+        }
+        else if (!settleAllocation)
+        {
+            await allocationStore.ResolveLedgerOnRestockAsync(orderId, sku, quantity, cancellationToken);
+        }
     }
 
     private static TRequest DeserializeAndValidate<TRequest>(
