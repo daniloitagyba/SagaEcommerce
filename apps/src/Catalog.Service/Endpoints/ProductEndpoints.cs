@@ -31,6 +31,14 @@ public static class ProductEndpoints
         return endpoints;
     }
 
+    /// <summary>
+    /// Not private: Catalog.UnitTests exercises this directly - a caller
+    /// asking for skip=-5 or limit=10000 must not turn into a
+    /// negative-offset or unbounded Mongo query.
+    /// </summary>
+    internal static (int Skip, int Limit) NormalizeListQuery(int? skip, int? limit) =>
+        (Math.Max(skip ?? 0, 0), Math.Clamp(limit ?? 20, 1, 100));
+
     private static async Task<IResult> ListAsync(
         ProductRepository repository,
         string? category,
@@ -38,8 +46,7 @@ public static class ProductEndpoints
         int? limit,
         CancellationToken cancellationToken)
     {
-        var effectiveSkip = Math.Max(skip ?? 0, 0);
-        var effectiveLimit = Math.Clamp(limit ?? 20, 1, 100);
+        var (effectiveSkip, effectiveLimit) = NormalizeListQuery(skip, limit);
 
         var products = await repository.ListAsync(category, effectiveSkip, effectiveLimit, cancellationToken);
         var total = await repository.CountAsync(category, cancellationToken);
@@ -72,6 +79,9 @@ public static class ProductEndpoints
         return product is null ? Results.NotFound() : Results.Ok(product);
     }
 
+    /// <summary>Not private: Catalog.UnitTests exercises this directly - see NormalizeListQuery.</summary>
+    internal static int NormalizeBestsellersLimit(int? limit) => Math.Clamp(limit ?? 10, 1, 50);
+
     private static async Task<IResult> GetBestsellersAsync(
         string? category,
         int? limit,
@@ -79,7 +89,7 @@ public static class ProductEndpoints
         ProductRepository repository,
         CancellationToken cancellationToken)
     {
-        var effectiveLimit = Math.Clamp(limit ?? 10, 1, 50);
+        var effectiveLimit = NormalizeBestsellersLimit(limit);
         var ranked = await bestsellersReader.GetTopAsync(category, effectiveLimit, cancellationToken);
 
         // Rank order comes from Redis, not from any query MongoDB can
@@ -108,20 +118,28 @@ public static class ProductEndpoints
         return product is null ? Results.NotFound() : Results.Ok(product);
     }
 
+    /// <summary>
+    /// Not private: Catalog.UnitTests exercises this directly. Null (not a
+    /// bool) so the caller returns the exact same ValidationProblem
+    /// dictionary this produces - one source of truth for the error shape.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string[]>? ValidateCreateProductRequest(CreateProductRequest request) =>
+        string.IsNullOrWhiteSpace(request.Name)
+            || string.IsNullOrWhiteSpace(request.CategorySlug)
+            || string.IsNullOrWhiteSpace(request.Sku)
+            || request.Price <= 0
+            ? new Dictionary<string, string[]> { ["request"] = ["name, categorySlug, sku are required and price must be positive."] }
+            : null;
+
     private static async Task<IResult> CreateAsync(
         CreateProductRequest request,
         ProductRepository repository,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Name)
-            || string.IsNullOrWhiteSpace(request.CategorySlug)
-            || string.IsNullOrWhiteSpace(request.Sku)
-            || request.Price <= 0)
+        var validationErrors = ValidateCreateProductRequest(request);
+        if (validationErrors is not null)
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["request"] = ["name, categorySlug, sku are required and price must be positive."]
-            });
+            return Results.ValidationProblem(validationErrors);
         }
 
         var product = new Product

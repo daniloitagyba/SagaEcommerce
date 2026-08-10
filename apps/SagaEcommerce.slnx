@@ -21,8 +21,11 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Cart.IntegrationTests/Cart.IntegrationTests.csproj" />
+    <Project Path="tests/Cart.UnitTests/Cart.UnitTests.csproj" />
     <Project Path="tests/Catalog.IntegrationTests/Catalog.IntegrationTests.csproj" />
+    <Project Path="tests/Catalog.UnitTests/Catalog.UnitTests.csproj" />
     <Project Path="tests/Inventory.IntegrationTests/Inventory.IntegrationTests.csproj" />
+    <Project Path="tests/Inventory.UnitTests/Inventory.UnitTests.csproj" />
     <Project Path="tests/Orders.ArchitectureTests/Orders.ArchitectureTests.csproj" />
     <Project Path="tests/Orders.ContractTests/Orders.ContractTests.csproj" />
     <Project Path="tests/Orders.IntegrationTests/Orders.IntegrationTests.csproj" />

@@ -1,6 +1,6 @@
 using Cart.Service.Domain;
 
-namespace Cart.IntegrationTests;
+namespace Cart.UnitTests;
 
 /// <summary>
 /// CartCrdtState composes CartItemCrdt key-wise across a

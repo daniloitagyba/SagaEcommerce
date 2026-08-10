@@ -37,16 +37,34 @@ public static class ProxyEndpoints
         // (self-service cancel) and .../{id}/returns (both bodyless or
         // JSON-bodied, ForwardAsync now reads either). Deliberately a
         // wildcard rather than one route per sub-path: Orders.Api owns the
-        // actual shape of what's under /orders/, this is just a forward.
+        // actual shape of what's under /orders/, this is just a forward -
+        // see ForwardOrdersSubPathAsync for why it isn't inlined here.
         endpoints.MapGet("/api/orders/{**path}", (string path, HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
-            => ForwardAsync(factory.CreateClient("orders"), path, request, cancellationToken));
+            => ForwardOrdersSubPathAsync(path, request, factory, cancellationToken));
         endpoints.MapPost("/api/orders/{**path}", (string path, HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
-            => ForwardAsync(factory.CreateClient("orders"), path, request, cancellationToken));
+            => ForwardOrdersSubPathAsync(path, request, factory, cancellationToken));
 
         return endpoints;
     }
 
-    private static async Task ForwardAsync(HttpClient client, string path, HttpRequest request, CancellationToken cancellationToken)
+    // Not private, and not inlined into the two lambdas above: OrdersProxyEndpointTests
+    // calls this directly to exercise the exact "orders/" prefixing bug this
+    // method exists to fix. The prefix is NOT redundant with the "orders"
+    // HttpClient's BaseAddress (http://orders-api-1:8080, no path) - unlike
+    // catalog-service/cart-service, whose own routes don't repeat the
+    // "catalog"/"cart" segment, Orders.Api's routes genuinely start with
+    // "/orders" (MapGroup("/orders") in OrderEndpoints.cs). Forwarding a
+    // bare {path} silently dropped it: a request for /api/orders/{id}
+    // became GET http://orders-api-1:8080/{id} (no "/orders/"), which
+    // orders-api-1 has no route for, so it 404d. Order creation never
+    // showed the bug - ForwardOrderAsync below hardcodes "/orders" instead
+    // of reconstructing it from a path.
+    internal static Task ForwardOrdersSubPathAsync(string path, HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken) =>
+        ForwardAsync(factory.CreateClient("orders"), $"orders/{path}", request, cancellationToken);
+
+    // Not private: OrdersProxyEndpointTests/FullCheckoutFlowTests call this
+    // directly for the same reason WriteResponseAsync below already is.
+    internal static async Task ForwardAsync(HttpClient client, string path, HttpRequest request, CancellationToken cancellationToken)
     {
         var target = $"/{path}{request.QueryString}";
         using var upstreamRequest = new HttpRequestMessage(new HttpMethod(request.Method), target);

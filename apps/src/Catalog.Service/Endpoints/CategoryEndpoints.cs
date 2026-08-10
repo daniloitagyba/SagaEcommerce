@@ -23,17 +23,21 @@ public static class CategoryEndpoints
         return Results.Ok(categories);
     }
 
+    /// <summary>Not private: Catalog.UnitTests exercises this directly - see ProductEndpoints.ValidateCreateProductRequest.</summary>
+    internal static IReadOnlyDictionary<string, string[]>? ValidateCreateCategoryRequest(CreateCategoryRequest request) =>
+        string.IsNullOrWhiteSpace(request.Slug) || string.IsNullOrWhiteSpace(request.Name)
+            ? new Dictionary<string, string[]> { ["request"] = ["slug and name are required."] }
+            : null;
+
     private static async Task<IResult> CreateAsync(
         CreateCategoryRequest request,
         CategoryRepository repository,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Slug) || string.IsNullOrWhiteSpace(request.Name))
+        var validationErrors = ValidateCreateCategoryRequest(request);
+        if (validationErrors is not null)
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["request"] = ["slug and name are required."]
-            });
+            return Results.ValidationProblem(validationErrors);
         }
 
         var category = new Category { Id = Guid.NewGuid().ToString("N"), Slug = request.Slug, Name = request.Name };

@@ -129,7 +129,7 @@ jobs:
       - name: coverage (unit tests only)
         if: always()
         run: |
-          # Deliberately scoped to the two Unit test projects, not the whole
+          # Deliberately scoped to the *.UnitTests projects, not the whole
           # solution: coverlet's instrumentation overhead, applied to the
           # Integration test projects, was enough to blow through
           # RedisOrderCache/RedisIdempotencyStore's 150ms Polly timeout
@@ -139,7 +139,16 @@ jobs:
           # regression introduced by adding coverage collection itself, not
           # by any product change. Unit tests never touch a real Redis/
           # Postgres/Kafka Testcontainer, so they carry none of that risk.
-          for project in apps/tests/Orders.UnitTests/Orders.UnitTests.csproj apps/tests/Storefront.UnitTests/Storefront.UnitTests.csproj; do
+          # Cart.UnitTests/Catalog.UnitTests/Inventory.UnitTests joined this
+          # scope once each service had genuinely Docker-free business-rule
+          # tests to run (some moved out of their *.IntegrationTests project,
+          # where they'd been stranded needing no Testcontainer at all).
+          for project in \
+            apps/tests/Orders.UnitTests/Orders.UnitTests.csproj \
+            apps/tests/Storefront.UnitTests/Storefront.UnitTests.csproj \
+            apps/tests/Cart.UnitTests/Cart.UnitTests.csproj \
+            apps/tests/Catalog.UnitTests/Catalog.UnitTests.csproj \
+            apps/tests/Inventory.UnitTests/Inventory.UnitTests.csproj; do
             dotnet test "$project" --no-build --configuration Release \
               --collect:"XPlat Code Coverage" --results-directory ./coverage
           done
@@ -162,17 +171,24 @@ jobs:
 
       - name: enforce coverage threshold
         run: |
-          # 5.5% - a real margin under the 6.1% measured baseline for this
-          # UNIT-TEST-ONLY scope (recalibrated 2026-08-09, after M76-78 added
-          # real unit-test coverage; was 3.5% against a 3.8% baseline from
-          # 2026-08-05, which had drifted 2.3pp stale and was gating nothing
-          # in practice by this point). Coverage collection deliberately
-          # excludes the Integration/Contract test projects (see the
-          # "coverage (unit tests only)" step above), so this number is
-          # intentionally far below what the whole solution's tests exercise
-          # - it only gates Orders.UnitTests/Storefront.UnitTests
-          # regressing, not overall solution coverage.
-          threshold="5.5"
+          # 7.0% - a real margin under the 7.7% measured baseline for this
+          # UNIT-TEST-ONLY scope (recalibrated 2026-08-10, after adding
+          # Cart.UnitTests/Catalog.UnitTests/Inventory.UnitTests - three
+          # services that previously had zero dedicated unit-test coverage
+          # of their business rules, either untested anywhere or stranded in
+          # their *.IntegrationTests project despite needing no
+          # Testcontainer at all. Was 5.5% against a 6.1% baseline
+          # (2026-08-09). Both the numerator (new tests) and denominator
+          # (Cart.Service/Catalog.Service/Inventory.Service assemblies enter
+          # the measured scope for the first time) grew, which is why the
+          # percentage moved less than the new test count alone would
+          # suggest. Coverage collection deliberately excludes the
+          # Integration/Contract test projects (see the "coverage (unit
+          # tests only)" step above), so this number is intentionally far
+          # below what the whole solution's tests exercise - it only gates
+          # the five *.UnitTests projects regressing, not overall solution
+          # coverage.
+          threshold="7.0"
           line_coverage=$(grep -oE "Line coverage: [0-9.]+%" ./coverage/report/Summary.txt | grep -oE "[0-9.]+")
           echo "Line coverage: ${line_coverage}%"
           awk -v cov="$line_coverage" -v threshold="$threshold" 'BEGIN { exit !(cov >= threshold) }' \

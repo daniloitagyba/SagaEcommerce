@@ -1,7 +1,7 @@
 using CsCheck;
 using Inventory.Service.Domain;
 
-namespace Inventory.IntegrationTests;
+namespace Inventory.UnitTests;
 
 /// <summary>
 /// StockEscrow's core promise, proven rather than asserted -

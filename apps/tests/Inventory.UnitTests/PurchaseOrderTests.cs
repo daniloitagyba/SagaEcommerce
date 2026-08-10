@@ -1,6 +1,6 @@
 using Inventory.Service.Domain;
 
-namespace Inventory.IntegrationTests;
+namespace Inventory.UnitTests;
 
 /// <summary>PurchaseOrder's own state machine, pure and needing no database.</summary>
 public class PurchaseOrderTests

@@ -5,6 +5,7 @@
 **/obj/
 **/TestResults/
 compose/.env
+compose/nginx/certs/
 data/postgres/
 data/kafka/
 data/observability/

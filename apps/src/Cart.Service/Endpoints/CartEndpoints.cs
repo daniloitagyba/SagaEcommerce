@@ -136,23 +136,46 @@ public static class CartEndpoints
         CartStore cartStore,
         CancellationToken cancellationToken)
     {
-        if (request.Operations is null || request.Operations.Count == 0)
+        var (clientState, errors) = BuildClientState(request.Operations, DateTimeOffset.UtcNow.Ticks);
+        if (errors is not null)
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]>(StringComparer.Ordinal)
+            return Results.ValidationProblem(errors);
+        }
+
+        var cartId = httpContext.GetCustomerId();
+        var merged = await cartStore.MergeAsync(cartId, clientState!, cancellationToken);
+        var ttl = await cartStore.GetTimeToLiveAsync(cartId, cancellationToken);
+        var version = await cartStore.GetVersionAsync(cartId, cancellationToken);
+        return Results.Ok(ToCartResponse(merged, ttl, version));
+    }
+
+    /// <summary>
+    /// Not private: Cart.UnitTests exercises this directly - it's the whole
+    /// reconciliation algorithm (validate each offline operation, fold it
+    /// into a CRDT state to merge), with nothing in it that touches Redis.
+    /// Only the final CartStore.MergeAsync call in MergeAsync above needs a
+    /// live store; everything that decides whether a batch of operations is
+    /// even valid happens here first.
+    /// </summary>
+    internal static (CartCrdtState? State, IReadOnlyDictionary<string, string[]>? Errors) BuildClientState(
+        IReadOnlyList<CartMergeOperation>? operations, long dotCounterSeed)
+    {
+        if (operations is null || operations.Count == 0)
+        {
+            return (null, new Dictionary<string, string[]>(StringComparer.Ordinal)
             {
                 ["operations"] = ["At least one operation is required."]
             });
         }
 
-        var cartId = httpContext.GetCustomerId();
         var clientState = CartCrdtState.Empty;
-        var dotCounter = DateTimeOffset.UtcNow.Ticks;
+        var dotCounter = dotCounterSeed;
 
-        foreach (var operation in request.Operations)
+        foreach (var operation in operations)
         {
             if (string.IsNullOrWhiteSpace(operation.Sku))
             {
-                return Results.ValidationProblem(new Dictionary<string, string[]>(StringComparer.Ordinal)
+                return (null, new Dictionary<string, string[]>(StringComparer.Ordinal)
                 {
                     ["operations"] = ["Every operation must carry a sku."]
                 });
@@ -172,17 +195,14 @@ public static class CartEndpoints
                     clientState = clientState.Remove(operation.Sku);
                     break;
                 default:
-                    return Results.ValidationProblem(new Dictionary<string, string[]>(StringComparer.Ordinal)
+                    return (null, new Dictionary<string, string[]>(StringComparer.Ordinal)
                     {
                         ["operations"] = [$"Operation for sku '{operation.Sku}' has kind '{operation.Kind}' with missing or invalid arguments. Increase requires a positive delta, productName, unitPrice and currency; Decrease requires a positive delta; Remove requires neither."]
                     });
             }
         }
 
-        var merged = await cartStore.MergeAsync(cartId, clientState, cancellationToken);
-        var ttl = await cartStore.GetTimeToLiveAsync(cartId, cancellationToken);
-        var version = await cartStore.GetVersionAsync(cartId, cancellationToken);
-        return Results.Ok(ToCartResponse(merged, ttl, version));
+        return (clientState, null);
     }
 
     private static object ToCartResponse(IReadOnlyList<CartLineItem> items, TimeSpan? ttl, long version)

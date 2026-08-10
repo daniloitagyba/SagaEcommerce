@@ -34,7 +34,7 @@ public static class StorefrontEndpoints
         return endpoints;
     }
 
-    private static async Task<IResult> GetProductSummaryAsync(
+    internal static async Task<IResult> GetProductSummaryAsync(
         string sku,
         IHttpClientFactory httpClientFactory,
         IOptions<ProductSummaryOptions> options,

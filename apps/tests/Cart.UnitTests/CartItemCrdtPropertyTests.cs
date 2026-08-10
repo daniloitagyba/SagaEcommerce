@@ -1,7 +1,7 @@
 using Cart.Service.Domain;
 using CsCheck;
 
-namespace Cart.IntegrationTests;
+namespace Cart.UnitTests;
 
 /// <summary>
 /// The actual mathematical content of "this is a CRDT" -
