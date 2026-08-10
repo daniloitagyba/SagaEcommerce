@@ -1037,9 +1037,12 @@ services:
       backend:
       k3s-bridge:
         ipv4_address: 172.30.0.12
-      # rede overlay attachable compartilhada com outros projetos no mesmo host
-      # (ex: Farmate), que reaproveitam esse collector em vez de montar stack própria.
-      farmate-observability:
+      # A rede overlay compartilhada com outros projetos do mesmo host (ex:
+      # Farmate) fica em compose.lab.yaml, não aqui: sendo `external: true`,
+      # declará-la neste arquivo faz `docker compose up` falhar com "network
+      # ... declared as external, but could not be found" em qualquer máquina
+      # que não seja aquele host - o que quebrava o quickstart do README para
+      # todo mundo e derrubava o workflow coupon-redemption-concurrency.
     mem_limit: 192m
     cpus: 0.50
     stop_grace_period: 20s
@@ -1174,8 +1177,6 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
-  farmate-observability:
-    external: true
 
 volumes:
   postgres-data:

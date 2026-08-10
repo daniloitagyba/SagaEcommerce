@@ -1,0 +1,32 @@
+# Override opcional para o host que compartilha seu OpenTelemetry Collector
+# com outros projetos (ex: Farmate), em vez de cada um subir a própria stack.
+#
+# Por que isto não vive em compose.yaml: `farmate-observability` é
+# `external: true`, ou seja, o Compose exige que a rede JÁ exista antes de
+# subir qualquer coisa. Declarada no arquivo principal, ela fazia
+# `docker compose up` falhar com
+#
+#   network farmate-observability declared as external, but could not be found
+#
+# em toda máquina que não fosse aquele host - quebrando o quickstart do README
+# para qualquer pessoa que clonasse o repositório, e derrubando o workflow
+# coupon-redemption-concurrency no CI. Como override, o acoplamento fica
+# restrito a quem realmente o tem.
+#
+# Uso (no host que tem a rede):
+#   docker compose -f compose.yaml -f compose.lab.yaml --profile compose-apps up -d
+#
+# Criar a rede, se ainda não existir:
+#   docker network create --driver overlay --attachable farmate-observability
+
+services:
+  otel-collector:
+    networks:
+      backend:
+      k3s-bridge:
+        ipv4_address: 172.30.0.12
+      farmate-observability:
+
+networks:
+  farmate-observability:
+    external: true

@@ -47,7 +47,13 @@ jobs:
         run: dotnet restore apps/SagaEcommerce.slnx
 
       - name: list vulnerable packages (direct + transitive)
-        run: dotnet list apps/SagaEcommerce.slnx package --vulnerable --include-transitive
+        run: |
+          set -o pipefail
+          dotnet list apps/SagaEcommerce.slnx package --vulnerable --include-transitive | tee vulnerable-packages.log
+          if grep -q "has the following vulnerable packages" vulnerable-packages.log; then
+            echo "::error::Vulnerable NuGet packages detected - see log above."
+            exit 1
+          fi
 
   complexity-and-module-size:
     name: cyclomatic complexity and module size
