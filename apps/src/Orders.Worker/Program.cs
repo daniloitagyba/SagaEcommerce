@@ -190,6 +190,9 @@ builder.Services.AddSingleton<IAdminClient>(serviceProvider =>
 builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
 builder.Services.AddSingleton<IPaymentResultDeadLetterPublisher, PaymentResultDeadLetterPublisher>();
 builder.Services.AddSingleton<IOrderProjectionDeadLetterPublisher, OrderProjectionDeadLetterPublisher>();
+builder.Services.AddSingleton<ISagaOrchestrationDeadLetterPublisher, SagaOrchestrationDeadLetterPublisher>();
+builder.Services.AddSingleton<ISagaReplyDeadLetterPublisher, SagaReplyDeadLetterPublisher>();
+builder.Services.AddSingleton<IOrderEventStoreDeadLetterPublisher, OrderEventStoreDeadLetterPublisher>();
 builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<KafkaOptions>>().Value;
@@ -255,13 +258,56 @@ else
 
 if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
 {
-    builder.Services.AddHostedService<OrderSagaOrchestrator>();
-    builder.Services.AddHostedService<OrderSagaReplyConsumer>();
+    builder.Services.AddSingleton<OrderSagaOrchestrator>();
+    builder.Services.AddSingleton<OrderSagaReplyConsumer>();
+    builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+    {
+        var options = serviceProvider.GetRequiredService<IOptions<SagaOrchestrationOptions>>().Value;
+        var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+        var processor = serviceProvider.GetRequiredService<OrderSagaOrchestrator>();
+        var deadLetterPublisher = serviceProvider.GetRequiredService<ISagaOrchestrationDeadLetterPublisher>();
+        var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderSagaOrchestrator");
+        return new KafkaConsumerHost<byte[]>(
+            options.BootstrapServers, options.RequestConsumerGroup, options.ClientId,
+            [options.OrderCreatedTopic], options.DeadLetterTopic,
+            processingOptions, processor.RequestReservationAsync, deadLetterPublisher.PublishAsync, logger);
+    });
+    builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+    {
+        var options = serviceProvider.GetRequiredService<IOptions<SagaOrchestrationOptions>>().Value;
+        var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+        var processor = serviceProvider.GetRequiredService<OrderSagaReplyConsumer>();
+        var deadLetterPublisher = serviceProvider.GetRequiredService<ISagaReplyDeadLetterPublisher>();
+        var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderSagaReplyConsumer");
+        return new KafkaConsumerHost<string>(
+            options.BootstrapServers, options.ReplyConsumerGroup, $"{options.ClientId}-reply",
+            [
+                options.ReservationRepliedTopic,
+                options.DecisionRepliedTopic,
+                options.CommitRepliedTopic,
+                options.ReleaseRepliedTopic,
+                options.SettlementRepliedTopic
+            ],
+            options.DeadLetterTopic,
+            processingOptions, processor.DispatchAsync, deadLetterPublisher.PublishAsync, logger);
+    });
     builder.Services.AddHostedService<SagaTimeoutSweeper>();
 }
 
 builder.Services.AddSingleton<OrderEventStoreAppender>();
-builder.Services.AddHostedService<OrderEventStoreProjector>();
+builder.Services.AddSingleton<OrderEventStoreProjector>();
+builder.Services.AddSingleton<IHostedService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<OrderEventStoreOptions>>().Value;
+    var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
+    var processor = serviceProvider.GetRequiredService<OrderEventStoreProjector>();
+    var deadLetterPublisher = serviceProvider.GetRequiredService<IOrderEventStoreDeadLetterPublisher>();
+    var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderEventStoreProjector");
+    return new KafkaConsumerHost<byte[]>(
+        options.BootstrapServers, options.ConsumerGroup, options.ClientId,
+        [options.OrderCreatedTopic, options.PaymentResultTopic], options.DeadLetterTopic,
+        processingOptions, processor.AppendAsync, deadLetterPublisher.PublishAsync, logger);
+});
 builder.Services.AddHealthChecks()
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"])
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Orders"])

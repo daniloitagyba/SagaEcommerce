@@ -18,62 +18,19 @@ namespace Orders.Worker;
 /// arrives. Only kicks off step 1 of the 4-step saga;
 /// OrderSagaReplyConsumer drives every subsequent transition as replies arrive.
 /// </summary>
+public sealed class InvalidSagaMessageException(string message, Exception? innerException = null)
+    : Exception(message, innerException);
+
 public sealed class OrderSagaOrchestrator(
     IOptions<SagaOrchestrationOptions> options,
     IProducer<string, string> producer,
     ISchemaRegistryClient schemaRegistryClient,
     SagaOrchestrationStore store,
-    ILogger<OrderSagaOrchestrator> logger) : BackgroundService
+    ILogger<OrderSagaOrchestrator> logger)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly SagaOrchestrationOptions _options = options.Value;
     private readonly AvroDeserializer<GenericRecord> _avroDeserializer = new(schemaRegistryClient);
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var config = new ConsumerConfig
-        {
-            BootstrapServers = _options.BootstrapServers,
-            GroupId = _options.RequestConsumerGroup,
-            ClientId = _options.ClientId,
-            AutoOffsetReset = AutoOffsetReset.Earliest,
-            EnableAutoCommit = true,
-            AutoCommitIntervalMs = 1_000,
-            AllowAutoCreateTopics = false
-        };
-
-        using var consumer = new ConsumerBuilder<string, byte[]>(config).Build();
-        consumer.Subscribe(_options.OrderCreatedTopic);
-        SagaOrchestratorLog.Started(logger, _options.OrderCreatedTopic, _options.RequestConsumerGroup);
-
-        try
-        {
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                ConsumeResult<string, byte[]> consumeResult;
-                try
-                {
-                    consumeResult = consumer.Consume(stoppingToken);
-                }
-                catch (ConsumeException exception)
-                {
-                    SagaOrchestratorLog.ConsumeFailed(logger, exception.Error.Reason, exception);
-                    await Task.Delay(1_000, stoppingToken);
-                    continue;
-                }
-
-                await RequestReservationAsync(consumeResult, stoppingToken);
-            }
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            SagaOrchestratorLog.Stopping(logger);
-        }
-        finally
-        {
-            consumer.Close();
-        }
-    }
 
     /// <summary>Public so integration tests can drive it directly, the same shape as the *MessageProcessor classes elsewhere in this codebase.</summary>
     public async Task RequestReservationAsync(ConsumeResult<string, byte[]> consumeResult, CancellationToken cancellationToken)
@@ -88,8 +45,12 @@ public sealed class OrderSagaOrchestrator(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            // Previously logged and silently dropped the message - now
+            // rethrown so KafkaConsumerHost's retry/dead-letter machinery
+            // actually sees it instead of the offset just auto-committing
+            // over a message nobody ever acted on.
             SagaOrchestratorLog.InvalidMessage(logger, exception);
-            return;
+            throw new InvalidSagaMessageException("The Kafka message is not a valid OrderCreated event.", exception);
         }
 
         var requestedAt = DateTimeOffset.UtcNow;
@@ -158,15 +119,6 @@ public sealed class OrderSagaOrchestrator(
 
 public sealed partial class SagaOrchestratorLog
 {
-    [LoggerMessage(EventId = 6000, Level = LogLevel.Information, Message = "Saga orchestrator subscribed to topic {Topic} with consumer group {GroupId}")]
-    public static partial void Started(ILogger logger, string topic, string groupId);
-
-    [LoggerMessage(EventId = 6001, Level = LogLevel.Information, Message = "Saga orchestrator is stopping gracefully")]
-    public static partial void Stopping(ILogger logger);
-
-    [LoggerMessage(EventId = 6002, Level = LogLevel.Error, Message = "Saga orchestrator Kafka consume failed: {Reason}")]
-    public static partial void ConsumeFailed(ILogger logger, string reason, Exception exception);
-
     [LoggerMessage(EventId = 6003, Level = LogLevel.Warning, Message = "Saga orchestrator received an invalid OrderCreated message")]
     public static partial void InvalidMessage(ILogger logger, Exception exception);
 

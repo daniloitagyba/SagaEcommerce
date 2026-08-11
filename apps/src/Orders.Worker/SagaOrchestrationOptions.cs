@@ -40,6 +40,11 @@ public sealed class SagaOrchestrationOptions
 
     public string ClientId { get; init; } = "orders-saga-orchestrator";
 
+    // Shared by both the request-side (OrderCreatedTopic) and reply-side
+    // (the five *Replied topics) consumers - same one-DLQ-per-options-class
+    // pattern InventoryKafkaOptions already uses.
+    public string DeadLetterTopic { get; init; } = "orders.saga.dlq.v1";
+
     public int TimeoutSeconds { get; init; } = 5;
 
     public int SweepIntervalMilliseconds { get; init; } = 1_000;

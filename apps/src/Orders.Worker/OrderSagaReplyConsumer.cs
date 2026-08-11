@@ -24,63 +24,10 @@ public sealed class OrderSagaReplyConsumer(
     IOrderCacheInvalidator cacheInvalidator,
     IBestsellersStore bestsellersStore,
     ICatalogClient catalogClient,
-    ILogger<OrderSagaReplyConsumer> logger) : BackgroundService
+    ILogger<OrderSagaReplyConsumer> logger)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly SagaOrchestrationOptions _options = options.Value;
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var config = new ConsumerConfig
-        {
-            BootstrapServers = _options.BootstrapServers,
-            GroupId = _options.ReplyConsumerGroup,
-            ClientId = $"{_options.ClientId}-reply",
-            AutoOffsetReset = AutoOffsetReset.Earliest,
-            EnableAutoCommit = true,
-            AutoCommitIntervalMs = 1_000,
-            AllowAutoCreateTopics = false
-        };
-
-        using var consumer = new ConsumerBuilder<string, string>(config).Build();
-        consumer.Subscribe(
-        [
-            _options.ReservationRepliedTopic,
-            _options.DecisionRepliedTopic,
-            _options.CommitRepliedTopic,
-            _options.ReleaseRepliedTopic,
-            _options.SettlementRepliedTopic
-        ]);
-        SagaOrchestratorLog.Started(logger, _options.ReplyConsumerGroup, _options.ReplyConsumerGroup);
-
-        try
-        {
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                ConsumeResult<string, string> consumeResult;
-                try
-                {
-                    consumeResult = consumer.Consume(stoppingToken);
-                }
-                catch (ConsumeException exception)
-                {
-                    SagaOrchestratorLog.ConsumeFailed(logger, exception.Error.Reason, exception);
-                    await Task.Delay(1_000, stoppingToken);
-                    continue;
-                }
-
-                await DispatchAsync(consumeResult, stoppingToken);
-            }
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            SagaOrchestratorLog.Stopping(logger);
-        }
-        finally
-        {
-            consumer.Close();
-        }
-    }
 
     /// <summary>Public so integration tests can drive it directly, the same shape as OrderSagaOrchestrator.RequestReservationAsync.</summary>
     public Task DispatchAsync(ConsumeResult<string, string> consumeResult, CancellationToken cancellationToken)

@@ -13,4 +13,6 @@ public sealed class OrderEventStoreOptions
     public string ConsumerGroup { get; init; } = "orders-event-store";
 
     public string ClientId { get; init; } = "orders-event-store";
+
+    public string DeadLetterTopic { get; init; } = "orders.event-store.dlq.v1";
 }
