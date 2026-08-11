@@ -681,6 +681,64 @@ services:
     mem_limit: 256m
     cpus: 0.50
 
+  # catalog-service and inventory-service each have their own `--seed`
+  # one-shot mode too (CatalogSeeder/InventorySeeder), same pattern as
+  # `--migrate` above - and it had the same gap: nothing in Compose ever
+  # invoked it. Caught the same way, one layer further into
+  # coupon-redemption-concurrency once the migrations fixed inventory's
+  # and payments' schemas: orders-api's POST /orders correctly rejected
+  # every checkout with 400, because catalog-service had never heard of
+  # SKU-BOOK-002 on a fresh Mongo volume - the product simply didn't
+  # exist to validate against. The lab server's instance never hit this
+  # for the same reason as the migrations gap: someone ran these by hand,
+  # once, a long time ago.
+  seed-catalog:
+    profiles: ["compose-apps"]
+    image: saga-ecommerce/catalog-service:milestone-42-by-sku
+    build:
+      context: ..
+      dockerfile: apps/src/Catalog.Service/Dockerfile
+    restart: "no"
+    command: ["--seed"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Mongo__ConnectionString: mongodb://mongodb:27017
+      Mongo__DatabaseName: catalog
+      Redis__ConnectionString: redis:6379
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
+    networks:
+      - backend
+    mem_limit: 256m
+    cpus: 0.50
+
+  seed-inventory:
+    profiles: ["compose-apps"]
+    image: saga-ecommerce/inventory-service:milestone-41-inventory
+    build:
+      context: ..
+      dockerfile: apps/src/Inventory.Service/Dockerfile
+    restart: "no"
+    command: ["--seed"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Inventory: Host=postgres;Port=5432;Database=inventory;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      Kafka__BootstrapServers: kafka:9092
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
+    depends_on:
+      migrations-inventory:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["NONE"]
+    networks:
+      - backend
+    mem_limit: 256m
+    cpus: 0.50
+
   orders-api-1:
     <<: *api-common
     environment:
@@ -846,6 +904,8 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+      seed-catalog:
+        condition: service_completed_successfully
     networks:
       - backend
     mem_limit: 256m
@@ -878,7 +938,7 @@ services:
     depends_on:
       kafka-init:
         condition: service_completed_successfully
-      migrations-inventory:
+      seed-inventory:
         condition: service_completed_successfully
     networks:
       - backend
