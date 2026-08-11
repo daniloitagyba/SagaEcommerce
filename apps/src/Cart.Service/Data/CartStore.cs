@@ -164,23 +164,25 @@ public sealed class CartStore(
             // Whole-hash replace (bar the version field) rather than a
             // per-field diff: simpler, and correct regardless of which
             // SKUs the merge added, changed, or dropped - a diff would
-            // just be this same computation done twice.
-            var realFields = entries.Where(entry => entry.Name != VersionField).Select(entry => entry.Name).ToArray();
-            if (realFields.Length > 0)
-            {
-                await database.HashDeleteAsync(key, realFields).WaitAsync(ct);
-            }
-
-            if (mergedItems.Count > 0)
-            {
-                var fields = mergedItems
-                    .Select(item => new HashEntry(item.Sku, JsonSerializer.Serialize(item, SerializerOptions)))
-                    .ToArray();
-                await database.HashSetAsync(key, fields).WaitAsync(ct);
-            }
-
-            await database.HashIncrementAsync(key, VersionField).WaitAsync(ct);
-            await database.KeyExpireAsync(key, TimeSpan.FromSeconds(_options.TimeToLiveSeconds)).WaitAsync(ct);
+            // just be this same computation done twice. Done as one Lua
+            // script (atomic - Redis runs it as a single command), not the
+            // delete-then-set round trip this used to be: a reader landing
+            // in the gap between those two calls (StorefrontEndpoints.
+            // CheckoutAsync reading /carts/me mid-merge, most concretely)
+            // would see a torn, empty-or-partial cart. The read-modify-write
+            // race the comment above already accepts is a different,
+            // narrower thing - two merges computing from the same snapshot
+            // and one clobbering the other's result - and CartCrdtState.Merge
+            // being idempotent under retry is what makes that one harmless.
+            var newFieldsBySku = mergedItems.ToDictionary(
+                item => item.Sku,
+                item => JsonSerializer.Serialize(item, SerializerOptions),
+                StringComparer.Ordinal);
+            var newFieldsJson = JsonSerializer.Serialize(newFieldsBySku, SerializerOptions);
+            await database.ScriptEvaluateAsync(
+                ReplaceHashScript,
+                [key],
+                [VersionField, (long)_options.TimeToLiveSeconds, newFieldsJson]).WaitAsync(ct);
 
             return (IReadOnlyList<CartLineItem>)mergedItems.OrderBy(item => item.AddedAt).ToList();
         }, cancellationToken).AsTask();
@@ -212,6 +214,34 @@ public sealed class CartStore(
     }
 
     private const string VersionField = "__version";
+
+    // Replaces every field but the version one, then bumps the version and
+    // refreshes the TTL - all as a single Redis command, so no concurrent
+    // reader can ever observe the hash mid-replace. Re-enumerates the
+    // fields to delete via HKEYS instead of trusting a list captured
+    // earlier in C#, so it's correct even if something else touched the
+    // hash between this call's own read and this script running.
+    private const string ReplaceHashScript = """
+        local key = KEYS[1]
+        local versionField = ARGV[1]
+        local ttlSeconds = ARGV[2]
+        local newFields = cjson.decode(ARGV[3])
+
+        local existing = redis.call('HKEYS', key)
+        for _, field in ipairs(existing) do
+            if field ~= versionField then
+                redis.call('HDEL', key, field)
+            end
+        end
+
+        for sku, payload in pairs(newFields) do
+            redis.call('HSET', key, sku, payload)
+        end
+
+        redis.call('HINCRBY', key, versionField, 1)
+        redis.call('EXPIRE', key, ttlSeconds)
+        return 1
+        """;
 
     private static RedisKey CartKey(string cartId) => $"cart:{cartId}";
 
