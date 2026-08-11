@@ -34,7 +34,7 @@ cp .env.example .env
 # edit .env: replace the placeholder passwords with your own random values
 
 docker compose up --detach --wait                          # infrastructure: Postgres, Kafka, Redis, MongoDB, Keycloak, observability stack
-docker compose --profile compose-apps up --detach --wait    # all seven application services
+docker compose --profile compose-apps up --detach --wait    # the seven services (orders-api runs 2 replicas) + nginx + one-shot migration/seed jobs
 
 ../scripts/keycloak-configure-realm.sh                      # one-time: creates the auth realm/client the API expects
 ```
@@ -67,6 +67,7 @@ The response carries the full breakdown — subtotal, each promotion that fired,
     "subtotal": 4479.70,
     "discountTotal": 662.97,   // SAVE10 (10%) + 5% off electronics, stacked
     "shippingTotal": 0,        // free above 200.00
+    "taxTotal": 0,             // no shippingAddress in this request - region tax needs one
     "lines": [ /* per-line unitPrice, lineDiscount, lineTotal */ ]
   }
 }
@@ -141,7 +142,7 @@ Integration tests spin up real, disposable Postgres/MongoDB/Redis/Kafka containe
 
 ## Repository layout
 
-- `apps/src` — the seven services (each with its own `README.md` and architecture diagram) and `BuildingBlocks` (shared contracts, telemetry, resilience, authentication).
+- `apps/src` — the seven services (each with its own `README.md` and architecture diagram); `Orders.Application`/`Orders.Domain`/`Orders.Infrastructure`, the shared layers `Orders.Api` and `Orders.Worker` both build on; `DlqRedriveTool`, a CLI for replaying dead-lettered Kafka messages; and seven `BuildingBlocks.*` projects (contracts, messaging, caching, persistence, telemetry, resilience, web authentication).
 - `apps/tests` — unit tests and Testcontainers-backed integration tests.
 - `compose/` — the full local infrastructure and application stack.
 - `kubernetes/` — production-style manifests: base resources, an Argo CD-managed overlay, cluster policies.
