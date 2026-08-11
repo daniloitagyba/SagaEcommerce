@@ -164,8 +164,20 @@ jobs:
         if: always()
         run: |
           dotnet tool install --global dotnet-reportgenerator-globaltool
+          # classfilters excludes EF migrations (Orders.Infrastructure/
+          # Payments.Service/Inventory.Service each have one
+          # *.Data.Migrations namespace, same pattern) and the EF model
+          # snapshot that lives alongside them - ~10,443 lines of
+          # generated code with zero meaningful branches, that no test
+          # here is meant to exercise and that only grows with every
+          # schema change. Left in, the line-coverage percentage was
+          # structurally depressed and fell a little further on every
+          # new migration regardless of how much real code got tested -
+          # forcing the threshold down over time instead of the
+          # threshold tracking actual test investment.
           reportgenerator -reports:"./coverage/**/coverage.cobertura.xml" \
-            -targetdir:./coverage/report -reporttypes:"Html;TextSummary"
+            -targetdir:./coverage/report -reporttypes:"Html;TextSummary" \
+            -classfilters:"-*.Migrations.*"
           cat ./coverage/report/Summary.txt
 
       - name: upload coverage report
@@ -178,24 +190,31 @@ jobs:
 
       - name: enforce coverage threshold
         run: |
-          # 7.0% - a real margin under the 7.7% measured baseline for this
-          # UNIT-TEST-ONLY scope (recalibrated 2026-08-10, after adding
-          # Cart.UnitTests/Catalog.UnitTests/Inventory.UnitTests - three
-          # services that previously had zero dedicated unit-test coverage
-          # of their business rules, either untested anywhere or stranded in
-          # their *.IntegrationTests project despite needing no
-          # Testcontainer at all. Was 5.5% against a 6.1% baseline
-          # (2026-08-09). Both the numerator (new tests) and denominator
-          # (Cart.Service/Catalog.Service/Inventory.Service assemblies enter
-          # the measured scope for the first time) grew, which is why the
-          # percentage moved less than the new test count alone would
-          # suggest. Coverage collection deliberately excludes the
+          # 18.0% - a real margin under the 18.8% measured baseline
+          # (recalibrated 2026-08-11, two compounding changes at once):
+          #   1. The coverage report step above now excludes EF migrations
+          #      (-classfilters:"-*.Migrations.*") - ~10,443 lines of
+          #      generated code with zero meaningful branches that
+          #      structurally depressed every measurement before this and
+          #      would only get worse with each new migration, forcing the
+          #      threshold down over time regardless of actual test
+          #      investment.
+          #   2. Payments.UnitTests joined this scope (previously zero
+          #      dedicated coverage for Payments.Service - it lived
+          #      scattered in Orders.UnitTests under the wrong project
+          #      entirely), plus new coverage for Orders.Application's read
+          #      handlers (GetOrder/GetOrderHistory/ListOrderSummaries) and
+          #      BuildingBlocks.Messaging's dead-letter publisher base -
+          #      previously uncovered anywhere despite the second being
+          #      shared by every service's dead-letter path.
+          # Was 7.0% against a 7.7% baseline (2026-08-10, migrations still
+          # included). Coverage collection deliberately excludes the
           # Integration/Contract test projects (see the "coverage (unit
           # tests only)" step above), so this number is intentionally far
           # below what the whole solution's tests exercise - it only gates
-          # the five *.UnitTests projects regressing, not overall solution
+          # the six *.UnitTests projects regressing, not overall solution
           # coverage.
-          threshold="7.0"
+          threshold="18.0"
           line_coverage=$(grep -oE "Line coverage: [0-9.]+%" ./coverage/report/Summary.txt | grep -oE "[0-9.]+")
           echo "Line coverage: ${line_coverage}%"
           awk -v cov="$line_coverage" -v threshold="$threshold" 'BEGIN { exit !(cov >= threshold) }' \
