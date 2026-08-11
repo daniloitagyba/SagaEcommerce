@@ -92,6 +92,42 @@ A few pieces of infrastructure are opt-in, behind their own Compose profile, sin
 
 e.g. `docker compose --profile cdc up --detach --wait`.
 
+### LAN / phone access (HTTPS)
+
+The plain-HTTP quickstart above only works from the same machine. A
+browser only grants a *secure context* (`window.isSecureContext`) to
+`https://`, `localhost`, or `127.0.0.1` — never a plain-HTTP LAN IP — and
+the storefront's OIDC/PKCE login needs `window.crypto.subtle`, which only
+exists in a secure context. Without HTTPS, "Sign in" (and "Add to cart"
+while signed out) silently does nothing on a phone or any other device on
+the network: the PKCE `code_challenge` call throws inside `oidc-client-ts`
+and the failure is swallowed with no console error and no redirect.
+
+To reach the stack from another device on the same LAN:
+
+```bash
+scripts/generate-lab-tls-cert.sh <your-LAN-IP>   # self-signed cert, trusted for 127.0.0.1/localhost + <your-LAN-IP>
+```
+
+Then in `compose/.env`:
+
+```bash
+LAB_BIND_ADDRESS=0.0.0.0
+PUBLIC_KEYCLOAK_URL=https://<your-LAN-IP>:18443
+PUBLIC_STOREFRONT_URL=https://<your-LAN-IP>:8443
+```
+
+Restart `nginx` to pick up the cert (`docker compose --profile compose-apps up -d nginx`;
+restart the whole stack if `LAB_BIND_ADDRESS` changed too), then browse to `https://<your-LAN-IP>:8443`
+from the other device — accepting the one-time self-signed warning on
+first visit. `8443`/`18443` (`STOREFRONT_TLS_PORT`/`KEYCLOAK_TLS_PORT`)
+are TLS-terminating counterparts of `STOREFRONT_PORT`/`KEYCLOAK_PORT`,
+served by an `nginx` sidecar (`compose/nginx/storefront-tls.conf`,
+`keycloak-tls.conf`) additive to the plain-HTTP ports — `localhost`
+access over HTTP keeps working unchanged, since `localhost` is already a
+secure context. The certificate itself is self-signed and gitignored
+(`compose/nginx/certs/`) — regenerate it any time the LAN IP changes.
+
 ## Run the tests
 
 ```bash
