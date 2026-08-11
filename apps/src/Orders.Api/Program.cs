@@ -62,6 +62,7 @@ builder.Logging.AddOrdersOpenTelemetryLogging("orders-api", instanceId, builder.
 
 builder.Services.AddOrdersObservability("orders-api", instanceId, builder.Environment.EnvironmentName);
 
+builder.Services.AddExceptionHandler<BadHttpRequestExceptionHandler>();
 builder.Services.AddProblemDetails();
 builder.Services.AddOptions<KafkaOptions>()
     .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))

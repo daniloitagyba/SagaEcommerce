@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="Testcontainers.Redis" />
@@ -22,7 +23,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Orders.Api\Orders.Api.csproj" />
+    <!-- Aliased: Orders.Worker below also has an implicit top-level-statement
+         Program class, and WebApplicationFactory<Program> in OrdersApiFactory.cs
+         needs to unambiguously mean Orders.Api's. -->
+    <ProjectReference Include="..\..\src\Orders.Api\Orders.Api.csproj" Aliases="OrdersApi" />
     <ProjectReference Include="..\..\src\Orders.Application\Orders.Application.csproj" />
     <ProjectReference Include="..\..\src\Orders.Domain\Orders.Domain.csproj" />
     <ProjectReference Include="..\..\src\Orders.Infrastructure\Orders.Infrastructure.csproj" />
