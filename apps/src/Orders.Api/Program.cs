@@ -125,11 +125,17 @@ if (args.Contains("--migrate", StringComparer.Ordinal))
 }
 
 app.UseExceptionHandler();
-app.UseRateLimiter();
-app.UseMiddleware<DistributedRateLimitingMiddleware>();
-app.UseAuthentication();
-app.UseAuthorization();
+// First, not last: this used to run after rate limiting and authentication,
+// so the responses most worth tracing during an incident - 429 (shed load),
+// 401/403 (rejected auth) - went out with no correlation id at all.
 app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseRateLimiter();
+app.UseAuthentication();
+// After authentication, not before: DistributedRateLimitingMiddleware keys
+// its bucket by the caller's own identity (customer id, or client_id for a
+// service account), which only exists once auth has populated context.User.
+app.UseMiddleware<DistributedRateLimitingMiddleware>();
+app.UseAuthorization();
 app.Use(async (context, next) =>
 {
     context.Response.Headers["X-Instance-ID"] = instanceId;
