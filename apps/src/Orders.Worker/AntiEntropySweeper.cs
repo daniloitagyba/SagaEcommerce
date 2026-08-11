@@ -141,10 +141,16 @@ public sealed class AntiEntropySweeper(
         }
 
         var divergences = 0;
-        var orderIds = backorders.Select(b => b.OrderId).Distinct().Take(_options.BatchSize).ToList();
+        // Take applies to the batch itself, not just the status lookup -
+        // applying it only to orderIds left every backorder past position
+        // BatchSize with no entry in statuses, which TryGetValue below
+        // then reported as "no such order", a false divergence. The
+        // deferred ones are still picked up on the next tick.
+        var batch = backorders.Take(_options.BatchSize).ToList();
+        var orderIds = batch.Select(b => b.OrderId).Distinct().ToList();
         var statuses = await GetOrderStatusesAsync(orderIds, cancellationToken);
 
-        foreach (var backorder in backorders)
+        foreach (var backorder in batch)
         {
             if (!statuses.TryGetValue(backorder.OrderId, out var orderStatus))
             {
@@ -194,10 +200,13 @@ public sealed class AntiEntropySweeper(
         }
 
         var divergences = 0;
-        var orderIds = committedReservations.Select(r => r.OrderId).Distinct().Take(_options.BatchSize).ToList();
+        // Same fix as CheckBackordersBelongToWaitingOrdersAsync above -
+        // Take has to bound the batch itself, not just the lookup.
+        var batch = committedReservations.Take(_options.BatchSize).ToList();
+        var orderIds = batch.Select(r => r.OrderId).Distinct().ToList();
         var statuses = await GetOrderStatusesAsync(orderIds, cancellationToken);
 
-        foreach (var reservation in committedReservations)
+        foreach (var reservation in batch)
         {
             statuses.TryGetValue(reservation.OrderId, out var orderStatus);
 
