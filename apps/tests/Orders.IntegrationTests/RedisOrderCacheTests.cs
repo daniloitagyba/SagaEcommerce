@@ -66,13 +66,17 @@ public sealed class RedisOrderCacheTests : IAsyncLifetime
             var firstLookup = await cache.GetOrCreateAsync(orderId, Factory, CancellationToken.None);
             var secondLookup = await cache.GetOrCreateAsync(orderId, Factory, CancellationToken.None);
 
-            Assert.Equal(CacheLookupResult.Miss, firstLookup.Result);
-
-            if (secondLookup.Result != CacheLookupResult.Hit && attempt < 3)
+            // Either lookup can degrade to Bypassed under CI jitter (see comment
+            // above) - both must be re-checked before retrying, not just the
+            // second, or a slow *first* round trip throws here and skips the
+            // retry loop entirely instead of falling through to `continue`.
+            if ((firstLookup.Result != CacheLookupResult.Miss || secondLookup.Result != CacheLookupResult.Hit)
+                && attempt < 3)
             {
                 continue;
             }
 
+            Assert.Equal(CacheLookupResult.Miss, firstLookup.Result);
             Assert.Equal(CacheLookupResult.Hit, secondLookup.Result);
             Assert.Equal(1, factoryCalls);
             Assert.Equal(firstLookup.Order, secondLookup.Order);
