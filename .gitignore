@@ -13,3 +13,5 @@ data/observability/
 *.suo
 *.log
 artifacts/
+__pycache__/
+*.pyc
