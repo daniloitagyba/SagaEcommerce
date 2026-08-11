@@ -68,11 +68,13 @@ New `complexity-and-module-size` CI job, two independent checks:
 
 ## 8. Test coverage threshold
 
-The `test` job runs a separate, scoped `dotnet test --collect:"XPlat Code Coverage"` pass over just `Orders.UnitTests` and `Storefront.UnitTests`, followed by `reportgenerator` producing an HTML + text summary artifact, followed by a `grep`+`awk` gate comparing the reported line coverage against a threshold.
+The `test` job runs a separate, scoped `dotnet test --collect:"XPlat Code Coverage"` pass over the `*.UnitTests` projects, followed by `reportgenerator` producing an HTML + text summary artifact, followed by a `grep`+`awk` gate comparing the reported line coverage against a threshold.
 
 **Real incident, caught on the very first live CI run**: coverage was originally collected across the *whole solution* in the same `dotnet test` invocation used to gate pass/fail. That instrumented `Orders.Infrastructure` while it ran inside the Testcontainers-backed `Orders.IntegrationTests` project - and `RedisOrderCache`/`RedisIdempotencyStore` guard every Redis call with a **150ms** Polly timeout (`ResilienceExtensions.RedisPipeline`). Coverlet's per-call instrumentation overhead was enough to push real Redis round-trips past that budget on GitHub's shared runners, tripping the timeout and flipping the resilience pipeline's outcome from `Hit`/`Miss` to `Bypassed` - failing `RedisOrderCacheTests` and `RedisIdempotencyStoreTests` with assertion mismatches that looked like product regressions but were actually caused by the coverage tooling itself. (A third, unrelated failure in the same run - `PaymentMessageProcessorTests` timing out pulling the Redpanda test image from `docker.redpanda.com` - was a transient registry/network flake on GitHub's side, not a code issue.)
 
-Fixed by separating concerns: the main `test` step now runs with no coverage collection at all, exactly as before Milestone 59, so it can't perturb the very Polly timeouts these guardrails should be validating; a dedicated step collects coverage only from the two Unit test projects, which touch no real Redis/Postgres/Kafka Testcontainer and carry none of that risk. **Real measured baseline for this now-unit-only scope: 3.9% line coverage** (a large, expected drop from the earlier whole-solution 43.7% figure, since Integration tests exercising `Infrastructure`/`Worker` code no longer count). Threshold recalibrated to **3%** - the same calibration philosophy as every other guardrail in this milestone: measure the real number for the actual scope, then set the gate a hair under it.
+Fixed by separating concerns: the main `test` step now runs with no coverage collection at all, exactly as before Milestone 59, so it can't perturb the very Polly timeouts these guardrails should be validating; a dedicated step collects coverage only from the Unit test projects (initially just two: `Orders.UnitTests` and `Storefront.UnitTests`), which touch no real Redis/Postgres/Kafka Testcontainer and carry none of that risk. **Real measured baseline at the time, for that two-project scope: 3.9% line coverage** (a large, expected drop from the earlier whole-solution 43.7% figure, since Integration tests exercising `Infrastructure`/`Worker` code no longer count). Threshold set to **3%** - the same calibration philosophy as every other guardrail in this milestone: measure the real number for the actual scope, then set the gate a hair under it.
+
+**This scope and threshold have both grown since**, as more services gained genuinely Docker-free unit tests and the gate was recalibrated to exclude EF migration code from the denominator - the numbers above describe this milestone's own measurement, not the live gate. `.github/workflows/ci.yml`'s "enforce coverage threshold" step is the authoritative, self-dated source for the current project list, threshold, and baseline; re-measure and recalibrate there rather than updating this milestone's historical narrative.
 
 ## Results
 
@@ -85,7 +87,7 @@ Fixed by separating concerns: the main `test` step now runs with no coverage col
 | Exploit/CVE scan | NuGet Audit + CodeQL `security-extended` | build-breaking on any match | `SQLitePCLRaw` GHSA-2m69-gcr7-jv3q blocked a real restore |
 | Complexity/module size | `lizard` CCN + line-count check | CCN 20, 500 lines | worst current CCN (16-18) sits under with headroom |
 | Mutation testing | Stryker.NET, weekly | break=10 / low=30 / high=80 | measured 14.91% mutation score on `BuildingBlocks` |
-| Coverage threshold | coverlet + reportgenerator, unit tests only | 3% (baseline 3.9%) | whole-solution coverage instrumentation blew through Redis's 150ms Polly timeout, failing 2 real tests |
+| Coverage threshold | coverlet + reportgenerator, unit tests only | 3% (baseline 3.9%) at the time - see `ci.yml` for the current gate | whole-solution coverage instrumentation blew through Redis's 150ms Polly timeout, failing 2 real tests |
 
 ## Running it
 
