@@ -34,7 +34,7 @@ public sealed class AntiEntropySweeper(
     NpgsqlDataSource dataSource,
     IHttpClientFactory httpClientFactory,
     IOptions<AntiEntropyOptions> options,
-    LeaderElectionService leaderElection,
+    ILeaderElection leaderElection,
     ILogger<AntiEntropySweeper> logger) : BackgroundService
 {
     private static readonly string[] PaymentAccountedStatuses =

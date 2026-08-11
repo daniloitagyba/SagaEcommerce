@@ -237,8 +237,21 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 
 builder.Services.AddSingleton<SagaOrchestrationStore>();
 
-builder.Services.AddSingleton<LeaderElectionService>();
-builder.Services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<LeaderElectionService>());
+// Defaults to Kubernetes (today's real deployment target); Compose sets
+// LeaderElection__Mode=SingleNode, since there's no cluster there to hold
+// a Lease against and orders-worker always runs at replicas: 1 anyway -
+// see LeaderElectionMode's doc comment.
+var leaderElectionMode = builder.Configuration.GetValue("LeaderElection:Mode", LeaderElectionMode.Kubernetes);
+if (leaderElectionMode is LeaderElectionMode.SingleNode)
+{
+    builder.Services.AddSingleton<ILeaderElection, SingleNodeLeaderElection>();
+}
+else
+{
+    builder.Services.AddSingleton<LeaderElectionService>();
+    builder.Services.AddSingleton<ILeaderElection>(serviceProvider => serviceProvider.GetRequiredService<LeaderElectionService>());
+    builder.Services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<LeaderElectionService>());
+}
 
 if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
 {

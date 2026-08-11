@@ -55,7 +55,7 @@ public sealed class SagaTimeoutSweeper(
     IProducer<string, string> producer,
     SagaOrchestrationStore store,
     OrderStatusStore orderStatusStore,
-    LeaderElectionService leaderElection,
+    ILeaderElection leaderElection,
     ILogger<SagaTimeoutSweeper> logger) : BackgroundService
 {
     private const int SweepBatchSize = 100;

@@ -5,6 +5,34 @@ using Microsoft.Extensions.Options;
 
 namespace Orders.Worker;
 
+/// <summary>
+/// What SagaTimeoutSweeper/AntiEntropySweeper gate their work on: exactly
+/// one active instance at a time. Kubernetes uses a real Lease so exactly
+/// one KEDA-scaled replica sweeps; SingleNode (Compose, which always runs
+/// orders-worker at replicas: 1 - see compose.yaml) is always the leader
+/// since there's no one to contend with, which is what actually lets the
+/// sweepers run there at all.
+/// </summary>
+public enum LeaderElectionMode
+{
+    Kubernetes,
+    SingleNode
+}
+
+public interface ILeaderElection
+{
+    bool IsLeader { get; }
+}
+
+/// <summary>
+/// Always-leader implementation for environments with no real cluster
+/// (Compose) to contend leadership in - see LeaderElectionMode.
+/// </summary>
+public sealed class SingleNodeLeaderElection : ILeaderElection
+{
+    public bool IsLeader => true;
+}
+
 public sealed class LeaderElectionOptions
 {
     public const string SectionName = "LeaderElection";
@@ -31,7 +59,7 @@ public sealed class LeaderElectionOptions
 public sealed class LeaderElectionService(
     IOptions<LeaderElectionOptions> options,
     IConfiguration configuration,
-    ILogger<LeaderElectionService> logger) : BackgroundService
+    ILogger<LeaderElectionService> logger) : BackgroundService, ILeaderElection
 {
     private readonly LeaderElectionOptions _options = options.Value;
     private readonly string _identity = configuration["InstanceId"] ?? Environment.MachineName;

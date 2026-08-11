@@ -827,6 +827,15 @@ services:
       Keycloak__TokenUrl: http://keycloak:8080/realms/orders-lab/protocol/openid-connect/token
       Keycloak__ClientId: orders-api-clients
       Keycloak__ClientSecret: ${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET is required}
+      # LeaderElectionService defaults to Kubernetes.InClusterConfig(),
+      # which throws outside a real cluster - there's no ServiceAccount
+      # token to find. That left SagaTimeoutSweeper/AntiEntropySweeper
+      # permanently gated off in Compose (IsLeader stuck false forever): a
+      # saga step whose Payments/Inventory reply never arrives just sits at
+      # "Created" forever, stock and coupon and card hold all still held.
+      # SingleNode is safe here specifically because this service only ever
+      # runs one replica in Compose - see LeaderElectionMode's doc comment.
+      LeaderElection__Mode: SingleNode
     depends_on:
       kafka-init:
         condition: service_completed_successfully
