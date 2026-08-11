@@ -129,7 +129,8 @@ public sealed class PaymentDecisionRequestProcessor(
         return MessageProcessingResult.Processed;
     }
 
-    private static PaymentDecisionRequested DeserializeAndValidate(string payload)
+    /// <summary>Not private: Payments.UnitTests exercises this directly - the request's shape validation has no database dependency at all.</summary>
+    internal static PaymentDecisionRequested DeserializeAndValidate(string payload)
     {
         PaymentDecisionRequested request;
         try

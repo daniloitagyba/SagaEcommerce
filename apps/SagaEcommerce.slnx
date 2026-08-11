@@ -30,6 +30,7 @@
     <Project Path="tests/Orders.ContractTests/Orders.ContractTests.csproj" />
     <Project Path="tests/Orders.IntegrationTests/Orders.IntegrationTests.csproj" />
     <Project Path="tests/Orders.UnitTests/Orders.UnitTests.csproj" />
+    <Project Path="tests/Payments.UnitTests/Payments.UnitTests.csproj" />
     <Project Path="tests/Services.ArchitectureTests/Services.ArchitectureTests.csproj" />
     <Project Path="tests/Storefront.UnitTests/Storefront.UnitTests.csproj" />
   </Folder>

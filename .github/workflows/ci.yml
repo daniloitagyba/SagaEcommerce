@@ -154,7 +154,8 @@ jobs:
             apps/tests/Storefront.UnitTests/Storefront.UnitTests.csproj \
             apps/tests/Cart.UnitTests/Cart.UnitTests.csproj \
             apps/tests/Catalog.UnitTests/Catalog.UnitTests.csproj \
-            apps/tests/Inventory.UnitTests/Inventory.UnitTests.csproj; do
+            apps/tests/Inventory.UnitTests/Inventory.UnitTests.csproj \
+            apps/tests/Payments.UnitTests/Payments.UnitTests.csproj; do
             dotnet test "$project" --no-build --configuration Release \
               --collect:"XPlat Code Coverage" --results-directory ./coverage
           done

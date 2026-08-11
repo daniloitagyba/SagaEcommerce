@@ -4,13 +4,18 @@ using Payments.Service.Data;
 using Payments.Service.Domain;
 using Payments.Service.Risk;
 
-namespace Orders.UnitTests;
+namespace Payments.UnitTests;
 
 /// <summary>
 /// The risk signals, against a real (SQLite in-memory)
 /// PaymentsDbContext rather than a mocked repository - the rules are
 /// mostly queries over payment history, so mocking the query away would
 /// leave almost nothing under test.
+///
+/// Moved here from Orders.UnitTests: this tests Payments.Service's own
+/// domain logic and had no business living under a different service's
+/// test project other than that project being the first one that needed a
+/// SQLite-backed PaymentsDbContext harness.
 /// </summary>
 public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
 {
