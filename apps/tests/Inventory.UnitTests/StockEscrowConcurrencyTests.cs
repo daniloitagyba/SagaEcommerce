@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace Inventory.IntegrationTests;
+namespace Inventory.UnitTests;
 
 /// <summary>
 /// The throughput case for escrow, measured rather than
@@ -14,6 +14,12 @@ namespace Inventory.IntegrationTests;
 /// difference the shape itself produces: one shared lock for a whole SKU
 /// serializes every reservation regardless of how many rows exist behind
 /// it; N per-bucket locks let up to N reservations proceed at once.
+///
+/// Moved from Inventory.IntegrationTests: this is a pure in-memory timing
+/// benchmark, not an integration test - no container, no production code
+/// path, same reasoning that already moved StockEscrowPropertyTests here.
+/// Belongs in the fast, Docker-free CI coverage gate rather than sharing a
+/// runner with the Testcontainers-backed suite it never actually needed.
 /// </summary>
 public class StockEscrowConcurrencyTests
 {
