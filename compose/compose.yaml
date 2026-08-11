@@ -620,6 +620,67 @@ services:
     mem_limit: 256m
     cpus: 0.50
 
+  # inventory-service and payments-service each run their own
+  # `dotnet X --migrate` (see Program.cs in both), the same one-shot
+  # pattern as `migrations` above for orders-api - but until now nothing
+  # ever invoked it in Compose. Caught via coupon-redemption-concurrency:
+  # once compose/postgres-init/01-create-service-databases.sql fixed the
+  # databases themselves not existing on a fresh bring-up, both services
+  # went unhealthy one layer deeper - "relation ... does not exist" -
+  # because their tables were never created either. The lab server's
+  # instance never hit this because someone once ran these migrations by
+  # hand against its long-lived data volume.
+  migrations-inventory:
+    profiles: ["compose-apps"]
+    image: saga-ecommerce/inventory-service:milestone-41-inventory
+    build:
+      context: ..
+      dockerfile: apps/src/Inventory.Service/Dockerfile
+    restart: "no"
+    command: ["--migrate"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Inventory: Host=postgres;Port=5432;Database=inventory;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      Kafka__BootstrapServers: kafka:9092
+      # AddKeycloakJwtBearer runs unconditionally during service
+      # registration, before the --migrate early-return - without this,
+      # migration fails with "Authentication:Authority is required" before
+      # it ever touches the database.
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
+    networks:
+      - backend
+    mem_limit: 256m
+    cpus: 0.50
+
+  migrations-payments:
+    profiles: ["compose-apps"]
+    image: saga-ecommerce/payments-service:milestone-7
+    build:
+      context: ..
+      dockerfile: apps/src/Payments.Service/Dockerfile
+    restart: "no"
+    command: ["--migrate"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Payments: Host=postgres;Port=5432;Database=payments;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      Kafka__BootstrapServers: kafka:9092
+      # Same requirement as migrations-inventory above.
+      Authentication__Authority: http://keycloak:8080/realms/orders-lab
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
+    networks:
+      - backend
+    mem_limit: 256m
+    cpus: 0.50
+
   orders-api-1:
     <<: *api-common
     environment:
@@ -757,6 +818,8 @@ services:
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+      migrations-payments:
+        condition: service_completed_successfully
       schema-registry:
         condition: service_healthy
     networks:
@@ -814,6 +877,8 @@ services:
       InstanceId: inventory-service-1
     depends_on:
       kafka-init:
+        condition: service_completed_successfully
+      migrations-inventory:
         condition: service_completed_successfully
     networks:
       - backend
