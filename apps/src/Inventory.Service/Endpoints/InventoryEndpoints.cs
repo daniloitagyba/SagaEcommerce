@@ -61,43 +61,72 @@ public static class InventoryEndpoints
         return Results.Ok(new { item.Sku, availability = DescribeBand(item.AvailableQuantity) });
     }
 
+    // Higher ceiling than Catalog.Service's ProductEndpoints.NormalizeListQuery
+    // (max 100): AntiEntropySweeper's own AntiEntropyOptions.BatchSize
+    // defaults to 200 and requests exactly that via ?limit=, so the clamp
+    // here has to accommodate it rather than silently truncating a
+    // caller that already knows its own batch size.
+    internal static (int Skip, int Limit) NormalizeListQuery(int? skip, int? limit) =>
+        (Math.Max(skip ?? 0, 0), Math.Clamp(limit ?? 100, 1, 500));
+
     private static async Task<IResult> ListAsync(
         InventoryDbContext dbContext,
+        int? skip,
+        int? limit,
         CancellationToken cancellationToken)
     {
+        var (effectiveSkip, effectiveLimit) = NormalizeListQuery(skip, limit);
+
         var items = await dbContext.InventoryItems
             .AsNoTracking()
             .OrderBy(i => i.Sku)
+            .Skip(effectiveSkip)
+            .Take(effectiveLimit)
             .Select(i => new { i.Sku, i.AvailableQuantity, i.ReservedQuantity, i.UpdatedAt })
             .ToListAsync(cancellationToken);
+        var total = await dbContext.InventoryItems.AsNoTracking().CountAsync(cancellationToken);
 
-        return Results.Ok(items);
+        return Results.Ok(new { items, total, skip = effectiveSkip, limit = effectiveLimit });
     }
 
     private static async Task<IResult> ListBackordersAsync(
         InventoryDbContext dbContext,
+        int? skip,
+        int? limit,
         CancellationToken cancellationToken)
     {
+        var (effectiveSkip, effectiveLimit) = NormalizeListQuery(skip, limit);
+
         var backorders = await dbContext.Backorders
             .AsNoTracking()
             .OrderBy(b => b.RequestedAt)
+            .Skip(effectiveSkip)
+            .Take(effectiveLimit)
             .Select(b => new { b.ReservationId, b.OrderId, b.Sku, b.Quantity, b.RequestedAt })
             .ToListAsync(cancellationToken);
+        var total = await dbContext.Backorders.AsNoTracking().CountAsync(cancellationToken);
 
-        return Results.Ok(backorders);
+        return Results.Ok(new { items = backorders, total, skip = effectiveSkip, limit = effectiveLimit });
     }
 
     private static async Task<IResult> ListCommittedReservationsAsync(
         InventoryDbContext dbContext,
+        int? skip,
+        int? limit,
         CancellationToken cancellationToken)
     {
+        var (effectiveSkip, effectiveLimit) = NormalizeListQuery(skip, limit);
+
         var entries = await dbContext.ReservationLedgerEntries
             .AsNoTracking()
             .OrderBy(e => e.CommittedAt)
+            .Skip(effectiveSkip)
+            .Take(effectiveLimit)
             .Select(e => new { e.ReservationId, e.OrderId, e.Sku, e.Quantity, e.CommittedAt })
             .ToListAsync(cancellationToken);
+        var total = await dbContext.ReservationLedgerEntries.AsNoTracking().CountAsync(cancellationToken);
 
-        return Results.Ok(entries);
+        return Results.Ok(new { items = entries, total, skip = effectiveSkip, limit = effectiveLimit });
     }
 
     private static string DescribeBand(int availableQuantity) => availableQuantity switch

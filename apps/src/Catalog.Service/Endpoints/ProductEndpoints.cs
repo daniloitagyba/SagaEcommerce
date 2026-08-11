@@ -60,12 +60,17 @@ public static class ProductEndpoints
         });
     }
 
+    /// <summary>Same ceiling as NormalizeListQuery's limit - an unbounded comma-separated id list turned this into an uncapped Mongo $in query.</summary>
+    private const int MaxByIdsCount = 100;
+
     private static async Task<IResult> ListByIdsAsync(
         ProductRepository repository,
         string ids,
         CancellationToken cancellationToken)
     {
-        var idList = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var idList = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Take(MaxByIdsCount)
+            .ToArray();
         var products = await repository.FindByIdsAsync(idList, cancellationToken);
         return Results.Ok(products);
     }

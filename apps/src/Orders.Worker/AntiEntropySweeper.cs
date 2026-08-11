@@ -130,9 +130,10 @@ public sealed class AntiEntropySweeper(
         IReadOnlyList<BackorderResponse> backorders;
         try
         {
-            using var response = await inventoryClient.GetAsync("/inventory/backorders", cancellationToken);
+            using var response = await inventoryClient.GetAsync($"/inventory/backorders?limit={_options.BatchSize}", cancellationToken);
             response.EnsureSuccessStatusCode();
-            backorders = await response.Content.ReadFromJsonAsync<List<BackorderResponse>>(cancellationToken) ?? [];
+            var page = await response.Content.ReadFromJsonAsync<InventoryPageResponse<BackorderResponse>>(cancellationToken);
+            backorders = page?.Items ?? [];
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
@@ -141,11 +142,14 @@ public sealed class AntiEntropySweeper(
         }
 
         var divergences = 0;
-        // Take applies to the batch itself, not just the status lookup -
-        // applying it only to orderIds left every backorder past position
-        // BatchSize with no entry in statuses, which TryGetValue below
-        // then reported as "no such order", a false divergence. The
-        // deferred ones are still picked up on the next tick.
+        // Inventory.Service now bounds this server-side (?limit= above), so
+        // this is a defensive backstop, not the correctness-critical
+        // mechanism it used to be: it used to apply Take only to the
+        // status-lookup query, not the loop below, so every backorder past
+        // position BatchSize found nothing in statuses and TryGetValue
+        // reported it as "no such order" - a false divergence. The deferred
+        // ones (now: anything past what a single page returns) are still
+        // picked up on the next tick.
         var batch = backorders.Take(_options.BatchSize).ToList();
         var orderIds = batch.Select(b => b.OrderId).Distinct().ToList();
         var statuses = await GetOrderStatusesAsync(orderIds, cancellationToken);
@@ -189,9 +193,10 @@ public sealed class AntiEntropySweeper(
         IReadOnlyList<CommittedReservationResponse> committedReservations;
         try
         {
-            using var response = await inventoryClient.GetAsync("/inventory/committed-reservations", cancellationToken);
+            using var response = await inventoryClient.GetAsync($"/inventory/committed-reservations?limit={_options.BatchSize}", cancellationToken);
             response.EnsureSuccessStatusCode();
-            committedReservations = await response.Content.ReadFromJsonAsync<List<CommittedReservationResponse>>(cancellationToken) ?? [];
+            var page = await response.Content.ReadFromJsonAsync<InventoryPageResponse<CommittedReservationResponse>>(cancellationToken);
+            committedReservations = page?.Items ?? [];
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
@@ -271,6 +276,9 @@ public sealed class AntiEntropySweeper(
     private sealed record BackorderResponse(Guid ReservationId, Guid OrderId, string Sku, int Quantity, DateTimeOffset RequestedAt);
 
     private sealed record CommittedReservationResponse(Guid ReservationId, Guid OrderId, string Sku, int Quantity, DateTimeOffset CommittedAt);
+
+    /// <summary>Matches InventoryEndpoints' { items, total, skip, limit } envelope - same shape ProductEndpoints already uses in Catalog.Service.</summary>
+    private sealed record InventoryPageResponse<T>(IReadOnlyList<T> Items, int Total, int Skip, int Limit);
 }
 
 public sealed partial class AntiEntropyLog
