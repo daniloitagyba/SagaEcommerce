@@ -55,17 +55,54 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
             return Assess(signals);
         }
 
-        var history = await dbContext.Payments
+        // A single-column projection across the customer's whole history,
+        // Min()'d client-side - SQLite's EF provider (used as a lightweight
+        // stand-in for Postgres in this codebase's unit tests) can't
+        // translate MIN()/ORDER BY over a DateTimeOffset column to SQL at
+        // all, so this can't be pushed down the way the bounded query below
+        // is. Narrow (one date per row, not the four columns below) rather
+        // than genuinely bounded: NEW_ACCOUNT/FIRST_PURCHASE need the
+        // account's true first-ever payment date, which a lookback window
+        // can't answer, but the bandwidth cost of dates alone is nowhere
+        // near the full-row cost this fix targets.
+        var decidedDates = await dbContext.Payments
             .AsNoTracking()
             .Where(payment => payment.CustomerId == customerId)
-            .Select(payment => new { payment.Amount, payment.DecidedAt, payment.Approved, payment.ShippingPostalPrefix })
+            .Select(payment => payment.DecidedAt)
             .ToListAsync(cancellationToken);
+        DateTimeOffset? firstSeen = decidedDates.Count > 0 ? decidedDates.Min() : null;
 
-        if (history.Count == 0)
+        if (firstSeen is null)
         {
             signals.Add(new RiskSignal("FIRST_PURCHASE", "No previous payment for this customer", _options.FirstPurchaseScore));
             return Assess(signals);
         }
+
+        // An account that appeared minutes ago and is already ordering again isn't returning - FIRST_PURCHASE has already stopped firing by then.
+        if (now - firstSeen.Value < TimeSpan.FromMinutes(_options.NewAccountWindowMinutes))
+        {
+            signals.Add(new RiskSignal(
+                "NEW_ACCOUNT",
+                $"First seen {(now - firstSeen.Value).TotalMinutes:0} minutes ago",
+                _options.NewAccountScore));
+        }
+
+        // VELOCITY/ADDRESS_MISMATCH/ATYPICAL_AMOUNT only need a bounded
+        // sample of the customer's history, not their whole lifetime -
+        // payments is never pruned by RetentionSweeper, so without this the
+        // load on every decision grew with lifetime order count. No date
+        // filter or ORDER BY here: this SQLite-backed test double can't
+        // translate a WHERE or ORDER BY over a DateTimeOffset column at all
+        // (confirmed - both throw), the same reason the original code did
+        // its date logic entirely client-side; row count alone is what
+        // actually bounds cost, and Count/ToHashSet/Average below don't
+        // care which HistoryMaxRows-sized subset they get.
+        var history = await dbContext.Payments
+            .AsNoTracking()
+            .Where(payment => payment.CustomerId == customerId)
+            .Take(_options.HistoryMaxRows)
+            .Select(payment => new { payment.Amount, payment.DecidedAt, payment.Approved, payment.ShippingPostalPrefix })
+            .ToListAsync(cancellationToken);
 
         var velocityWindowStart = now - TimeSpan.FromMinutes(_options.VelocityWindowMinutes);
         var recentCount = history.Count(payment => payment.DecidedAt >= velocityWindowStart);
@@ -75,16 +112,6 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
                 "VELOCITY",
                 $"{recentCount} payments in the last {_options.VelocityWindowMinutes} minutes",
                 _options.VelocityScore));
-        }
-
-        // An account that appeared minutes ago and is already ordering again isn't returning - FIRST_PURCHASE has already stopped firing by then.
-        var firstSeen = history.Min(payment => payment.DecidedAt);
-        if (now - firstSeen < TimeSpan.FromMinutes(_options.NewAccountWindowMinutes))
-        {
-            signals.Add(new RiskSignal(
-                "NEW_ACCOUNT",
-                $"First seen {(now - firstSeen).TotalMinutes:0} minutes ago",
-                _options.NewAccountScore));
         }
 
         // Only meaningful against a customer with a shipping history - scoring absence as mismatch would flag every address-less order.

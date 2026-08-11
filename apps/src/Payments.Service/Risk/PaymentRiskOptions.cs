@@ -41,6 +41,16 @@ public sealed class PaymentRiskOptions
     /// <summary>Shipping somewhere new for this customer - ordinary on its own, so it scores low and matters only compounded.</summary>
     public int AddressMismatchScore { get; init; } = 20;
 
+    /// <summary>
+    /// Caps how many of the customer's payments VELOCITY/ADDRESS_MISMATCH/
+    /// ATYPICAL_AMOUNT load - payments is never pruned by RetentionSweeper,
+    /// so without this the load on every decision grew with the customer's
+    /// lifetime order count. NEW_ACCOUNT/FIRST_PURCHASE don't use this: they
+    /// need the account's true first-ever payment date, answered by a
+    /// separate, narrow (date-only) query over the customer's full history.
+    /// </summary>
+    public int HistoryMaxRows { get; init; } = 500;
+
     /// <summary>How long a card hold lasts before it lapses. Kept short (real acquirers give days) so the sweeper is observable in a lab session.</summary>
     public int AuthorizationWindowMinutes { get; init; } = 30;
 
