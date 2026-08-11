@@ -51,7 +51,7 @@ jobs:
       - name: dump service logs on failure
         if: failure()
         working-directory: compose
-        run: docker compose logs --tail 200
+        run: docker compose --profile compose-apps logs --tail 200
 
       - name: tear down
         if: always()
