@@ -763,6 +763,15 @@ services:
       # non-obvious-default trap the Kafka/Redis overrides above cover.
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-1
+      # Off by default (FeatureManagement has no config section in
+      # appsettings.json); kubernetes/base/orders-api.yaml:98 turns it on,
+      # Compose never did. StorefrontEndpoints.CheckoutAsync deliberately
+      # computes checkout:{subject}:{cart.Version} specifically so a
+      # double-clicked checkout can't double-charge, but
+      # CreateOrderHandler only honors it when this flag is set - without
+      # it, that key is silently ignored and a double-click creates two
+      # orders and two card holds, no log or metric marking the drop.
+      FeatureManagement__IdempotencyKey: "true"
 
   orders-api-2:
     <<: *api-common
@@ -778,6 +787,8 @@ services:
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-2
+      # Same as orders-api-1 above.
+      FeatureManagement__IdempotencyKey: "true"
 
   orders-worker:
     profiles: ["compose-apps"]
