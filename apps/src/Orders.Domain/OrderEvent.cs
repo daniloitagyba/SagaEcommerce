@@ -12,6 +12,17 @@ public sealed class OrderEvent
     {
     }
 
+    /// <summary>Test-only construction seam - see AssemblyInfo.cs. Production code never builds this by hand; EF Core materializes it from the event store.</summary>
+    internal static OrderEvent ForTesting(long id, Guid orderId, string eventType, string payload, DateTimeOffset occurredAt) =>
+        new()
+        {
+            Id = id,
+            OrderId = orderId,
+            EventType = eventType,
+            Payload = payload,
+            OccurredAt = occurredAt
+        };
+
     public long Id { get; private set; }
 
     public Guid OrderId { get; private set; }

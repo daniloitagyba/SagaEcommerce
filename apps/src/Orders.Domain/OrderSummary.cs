@@ -13,6 +13,28 @@ public sealed class OrderSummary
     {
     }
 
+    /// <summary>Test-only construction seam - see AssemblyInfo.cs. Production code never builds this by hand; Orders.Worker's projector is the only writer.</summary>
+    internal static OrderSummary ForTesting(
+        Guid orderId,
+        string? customerId,
+        decimal? amount,
+        string? currency,
+        string status,
+        DateTimeOffset? orderCreatedAt,
+        DateTimeOffset? decidedAt,
+        DateTimeOffset projectedAt) =>
+        new()
+        {
+            OrderId = orderId,
+            CustomerId = customerId,
+            Amount = amount,
+            Currency = currency,
+            Status = status,
+            OrderCreatedAt = orderCreatedAt,
+            DecidedAt = decidedAt,
+            ProjectedAt = projectedAt
+        };
+
     public Guid OrderId { get; private set; }
 
     public string? CustomerId { get; private set; }
