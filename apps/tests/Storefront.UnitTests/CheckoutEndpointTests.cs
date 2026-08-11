@@ -33,7 +33,7 @@ public sealed class CheckoutEndpointTests
     public async Task HappyPathPricesTheCartPostsTheOrderAndClearsTheCart()
     {
         var cartHandler = new RecordingHandler(request => request.Method == HttpMethod.Get
-            ? JsonResponse(HttpStatusCode.OK, new { items = new[] { new { sku = "SKU-BOOK-001", quantity = 2, unitPrice = 45m } }, version = 7 })
+            ? JsonResponse(HttpStatusCode.OK, new { cartId = "cart-generation-7", items = new[] { new { sku = "SKU-BOOK-001", quantity = 2, unitPrice = 45m } }, version = 7 })
             : new HttpResponseMessage(HttpStatusCode.NoContent));
         var ordersHandler = new RecordingHandler(_ => JsonResponse(HttpStatusCode.Created, new { id = "order-1", status = "Created" }));
 
@@ -48,8 +48,8 @@ public sealed class CheckoutEndpointTests
         var orderRequest = Assert.Single(ordersHandler.Requests);
         // The inbound shopper token, forwarded verbatim - not a token this layer minted.
         Assert.Equal(expectedAuthorization, orderRequest.AuthorizationHeader);
-        // Deterministic from (subject, cart version) - "customer-1" is the "sub"/preferred_username claim baked into the test JWT.
-        Assert.Equal("checkout:customer-1:7", orderRequest.IdempotencyKeyHeader);
+        // Deterministic from subject + cart generation + version.
+        Assert.Equal("checkout:customer-1:cart-generation-7:7", orderRequest.IdempotencyKeyHeader);
         var orderBody = JsonSerializer.Deserialize<JsonElement>(orderRequest.Body!, JsonOptions);
         // No customerId in the body at all any more - Orders.Api derives it from the forwarded token's own claims.
         Assert.False(orderBody.TryGetProperty("customerId", out _));
@@ -66,6 +66,7 @@ public sealed class CheckoutEndpointTests
         Assert.Equal(2, cartHandler.Requests.Count);
         Assert.Equal(HttpMethod.Get, cartHandler.Requests[0].Method);
         Assert.Equal(HttpMethod.Delete, cartHandler.Requests[1].Method);
+        Assert.Equal("/carts/me?cartId=cart-generation-7&expectedVersion=7", cartHandler.Requests[1].PathAndQuery);
         // Cart.Service needs the same forwarded token to resolve "/carts/me" - both calls carry it.
         Assert.All(cartHandler.Requests, r => Assert.Equal(expectedAuthorization, r.AuthorizationHeader));
     }
@@ -107,6 +108,21 @@ public sealed class CheckoutEndpointTests
         Assert.Empty(ordersHandler.Requests);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task CartAuthenticationFailuresAreRelayedInsteadOfReportedAsAnOutage(HttpStatusCode statusCode)
+    {
+        var cartHandler = new RecordingHandler(_ => JsonResponse(statusCode, new { error = "auth rejected" }));
+        var ordersHandler = new RecordingHandler(_ => throw new InvalidOperationException("must not be called"));
+
+        var httpContext = await InvokeAsync(cartHandler, ordersHandler);
+
+        Assert.Equal((int)statusCode, httpContext.Response.StatusCode);
+        Assert.Contains("auth rejected", ReadBody(httpContext));
+        Assert.Empty(ordersHandler.Requests);
+    }
+
     [Fact]
     public async Task ARejectedOrderIsRelayedAsIsAndTheCartIsNotCleared()
     {
@@ -129,7 +145,7 @@ public sealed class CheckoutEndpointTests
     {
         // The order is real and already accepted by the time the cart fails to clear, so the shopper must still see success.
         var cartHandler = new RecordingHandler(request => request.Method == HttpMethod.Get
-            ? JsonResponse(HttpStatusCode.OK, new { items = new[] { new { sku = "SKU-BOOK-001", quantity = 1 } } })
+            ? JsonResponse(HttpStatusCode.OK, new { cartId = "cart-generation-2", items = new[] { new { sku = "SKU-BOOK-001", quantity = 1 } }, version = 2 })
             : throw new HttpRequestException("connection reset"));
         var ordersHandler = new RecordingHandler(_ => JsonResponse(HttpStatusCode.Created, new { id = "order-2", status = "Created" }));
 
@@ -207,7 +223,12 @@ public sealed class CheckoutEndpointTests
             new(handlersByName[name]) { BaseAddress = new Uri($"http://{name}.invalid") };
     }
 
-    private sealed record RecordedRequest(HttpMethod Method, string? Body, string? AuthorizationHeader, string? IdempotencyKeyHeader);
+    private sealed record RecordedRequest(
+        HttpMethod Method,
+        string PathAndQuery,
+        string? Body,
+        string? AuthorizationHeader,
+        string? IdempotencyKeyHeader);
 
     /// <summary>Snapshots method/body/auth-header at Send time, not the HttpRequestMessage itself - CheckoutAsync disposes it afterward.</summary>
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
@@ -218,7 +239,12 @@ public sealed class CheckoutEndpointTests
         {
             var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
             var idempotencyKey = request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.FirstOrDefault() : null;
-            Requests.Add(new RecordedRequest(request.Method, body, request.Headers.Authorization?.ToString(), idempotencyKey));
+            Requests.Add(new RecordedRequest(
+                request.Method,
+                request.RequestUri?.PathAndQuery ?? string.Empty,
+                body,
+                request.Headers.Authorization?.ToString(),
+                idempotencyKey));
             return respond(request);
         }
     }

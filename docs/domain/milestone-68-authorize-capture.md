@@ -48,7 +48,7 @@ Since SKIP LOCKED alone makes concurrent sweeps safe — each replica claims a d
 
 A real storefront captures at **shipment**. This lab's order currently ends its life at `Confirmed`, so that is where `OrderStatusStore` requests capture — a one-line change once Milestone 69 adds the fulfillment states.
 
-Triggering it now rather than leaving orders permanently uncaptured keeps the system correct end to end at every milestone, which matters more than the trigger being in its final place. Requesting it is fire-and-forget: a failed publish is logged, not propagated, because the expiry sweeper is the backstop. A lost capture command degrades to "the customer was not charged", never to "the customer's money is held forever".
+Triggering it now rather than leaving orders permanently uncaptured keeps the system correct end to end at every milestone, which matters more than the trigger being in its final place. The current implementation persists the capture request in Orders' outbox in the same PostgreSQL transaction that moves the order to `Shipped`. Kafka delivery can fail and retry without exposing `Shipped` without a durable capture command; if the database write fails, both changes roll back.
 
 `OrderStatusStore`'s CAS now returns `payment_method` alongside `coupon_code`, for the same reason Milestone 67 added the coupon: the statement that decides who actually moved the order is the only safe place to decide who gets to act on it. Knowing the method there also avoids putting a capture command on the topic for every Pix order, to be answered with "already captured".
 

@@ -1,5 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
-
 namespace Inventory.Service;
 
 // The permanent reservation ledger's write side, split into its own file
@@ -22,7 +20,7 @@ public sealed partial class InventoryReservationMessageProcessor
     /// mutation that didn't actually happen.
     /// </summary>
     private static async Task UpdateReservationLedgerAsync(
-        IServiceProvider serviceProvider,
+        WarehouseAllocationStore allocationStore,
         bool succeeded,
         bool settleAllocation,
         bool commitAllocation,
@@ -38,7 +36,6 @@ public sealed partial class InventoryReservationMessageProcessor
             return;
         }
 
-        var allocationStore = serviceProvider.GetRequiredService<WarehouseAllocationStore>();
         if (settleAllocation && commitAllocation)
         {
             await allocationStore.RecordCommittedAsync(reservationId, orderId, sku, quantity, processedAt, cancellationToken);

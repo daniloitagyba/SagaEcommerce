@@ -76,9 +76,22 @@ var connectionString = builder.Configuration.GetConnectionString("Orders")
 // The promotion policy (coupon codes, category promotions,
 // free-shipping threshold) is configuration, so a campaign changes without
 // a redeploy. Absent config, PricingOptions' own defaults apply.
-builder.Services.Configure<PricingOptions>(builder.Configuration.GetSection(PricingOptions.SectionName));
+builder.Services.AddOptions<PricingOptions>()
+    .Bind(builder.Configuration.GetSection(PricingOptions.SectionName))
+    .Validate(options => options.BulkQuantityThreshold > 0, "Bulk quantity threshold must be positive.")
+    .Validate(options => options.BulkDiscountPercentage is >= 0m and <= 100m, "Bulk discount percentage must be between 0 and 100.")
+    .Validate(options => options.CategoryDiscounts.All(entry => !string.IsNullOrWhiteSpace(entry.Key) && entry.Value is >= 0m and <= 100m), "Category discounts require a category and a percentage between 0 and 100.")
+    .Validate(options => options.ShippingByPostalPrefix.All(entry => entry.Key.Length == 2 && entry.Key.All(char.IsDigit) && entry.Value >= 0m), "Shipping prefixes must contain two digits and a non-negative amount.")
+    .Validate(options => options.DefaultShippingAmount >= 0m && options.FlatShippingAmount >= 0m, "Shipping amounts must not be negative.")
+    .Validate(options => options.TaxRateByRegion.All(entry => entry.Key.Length == 2 && entry.Key.All(char.IsLetter) && entry.Value is >= 0m and <= 100m), "Regional tax rates require a two-letter region and a percentage between 0 and 100.")
+    .Validate(options => options.TaxRatePercentage is >= 0m and <= 100m, "Tax rate must be between 0 and 100.")
+    .Validate(options => options.FreeShippingThreshold >= 0m, "Free-shipping threshold must not be negative.")
+    .ValidateOnStart();
 // How long a Regret return still owes shipping. Absent config, ReturnOptions' own 7-day default applies.
-builder.Services.Configure<ReturnOptions>(builder.Configuration.GetSection(ReturnOptions.SectionName));
+builder.Services.AddOptions<ReturnOptions>()
+    .Bind(builder.Configuration.GetSection(ReturnOptions.SectionName))
+    .Validate(options => options.RegretWindowDays > 0, "Regret return window must be positive.")
+    .ValidateOnStart();
 builder.Services.AddOptions<CatalogClientOptions>()
     .Bind(builder.Configuration.GetSection(CatalogClientOptions.SectionName))
     .Validate(options => !string.IsNullOrWhiteSpace(options.BaseUrl), "Catalog base URL is required.")

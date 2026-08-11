@@ -95,6 +95,14 @@ public static class OrderEndpoints
                 });
         }
 
+        if (result.IdempotencyConflict is { } conflict)
+        {
+            return Results.Problem(
+                detail: $"Idempotency-Key '{conflict.IdempotencyKey}' was already used for a different order request.",
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Idempotency Key Conflict");
+        }
+
         if (!result.IsValid)
         {
             return Results.ValidationProblem(result.ValidationErrors);

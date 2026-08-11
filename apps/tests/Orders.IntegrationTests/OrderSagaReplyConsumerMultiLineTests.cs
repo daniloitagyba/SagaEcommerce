@@ -59,10 +59,12 @@ public sealed class OrderSagaReplyConsumerMultiLineTests : IAsyncLifetime, IDisp
         _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
         _producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = _redpanda.GetBootstrapAddress() }).Build();
 
-        var couponStore = new CouponRedemptionStore(_dataSource, pipelineProvider, NullLogger<CouponRedemptionStore>.Instance);
-        var settlementRequester = new PaymentSettlementRequester(_producer, Options.Create(new PaymentSettlementRequestOptions()), NullLogger<PaymentSettlementRequester>.Instance);
-        var customerTierStore = new CustomerTierStore(_dataSource, pipelineProvider, NullLogger<CustomerTierStore>.Instance);
-        _orderStatusStore = new OrderStatusStore(_dataSource, couponStore, settlementRequester, customerTierStore, pipelineProvider);
+        _orderStatusStore = new OrderStatusStore(
+            _dataSource,
+            new CouponRedemptionStore(),
+            new PaymentSettlementRequester(),
+            new CustomerTierStore(),
+            pipelineProvider);
         _sagaStore = new SagaOrchestrationStore(_dataSource, pipelineProvider);
     }
 
@@ -100,19 +102,9 @@ public sealed class OrderSagaReplyConsumerMultiLineTests : IAsyncLifetime, IDisp
         Assert.Equal(OrderStatuses.Cancelled, await CurrentOrderStatusAsync(orderId));
         Assert.Equal(0, await SagaRowCountAsync(orderId));
 
-        using var releaseConsumer = new ConsumerBuilder<string, string>(new ConsumerConfig
-        {
-            BootstrapServers = _redpanda.GetBootstrapAddress(),
-            GroupId = $"release-assert-{Guid.NewGuid():N}",
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        }).Build();
-        releaseConsumer.Subscribe(_options.ReleaseRequestedTopic);
-
-        var published = releaseConsumer.Consume(TimeSpan.FromSeconds(15));
-        Assert.NotNull(published);
-        var release = System.Text.Json.JsonSerializer.Deserialize<InventoryReservationReleaseRequested>(published.Message.Value, SerializerOptions);
+        var payload = await QueuedPayloadAsync(orderId, _options.ReleaseRequestedTopic);
+        var release = System.Text.Json.JsonSerializer.Deserialize<InventoryReservationReleaseRequested>(payload, SerializerOptions);
         Assert.Equal(lineA, release!.ReservationId);
-        releaseConsumer.Close();
     }
 
     [Fact]
@@ -182,15 +174,24 @@ public sealed class OrderSagaReplyConsumerMultiLineTests : IAsyncLifetime, IDisp
         return (string)(await command.ExecuteScalarAsync())!;
     }
 
+    private async Task<string> QueuedPayloadAsync(Guid orderId, string topic)
+    {
+        await using var command = _dataSource.CreateCommand(
+            "SELECT payload::text FROM saga_outbox_messages WHERE order_id = @order_id AND topic = @topic ORDER BY occurred_at LIMIT 1");
+        command.Parameters.AddWithValue("order_id", orderId);
+        command.Parameters.AddWithValue("topic", topic);
+        return (string)(await command.ExecuteScalarAsync())!;
+    }
+
     private OrderSagaReplyConsumer CreateConsumer() =>
         new(
             Options.Create(_options),
-            _producer,
             _sagaStore,
             _orderStatusStore,
             new NoOpCacheInvalidator(),
             new NoOpBestsellersStore(),
             new NoOpCatalogClient(),
+            TimeProvider.System,
             NullLogger<OrderSagaReplyConsumer>.Instance);
 
     private static ConsumeResult<string, string> ReservationReply(Guid orderId, Guid reservationId, string sku, bool reserved)

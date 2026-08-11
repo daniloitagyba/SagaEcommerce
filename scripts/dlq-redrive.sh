@@ -17,20 +17,9 @@ set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_directory=$(cd -- "$script_directory/.." && pwd)
-topic=${1:?Usage: dlq-redrive.sh <dlq-topic> [--dry-run] [--key-filter <substring>]}
+topic=${1:?Usage: dlq-redrive.sh <dlq-topic> [--dry-run] [--key-filter <substring>] [--consumer-group <group>]}
 shift
-
-dry_run_flag=()
-if [[ "${1:-}" == "--dry-run" ]]; then
-  dry_run_flag=(--dry-run)
-  shift
-fi
-
-key_filter_flag=()
-if [[ "${1:-}" == "--key-filter" ]]; then
-  key_filter_flag=(--key-filter "$2")
-  shift 2
-fi
+tool_arguments=("$@")
 
 network=${COMPOSE_BACKEND_NETWORK:-local-distributed-lab_backend}
 runtime_image=${DOTNET_RUNTIME_IMAGE:-mcr.microsoft.com/dotnet/aspnet:10.0}
@@ -42,4 +31,4 @@ docker run --rm --network "$network" \
   -v "$project_directory/apps/src/DlqRedriveTool/bin/Release/net10.0:/app" \
   -w /app \
   "$runtime_image" \
-  dotnet DlqRedriveTool.dll redrive --bootstrap-servers kafka:9092 --topic "$topic" --max-redrives 3 "${dry_run_flag[@]}" "${key_filter_flag[@]}"
+  dotnet DlqRedriveTool.dll redrive --bootstrap-servers kafka:9092 --topic "$topic" --max-redrives 3 "${tool_arguments[@]}"

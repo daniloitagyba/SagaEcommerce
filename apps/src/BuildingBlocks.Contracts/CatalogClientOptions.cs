@@ -1,8 +1,5 @@
 namespace BuildingBlocks;
 
-public sealed class CatalogClientOptions
-{
-    public const string SectionName = "Catalog";
-
-    public string BaseUrl { get; init; } = "http://localhost:5080";
-}
+// HTTP implementation and configuration live in BuildingBlocks.HttpClients.
+// This file remains intentionally empty to avoid mixing transport concerns
+// back into the dependency-free contracts assembly.

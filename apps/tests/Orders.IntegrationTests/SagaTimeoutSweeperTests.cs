@@ -61,17 +61,19 @@ public sealed class SagaTimeoutSweeperTests : IAsyncLifetime, IDisposable
         _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
         _producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = _redpanda.GetBootstrapAddress() }).Build();
 
-        var couponStore = new CouponRedemptionStore(_dataSource, pipelineProvider, NullLogger<CouponRedemptionStore>.Instance);
-        var settlementRequester = new PaymentSettlementRequester(_producer, Options.Create(new PaymentSettlementRequestOptions()), NullLogger<PaymentSettlementRequester>.Instance);
-        var customerTierStore = new CustomerTierStore(_dataSource, pipelineProvider, NullLogger<CustomerTierStore>.Instance);
-        _orderStatusStore = new OrderStatusStore(_dataSource, couponStore, settlementRequester, customerTierStore, pipelineProvider);
+        _orderStatusStore = new OrderStatusStore(
+            _dataSource,
+            new CouponRedemptionStore(),
+            new PaymentSettlementRequester(),
+            new CustomerTierStore(),
+            pipelineProvider);
         _sagaStore = new SagaOrchestrationStore(_dataSource, pipelineProvider);
 
         var leaderElection = new LeaderElectionService(
             Options.Create(new LeaderElectionOptions()), new ConfigurationBuilder().Build(), NullLogger<LeaderElectionService>.Instance);
 
         _sweeper = new SagaTimeoutSweeper(
-            Options.Create(_options), _producer, _sagaStore, _orderStatusStore, leaderElection, NullLogger<SagaTimeoutSweeper>.Instance);
+            Options.Create(_options), _sagaStore, _orderStatusStore, leaderElection, TimeProvider.System, NullLogger<SagaTimeoutSweeper>.Instance);
     }
 
     public async Task DisposeAsync()
@@ -88,10 +90,10 @@ public sealed class SagaTimeoutSweeperTests : IAsyncLifetime, IDisposable
     {
         var (orderId, saga) = await SeedAsync(SagaStep.DecidePayment);
 
-        await _sweeper.ResolveAsync(orderId, saga, CancellationToken.None);
+        Assert.Equal(1, await _sweeper.SweepOnceAsync(TimeSpan.FromMinutes(1), DateTimeOffset.UtcNow, CancellationToken.None));
 
         Assert.Equal(OrderStatuses.Cancelled, await CurrentStatusAsync(orderId));
-        AssertReleasePublished(saga.Lines[0].ReservationId);
+        await AssertReleaseQueuedAsync(saga.Lines[0].ReservationId);
     }
 
     [Fact]
@@ -99,10 +101,10 @@ public sealed class SagaTimeoutSweeperTests : IAsyncLifetime, IDisposable
     {
         var (orderId, saga) = await SeedAsync(SagaStep.ReleaseInventory);
 
-        await _sweeper.ResolveAsync(orderId, saga, CancellationToken.None);
+        Assert.Equal(1, await _sweeper.SweepOnceAsync(TimeSpan.FromMinutes(1), DateTimeOffset.UtcNow, CancellationToken.None));
 
         Assert.Equal(OrderStatuses.Cancelled, await CurrentStatusAsync(orderId));
-        AssertReleasePublished(saga.Lines[0].ReservationId);
+        await AssertReleaseQueuedAsync(saga.Lines[0].ReservationId);
     }
 
     [Fact]
@@ -110,21 +112,21 @@ public sealed class SagaTimeoutSweeperTests : IAsyncLifetime, IDisposable
     {
         var (orderId, saga) = await SeedAsync(SagaStep.CommitInventory);
 
-        await _sweeper.ResolveAsync(orderId, saga, CancellationToken.None);
+        Assert.Equal(1, await _sweeper.SweepOnceAsync(TimeSpan.FromMinutes(1), DateTimeOffset.UtcNow, CancellationToken.None));
 
         Assert.Equal(OrderStatuses.FulfillmentHold, await CurrentStatusAsync(orderId));
-        AssertNoReleasePublished();
+        Assert.Equal(0, await QueuedReleaseCountAsync(orderId));
     }
 
     [Fact]
-    public async Task ATimeoutAtReserveInventoryOnlyCancelsBecauseWhetherAnythingWasReservedIsUnknown()
+    public async Task ATimeoutAtReserveInventoryQueuesASafeReleaseInCaseTheReplyWasLost()
     {
         var (orderId, saga) = await SeedAsync(SagaStep.ReserveInventory);
 
-        await _sweeper.ResolveAsync(orderId, saga, CancellationToken.None);
+        Assert.Equal(1, await _sweeper.SweepOnceAsync(TimeSpan.FromMinutes(1), DateTimeOffset.UtcNow, CancellationToken.None));
 
         Assert.Equal(OrderStatuses.Cancelled, await CurrentStatusAsync(orderId));
-        AssertNoReleasePublished();
+        await AssertReleaseQueuedAsync(saga.Lines[0].ReservationId);
     }
 
     private async Task<(Guid OrderId, SagaOrchestrationRecord Saga)> SeedAsync(string step)
@@ -160,48 +162,23 @@ public sealed class SagaTimeoutSweeperTests : IAsyncLifetime, IDisposable
         return (string)(await command.ExecuteScalarAsync())!;
     }
 
-    private void AssertReleasePublished(Guid reservationId)
+    private async Task AssertReleaseQueuedAsync(Guid reservationId)
     {
-        using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
-        {
-            BootstrapServers = _redpanda.GetBootstrapAddress(),
-            GroupId = $"release-assert-{Guid.NewGuid():N}",
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        }).Build();
-        consumer.Subscribe(_options.ReleaseRequestedTopic);
-
-        var result = consumer.Consume(TimeSpan.FromSeconds(15));
-        Assert.NotNull(result);
-        var released = System.Text.Json.JsonSerializer.Deserialize<InventoryReservationReleaseRequested>(result.Message.Value, SerializerOptions);
+        await using var command = _dataSource.CreateCommand(
+            "SELECT payload::text FROM saga_outbox_messages WHERE topic = @topic ORDER BY occurred_at LIMIT 1");
+        command.Parameters.AddWithValue("topic", _options.ReleaseRequestedTopic);
+        var payload = (string?)await command.ExecuteScalarAsync();
+        Assert.NotNull(payload);
+        var released = System.Text.Json.JsonSerializer.Deserialize<InventoryReservationReleaseRequested>(payload, SerializerOptions);
         Assert.Equal(reservationId, released!.ReservationId);
-        consumer.Close();
     }
 
-    private void AssertNoReleasePublished()
+    private async Task<long> QueuedReleaseCountAsync(Guid orderId)
     {
-        using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
-        {
-            BootstrapServers = _redpanda.GetBootstrapAddress(),
-            GroupId = $"release-assert-{Guid.NewGuid():N}",
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        }).Build();
-        consumer.Subscribe(_options.ReleaseRequestedTopic);
-
-        try
-        {
-            // Nothing in this test ever produces to this topic, so on a
-            // fresh broker it may not exist yet at all - that is itself
-            // proof nothing was released, not a failure to distinguish
-            // from an empty-but-existing topic.
-            var result = consumer.Consume(TimeSpan.FromSeconds(3));
-            Assert.Null(result);
-        }
-        catch (ConsumeException exception) when (exception.Error.Code == ErrorCode.UnknownTopicOrPart)
-        {
-        }
-        finally
-        {
-            consumer.Close();
-        }
+        await using var command = _dataSource.CreateCommand(
+            "SELECT COUNT(*) FROM saga_outbox_messages WHERE order_id = @order_id AND topic = @topic");
+        command.Parameters.AddWithValue("order_id", orderId);
+        command.Parameters.AddWithValue("topic", _options.ReleaseRequestedTopic);
+        return (long)(await command.ExecuteScalarAsync())!;
     }
 }

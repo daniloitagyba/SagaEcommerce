@@ -73,25 +73,36 @@ public sealed class OrderStatusStore(
             return StatusTransitionResult.IllegalTransition;
         }
 
-        var (transitioned, couponCode, paymentMethod, customerId, amount) = await _pipeline.ExecuteAsync(async ct =>
+        var transitioned = await _pipeline.ExecuteAsync(async ct =>
         {
-            await using var command = dataSource.CreateCommand(UpdateSql);
-            command.Parameters.AddWithValue("status", NpgsqlDbType.Varchar, targetStatus);
-            command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, orderId);
-            command.Parameters.AddWithValue("allowed_from", NpgsqlDbType.Array | NpgsqlDbType.Varchar, allowedFrom.ToArray());
+            await using var connection = await dataSource.OpenConnectionAsync(ct);
+            await using var transaction = await connection.BeginTransactionAsync(ct);
 
-            await using var reader = await command.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct))
+            var transition = await TryTransitionRowAsync(
+                connection,
+                transaction,
+                orderId,
+                targetStatus,
+                allowedFrom,
+                ct);
+
+            if (!transition.Transitioned)
             {
-                return (false, (string?)null, (string?)null, (string?)null, 0m);
+                await transaction.RollbackAsync(ct);
+                return false;
             }
 
-            return (
-                true,
-                await reader.IsDBNullAsync(0, ct) ? null : reader.GetString(0),
-                await reader.IsDBNullAsync(1, ct) ? null : reader.GetString(1),
-                await reader.IsDBNullAsync(2, ct) ? null : reader.GetString(2),
-                reader.GetInt64(3) / 100m);
+            await ApplySideEffectsAsync(
+                connection,
+                transaction,
+                orderId,
+                targetStatus,
+                correlationId,
+                transition,
+                ct);
+
+            await transaction.CommitAsync(ct);
+            return true;
         }, cancellationToken);
 
         if (!transitioned)
@@ -99,70 +110,117 @@ public sealed class OrderStatusStore(
             return StatusTransitionResult.NotApplicable;
         }
 
-        await RunSideEffectsAsync(orderId, targetStatus, correlationId, couponCode, paymentMethod, customerId, amount, cancellationToken);
         return StatusTransitionResult.Transitioned;
     }
 
     /// <summary>
-    /// Runs after the status commit, not inside it: a redemption left
-    /// Reserved is a recoverable discrepancy, but rolling back the order's
-    /// own transition would undo something the rest of the saga already acted on.
+    /// Applies every database-local consequence before the status transaction
+    /// commits. Cross-service commands are persisted to the shared Orders
+    /// outbox, so the API's outbox publisher can retry delivery without a
+    /// status change ever becoming visible on its own.
     /// </summary>
-    private async Task RunSideEffectsAsync(
+    private async Task ApplySideEffectsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         Guid orderId,
         string targetStatus,
         string correlationId,
-        string? couponCode,
-        string? paymentMethod,
-        string? customerId,
-        decimal amount,
+        TransitionContext context,
         CancellationToken cancellationToken)
     {
-        // Standing is earned on confirmation, not creation, or
-        // placing and cancelling would be the cheapest route to a discount.
-        if (targetStatus == OrderStatuses.Confirmed && customerId is not null)
+        var now = DateTimeOffset.UtcNow;
+
+        if (targetStatus == OrderStatuses.Confirmed && context.CustomerId is not null)
         {
-            await customerTierStore.RecordCompletedOrderAsync(customerId, amount, cancellationToken);
+            await customerTierStore.RecordCompletedOrderAsync(
+                connection,
+                transaction,
+                context.CustomerId,
+                context.Amount,
+                cancellationToken);
         }
 
-        if (couponCode is not null)
+        if (context.CouponCode is not null)
         {
-            if (targetStatus == OrderStatuses.Confirmed)
+            var settleCoupon = targetStatus switch
             {
-                await couponRedemptionStore.TryConfirmAsync(couponCode, orderId, cancellationToken);
-            }
-            else if (targetStatus == OrderStatuses.Cancelled)
+                OrderStatuses.Confirmed => couponRedemptionStore.TryConfirmAsync(
+                    connection, transaction, context.CouponCode, orderId, now, cancellationToken),
+                OrderStatuses.Cancelled => couponRedemptionStore.TryReleaseAsync(
+                    connection, transaction, context.CouponCode, orderId, now, cancellationToken),
+                _ => null
+            };
+
+            if (settleCoupon is not null)
             {
-                await couponRedemptionStore.TryReleaseAsync(couponCode, orderId, cancellationToken);
+                await settleCoupon;
             }
         }
 
-        if (paymentMethod is null)
+        if (context.PaymentMethod is null)
         {
             return;
         }
 
-        // Capture moved from Confirmed to Shipped - the whole
-        // point of a hold is taking the money when the goods actually
-        // leave. Only a card/boleto leaves a hold; asking Payments to
-        // capture a Pix payment is harmless but achieves nothing, since it
-        // was captured the instant it was approved.
-        if (targetStatus == OrderStatuses.Shipped && PaymentMethods.RequiresCapture(paymentMethod))
+        if (targetStatus == OrderStatuses.Shipped && PaymentMethods.RequiresCapture(context.PaymentMethod))
         {
-            await settlementRequester.RequestCaptureAsync(orderId, correlationId, cancellationToken);
+            await settlementRequester.RequestCaptureAsync(
+                connection,
+                transaction,
+                orderId,
+                correlationId,
+                now,
+                cancellationToken);
         }
         else if (targetStatus == OrderStatuses.Cancelled)
         {
-            // Unlike capture, cancellation is not
-            // method-gated - a Pix payment is Captured the moment it's
-            // approved, so cancelling it has to refund, not void a hold
-            // that was never placed. Payments decides which of the two
-            // from the payment's own state (Payment.TryCancel); every
-            // caller here is always from Created (see OrderStatusStore's
-            // callers - the saga's own compensation already released
-            // whatever inventory was reserved before reaching this point),
-            // so there is nothing else to compensate on this path.
-            await settlementRequester.RequestCancellationAsync(orderId, correlationId, "order cancelled", cancellationToken);
+            await settlementRequester.RequestCancellationAsync(
+                connection,
+                transaction,
+                orderId,
+                correlationId,
+                "order cancelled",
+                now,
+                cancellationToken);
         }
+    }
+
+    private static async Task<TransitionContext> TryTransitionRowAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid orderId,
+        string targetStatus,
+        IReadOnlyList<string> allowedFrom,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = UpdateSql;
+        command.Parameters.AddWithValue("status", NpgsqlDbType.Varchar, targetStatus);
+        command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, orderId);
+        command.Parameters.AddWithValue("allowed_from", NpgsqlDbType.Array | NpgsqlDbType.Varchar, allowedFrom.ToArray());
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return TransitionContext.NotTransitioned;
+        }
+
+        return new TransitionContext(
+            true,
+            await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetString(0),
+            await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetString(1),
+            await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2),
+            reader.GetInt64(3) / 100m);
+    }
+
+    private sealed record TransitionContext(
+        bool Transitioned,
+        string? CouponCode,
+        string? PaymentMethod,
+        string? CustomerId,
+        decimal Amount)
+    {
+        public static readonly TransitionContext NotTransitioned = new(false, null, null, null, 0m);
     }
 }

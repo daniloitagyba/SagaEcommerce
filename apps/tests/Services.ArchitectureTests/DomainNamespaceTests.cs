@@ -86,6 +86,7 @@ public class DomainNamespaceTests
     [InlineData("Confluent.Kafka")]
     [InlineData("StackExchange.Redis")]
     [InlineData("Microsoft.AspNetCore")]
+    [InlineData("System.Net.Http")]
     [InlineData("OpenTelemetry")]
     [InlineData("Polly")]
     public void BuildingBlocksContractsHasNoFrameworkDependency(string frameworkNamespace)

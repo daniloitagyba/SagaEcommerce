@@ -139,6 +139,7 @@ public static class ProductEndpoints
     private static async Task<IResult> CreateAsync(
         CreateProductRequest request,
         ProductRepository repository,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
         var validationErrors = ValidateCreateProductRequest(request);
@@ -147,18 +148,16 @@ public static class ProductEndpoints
             return Results.ValidationProblem(validationErrors);
         }
 
-        var product = new Product
-        {
-            Name = request.Name,
-            Description = request.Description,
-            CategorySlug = request.CategorySlug,
-            Price = request.Price,
-            Currency = string.IsNullOrWhiteSpace(request.Currency) ? "BRL" : request.Currency,
-            Sku = request.Sku,
-            Attributes = request.Attributes ?? [],
-            Images = request.Images ?? [],
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+        var product = Product.Create(
+            request.Name,
+            request.Description,
+            request.CategorySlug,
+            request.Price,
+            request.Currency,
+            request.Sku,
+            request.Attributes,
+            request.Images,
+            timeProvider.GetUtcNow());
 
         try
         {

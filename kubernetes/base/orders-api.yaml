@@ -87,16 +87,6 @@ spec:
               value: "3"
             - name: Cache__LockRetryDelayMilliseconds
               value: "50"
-            - name: Idempotency__TimeToLiveHours
-              value: "24"
-            - name: Idempotency__LockTimeoutMilliseconds
-              value: "2000"
-            - name: Idempotency__LockRetryAttempts
-              value: "5"
-            - name: Idempotency__LockRetryDelayMilliseconds
-              value: "100"
-            - name: FeatureManagement__IdempotencyKey
-              value: "true"
             - name: RateLimit__TokenLimit
               value: "80"
             - name: RateLimit__TokensPerPeriod

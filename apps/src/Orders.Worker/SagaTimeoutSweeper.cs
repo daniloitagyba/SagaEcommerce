@@ -1,6 +1,4 @@
-using System.Text.Json;
 using BuildingBlocks;
-using Confluent.Kafka;
 using Microsoft.Extensions.Options;
 
 namespace Orders.Worker;
@@ -16,32 +14,21 @@ namespace Orders.Worker;
 /// those hang off the transition.
 ///
 /// <para>
-/// Releases the <em>inventory</em> reservation too, but only
-/// for the two steps where that's provably safe. A blind release for every
-/// timed-out step was the original plan and turned out to be unsafe:
-/// Inventory.Service's settlement path (<c>WarehouseAllocationStore.
-/// TrySettleReservationAsync</c>) falls back to mutating the aggregate
-/// <c>InventoryItem</c> row directly whenever it finds no per-reservation
-/// allocation record - a deliberate M72 migration compatibility path, but
-/// one that can't tell "this reservation genuinely never happened" apart
-/// from "this reservation predates per-warehouse tracking." Releasing a
-/// reservation that never happened would decrement a real concurrent
-/// order's <c>ReservedQuantity</c> and conjure phantom <c>AvailableQuantity</c>
-/// - worse than the gap this closes.
+/// Releases the <em>inventory</em> reservation for every step before commit.
+/// Inventory settles only a recorded per-reservation allocation, so a
+/// release for a reservation that never landed is an idempotent failed
+/// reply and cannot mutate another order's stock. This also compensates the
+/// important case where reserve succeeded but its reply was lost.
 /// </para>
 /// <para>
-/// So: <see cref="SagaStep.DecidePayment"/> and
-/// <see cref="SagaStep.ReleaseInventory"/> get an explicit release (the
-/// reservation is certain to exist and certain not to be committed yet -
-/// the same guarantee <c>HandlePaymentDecisionRepliedAsync</c>'s declined
-/// branch already relies on). <see cref="SagaStep.CommitInventory"/> gets
+/// So: <see cref="SagaStep.ReserveInventory"/>,
+/// <see cref="SagaStep.DecidePayment"/> and
+/// <see cref="SagaStep.ReleaseInventory"/> get an explicit release.
+/// <see cref="SagaStep.CommitInventory"/> gets
 /// <see cref="OrderStatuses.FulfillmentHold"/> instead - payment was
 /// already approved, so the order is real, but whether the commit itself
 /// landed is genuinely unknown from here, and guessing wrong in either
 /// direction either loses inventory or corrupts someone else's count.
-/// <see cref="SagaStep.ReserveInventory"/> still gets a plain cancel, no
-/// release attempted - whether anything was ever reserved is unknown, and
-/// that is the one gap left open rather than papered over.
 /// </para>
 /// <para>
 /// A saga can now have several lines in flight at once, so
@@ -52,14 +39,13 @@ namespace Orders.Worker;
 /// </summary>
 public sealed class SagaTimeoutSweeper(
     IOptions<SagaOrchestrationOptions> options,
-    IProducer<string, string> producer,
     SagaOrchestrationStore store,
     OrderStatusStore orderStatusStore,
     ILeaderElection leaderElection,
+    TimeProvider timeProvider,
     ILogger<SagaTimeoutSweeper> logger) : BackgroundService
 {
     private const int SweepBatchSize = 100;
-    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly SagaOrchestrationOptions _options = options.Value;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -75,13 +61,29 @@ public sealed class SagaTimeoutSweeper(
                 continue;
             }
 
-            var timedOut = await store.ClaimTimedOutAsync(timeout, DateTimeOffset.UtcNow, SweepBatchSize, stoppingToken);
-            foreach (var (orderId, saga) in timedOut)
-            {
-                SagaOrchestratorLog.SagaTimedOut(logger, orderId, saga.Step, _options.TimeoutSeconds, saga.CorrelationId);
-                await ResolveAsync(orderId, saga, stoppingToken);
-            }
+            var now = timeProvider.GetUtcNow();
+            await SweepOnceAsync(timeout, now, stoppingToken);
         }
+    }
+
+    public async Task<int> SweepOnceAsync(
+        TimeSpan timeout,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var timedOut = await store.ClaimTimedOutAndQueueAsync(
+                timeout,
+                now,
+                SweepBatchSize,
+                (orderId, saga) => CreateTimeoutCommands(orderId, saga, now),
+                cancellationToken);
+        foreach (var (orderId, saga) in timedOut)
+        {
+            SagaOrchestratorLog.SagaTimedOut(logger, orderId, saga.Step, _options.TimeoutSeconds, saga.CorrelationId);
+            await ResolveAsync(orderId, saga, cancellationToken);
+        }
+
+        return timedOut.Count;
     }
 
     /// <summary>Public so integration tests can drive it directly, the same shape as the other saga classes' testable seams.</summary>
@@ -97,11 +99,6 @@ public sealed class SagaTimeoutSweeper(
                 // ReleaseInventory means a release was already requested
                 // once for every line, so resending is a safe redelivery,
                 // not a guess.
-                foreach (var line in saga.Lines)
-                {
-                    await PublishReleaseAsync(orderId, saga.CorrelationId, line, cancellationToken);
-                }
-
                 await orderStatusStore.TryCancelAsync(orderId, saga.CorrelationId, cancellationToken);
                 break;
 
@@ -117,33 +114,43 @@ public sealed class SagaTimeoutSweeper(
                 break;
 
             default:
-                // ReserveInventory: unknown whether anything was ever
-                // reserved. See the class comment for why releasing here
-                // is not safe with today's Inventory.Service fallback.
+                // ReserveInventory is cancelled after the durable release
+                // command was queued while claiming the timeout.
                 await orderStatusStore.TryCancelAsync(orderId, saga.CorrelationId, cancellationToken);
                 break;
         }
     }
 
-    private async Task PublishReleaseAsync(Guid orderId, string correlationId, SagaLineRecord line, CancellationToken cancellationToken)
+    private List<SagaOutboxCommand> CreateTimeoutCommands(
+        Guid orderId,
+        SagaOrchestrationRecord saga,
+        DateTimeOffset occurredAt)
     {
-        var request = new InventoryReservationReleaseRequested(
-            line.ReservationId, orderId, line.Sku, line.Quantity, correlationId, DateTimeOffset.UtcNow);
-
-        var message = new Message<string, string>
+        if (saga.Step is not (SagaStep.ReserveInventory or SagaStep.DecidePayment or SagaStep.ReleaseInventory))
         {
-            Key = line.Sku,
-            Value = JsonSerializer.Serialize(request, SerializerOptions)
-        };
-
-        try
-        {
-            await producer.ProduceAsync(_options.ReleaseRequestedTopic, message, cancellationToken);
-            SagaOrchestratorLog.TimeoutReleaseRequested(logger, orderId, line.Sku, correlationId);
+            return [];
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+
+        var commands = new List<SagaOutboxCommand>(saga.Lines.Count);
+        foreach (var line in saga.Lines)
         {
-            SagaOrchestratorLog.NextStepPublishFailed(logger, orderId, exception);
+            var request = new InventoryReservationReleaseRequested(
+                line.ReservationId,
+                orderId,
+                line.Sku,
+                line.Quantity,
+                saga.CorrelationId,
+                occurredAt);
+            commands.Add(SagaOutboxCommand.Create(
+                orderId,
+                _options.ReleaseRequestedTopic,
+                line.Sku,
+                request,
+                saga.CorrelationId,
+                occurredAt));
+            SagaOrchestratorLog.TimeoutReleaseRequested(logger, orderId, line.Sku, saga.CorrelationId);
         }
+
+        return commands;
     }
 }

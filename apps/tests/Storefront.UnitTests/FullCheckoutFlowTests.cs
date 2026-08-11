@@ -72,7 +72,7 @@ public sealed class FullCheckoutFlowTests
         // 3. Checkout: POST /api/storefront/checkout - reads the cart, prices it, creates the order, clears the cart.
         const string orderId = "a6ea5218-7c89-450b-bcf6-1fdae2dc3827";
         var cartHandler = new RecordingHandler(request => request.Method == HttpMethod.Get
-            ? JsonResponse(HttpStatusCode.OK, new { items = new[] { new { sku = Sku, quantity = 1, unitPrice = 4299.90m } }, version = 1 })
+            ? JsonResponse(HttpStatusCode.OK, new { cartId = "full-flow-cart", items = new[] { new { sku = Sku, quantity = 1, unitPrice = 4299.90m } }, version = 1 })
             : new HttpResponseMessage(HttpStatusCode.NoContent));
         var ordersCreateHandler = new RecordingHandler(_ => JsonResponse(HttpStatusCode.Created, new { id = orderId, status = "Created" }));
 

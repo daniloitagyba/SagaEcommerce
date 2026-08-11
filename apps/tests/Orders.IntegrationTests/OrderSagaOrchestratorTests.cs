@@ -75,7 +75,7 @@ public sealed class OrderSagaOrchestratorTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
-    public async Task AnOrderWithLineItemsGetsARealReservationRequestedAndPublished()
+    public async Task AnOrderWithLineItemsGetsARealReservationDurablyQueued()
     {
         var orchestrator = CreateOrchestrator();
         var orderId = Guid.NewGuid();
@@ -99,18 +99,13 @@ public sealed class OrderSagaOrchestratorTests : IAsyncLifetime, IDisposable
         Assert.Equal(3, reader.GetInt32(1));
         await reader.CloseAsync();
 
-        using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
-        {
-            BootstrapServers = _redpanda.GetBootstrapAddress(),
-            GroupId = $"test-verify-{Guid.NewGuid():N}",
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        }).Build();
-        consumer.Subscribe("inventory.reservation-requested.v1");
-        var published = consumer.Consume(TimeSpan.FromSeconds(10));
-
-        Assert.NotNull(published);
-        Assert.Equal("SKU-INTEG-001", published.Message.Key);
-        Assert.Contains("\"quantity\":3", published.Message.Value);
+        await using var outbox = _dataSource.CreateCommand(
+            "SELECT message_key, payload::text FROM saga_outbox_messages WHERE order_id = @order_id");
+        outbox.Parameters.AddWithValue("order_id", orderId);
+        await using var queued = await outbox.ExecuteReaderAsync();
+        Assert.True(await queued.ReadAsync());
+        Assert.Equal("SKU-INTEG-001", queued.GetString(0));
+        Assert.Contains("\"quantity\": 3", queued.GetString(1));
     }
 
     [Fact]
@@ -146,20 +141,14 @@ public sealed class OrderSagaOrchestratorTests : IAsyncLifetime, IDisposable
         Assert.False(await reader.ReadAsync(), "expected exactly two line rows, not just the largest");
         await reader.CloseAsync();
 
-        using var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
-        {
-            BootstrapServers = _redpanda.GetBootstrapAddress(),
-            GroupId = $"test-verify-multi-{Guid.NewGuid():N}",
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        }).Build();
-        consumer.Subscribe("inventory.reservation-requested.v1");
-
         var publishedKeys = new HashSet<string>();
-        for (var i = 0; i < 2; i++)
+        await using var outbox = _dataSource.CreateCommand(
+            "SELECT message_key FROM saga_outbox_messages WHERE order_id = @order_id");
+        outbox.Parameters.AddWithValue("order_id", orderId);
+        await using var queued = await outbox.ExecuteReaderAsync();
+        while (await queued.ReadAsync())
         {
-            var published = consumer.Consume(TimeSpan.FromSeconds(10));
-            Assert.NotNull(published);
-            publishedKeys.Add(published.Message.Key);
+            publishedKeys.Add(queued.GetString(0));
         }
 
         Assert.Equal(["SKU-MULTI-BIG", "SKU-MULTI-SMALL"], publishedKeys.OrderBy(key => key, StringComparer.Ordinal));
@@ -187,9 +176,9 @@ public sealed class OrderSagaOrchestratorTests : IAsyncLifetime, IDisposable
     private OrderSagaOrchestrator CreateOrchestrator() =>
         new(
             Options.Create(new SagaOrchestrationOptions()),
-            _producer,
             _schemaRegistryClient,
             _store,
+            TimeProvider.System,
             NullLogger<OrderSagaOrchestrator>.Instance);
 
     private async Task<ConsumeResult<string, byte[]>> CreateConsumeResultAsync(Guid orderId, IReadOnlyList<OrderCreatedLine> lines)

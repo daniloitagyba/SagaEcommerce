@@ -677,6 +677,41 @@ namespace Orders.Infrastructure.Data.Migrations
                     b.ToTable("saga_orchestration_states", (string)null);
                 });
 
+            modelBuilder.Entity("Orders.Infrastructure.Data.OrderIdempotencyRecord", b =>
+                {
+                    b.Property<string>("CustomerId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("customer_id");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("request_hash");
+
+                    b.HasKey("CustomerId", "IdempotencyKey");
+
+                    b.HasIndex("OrderId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_order_idempotency_order_id");
+
+                    b.ToTable("order_idempotency", (string)null);
+                });
+
             modelBuilder.Entity("Orders.Domain.Order", b =>
                 {
                     b.OwnsOne("Orders.Domain.ShippingAddress", "ShippingAddress", b1 =>

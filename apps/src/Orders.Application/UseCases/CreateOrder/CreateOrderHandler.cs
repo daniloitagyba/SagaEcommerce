@@ -2,16 +2,13 @@ using System.Diagnostics;
 using System.Text.Json;
 using BuildingBlocks;
 using Microsoft.Extensions.Logging;
-using Microsoft.FeatureManagement;
 using Orders.Application.Ports;
 using Orders.Domain;
 
 namespace Orders.Application.UseCases.CreateOrder;
 
 public sealed class CreateOrderHandler(
-    IOrderRepository repository,
-    IIdempotencyStore idempotencyStore,
-    IFeatureManager featureManager,
+    IOrderCreationRepository repository,
     OrderPricingService pricingService,
     ILogger<CreateOrderHandler> logger)
 {
@@ -25,9 +22,27 @@ public sealed class CreateOrderHandler(
             return new CreateOrderResult(null, Guid.Empty, errors);
         }
 
-        // Pricing happens before the idempotency gate so a replayed request
-        // never re-prices: the second call returns the order exactly as it
-        // was charged the first time, even if a campaign ended in between.
+        var customerId = CreateOrderCommandValidator.NormalizeCustomerId(command.CustomerId!);
+        var idempotencyKey = string.IsNullOrWhiteSpace(command.IdempotencyKey)
+            ? null
+            : command.IdempotencyKey;
+        var requestHash = idempotencyKey is null
+            ? null
+            : OrderRequestHasher.Compute(command, customerId);
+
+        // PostgreSQL is authoritative and is consulted before any catalog,
+        // customer, or coupon I/O. A replay therefore returns the original
+        // order without re-pricing it, even if today's catalog has changed.
+        if (idempotencyKey is not null)
+        {
+            var existing = await repository.FindIdempotencyAsync(customerId, idempotencyKey, cancellationToken);
+            if (existing is not null)
+            {
+                return await ResolveExistingAsync(
+                    command, idempotencyKey, requestHash!, existing, errors, cancellationToken);
+            }
+        }
+
         PricedCheckout? checkout = null;
         if (command.IsLineItemCheckout)
         {
@@ -40,10 +55,9 @@ public sealed class CreateOrderHandler(
             // Compared against the subtotal specifically, not
             // the grand total - shipping, tax and discounts are expected to
             // apply and differ from whatever a cart last saw; that isn't a
-            // price change, a moved catalog price is. Checked before the
-            // idempotency gate for the same reason pricing itself is: a
-            // replayed request must never re-litigate a price the first
-            // attempt already confirmed or rejected.
+            // price change, a moved catalog price is. Durable idempotency
+            // has already been checked above, so this comparison runs only
+            // for a genuinely new request.
             if (command.ExpectedSubtotal is { } expectedSubtotal
                 && expectedSubtotal != checkout!.Breakdown.Subtotal.Amount)
             {
@@ -55,46 +69,19 @@ public sealed class CreateOrderHandler(
             }
         }
 
-        var idempotencyEnabled = await featureManager.IsEnabledAsync(FeatureFlags.IdempotencyKey);
-        if (!idempotencyEnabled || string.IsNullOrWhiteSpace(command.IdempotencyKey))
-        {
-            var (order, eventId) = await CreateAndPersistAsync(command, checkout, cancellationToken);
-            return new CreateOrderResult(order, eventId, errors);
-        }
-
-        Guid createdEventId = Guid.Empty;
-        var lookup = await idempotencyStore.GetOrCreateAsync(
-            command.IdempotencyKey,
-            async ct =>
-            {
-                var (order, eventId) = await CreateAndPersistAsync(command, checkout, ct);
-                createdEventId = eventId;
-                return ToCachedOrder(order);
-            },
-            cancellationToken);
-
-        if (!lookup.WasReplayed)
-        {
-            return new CreateOrderResult(
-                await repository.FindByIdAsync(lookup.Order!.Id, cancellationToken),
-                createdEventId,
-                errors);
-        }
-
-        CreateOrderLog.IdempotentReplay(logger, lookup.Order!.Id, command.IdempotencyKey, command.CorrelationId);
-        return new CreateOrderResult(
-            await repository.FindByIdAsync(lookup.Order!.Id, cancellationToken),
-            Guid.Empty,
-            errors,
-            WasReplayed: true);
+        return await CreateAndPersistAsync(
+            command, customerId, checkout, idempotencyKey, requestHash, errors, cancellationToken);
     }
 
-    private async Task<(Order Order, Guid EventId)> CreateAndPersistAsync(
+    private async Task<CreateOrderResult> CreateAndPersistAsync(
         CreateOrderCommand command,
+        string customerId,
         PricedCheckout? checkout,
+        string? idempotencyKey,
+        string? requestHash,
+        IReadOnlyDictionary<string, string[]> errors,
         CancellationToken cancellationToken)
     {
-        var customerId = CreateOrderCommandValidator.NormalizeCustomerId(command.CustomerId!);
         var createdAt = DateTimeOffset.UtcNow;
 
         var order = checkout is null
@@ -152,7 +139,23 @@ public sealed class CreateOrderHandler(
             ? new CouponReservation(couponCode, order.Id, order.CustomerId, createdAt)
             : null;
 
-        await repository.AddAsync(order, outboxMessage, couponReservation, cancellationToken);
+        var idempotencyClaim = idempotencyKey is null
+            ? null
+            : new OrderIdempotencyClaim(
+                customerId, idempotencyKey, requestHash!, order.Id, createdAt);
+        var writeResult = await repository.AddAsync(
+            order, outboxMessage, couponReservation, idempotencyClaim, cancellationToken);
+
+        if (writeResult.Outcome != OrderWriteOutcome.Created)
+        {
+            return await ResolveExistingAsync(
+                command,
+                idempotencyKey!,
+                requestHash!,
+                new OrderIdempotencyEntry(writeResult.OrderId, writeResult.ExistingRequestHash!),
+                errors,
+                cancellationToken);
+        }
 
         OrdersTelemetry.RecordCreated(order.Currency);
         CreateOrderLog.OrderAccepted(
@@ -162,12 +165,32 @@ public sealed class CreateOrderHandler(
             command.InstanceId,
             command.CorrelationId);
 
-        return (order, orderCreated.EventId);
+        return new CreateOrderResult(order, orderCreated.EventId, errors);
     }
 
-    private static CachedOrder ToCachedOrder(Order order)
+    private async Task<CreateOrderResult> ResolveExistingAsync(
+        CreateOrderCommand command,
+        string idempotencyKey,
+        string requestHash,
+        OrderIdempotencyEntry existing,
+        IReadOnlyDictionary<string, string[]> errors,
+        CancellationToken cancellationToken)
     {
-        return new CachedOrder(order.Id, order.CustomerId, order.Amount, order.Currency, order.Status, order.CreatedAt);
+        if (!string.Equals(existing.RequestHash, requestHash, StringComparison.Ordinal))
+        {
+            CreateOrderLog.IdempotencyConflict(logger, idempotencyKey, command.CorrelationId);
+            return new CreateOrderResult(
+                null,
+                Guid.Empty,
+                errors,
+                IdempotencyConflict: new IdempotencyConflict(idempotencyKey));
+        }
+
+        var order = await repository.FindByIdAsync(existing.OrderId, cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Idempotency key '{idempotencyKey}' references missing order '{existing.OrderId}'.");
+        CreateOrderLog.IdempotentReplay(logger, order.Id, idempotencyKey, command.CorrelationId);
+        return new CreateOrderResult(order, Guid.Empty, errors, WasReplayed: true);
     }
 }
 
@@ -184,4 +207,10 @@ public sealed partial class CreateOrderLog
         Level = LogLevel.Information,
         Message = "Replayed idempotent create for order {OrderId} using Idempotency-Key {IdempotencyKey} with correlation {CorrelationId}")]
     public static partial void IdempotentReplay(ILogger logger, Guid orderId, string idempotencyKey, string correlationId);
+
+    [LoggerMessage(
+        EventId = 1003,
+        Level = LogLevel.Warning,
+        Message = "Rejected reuse of Idempotency-Key {IdempotencyKey} with a different request payload (correlation {CorrelationId})")]
+    public static partial void IdempotencyConflict(ILogger logger, string idempotencyKey, string correlationId);
 }

@@ -7,6 +7,7 @@ The REST + gRPC entry point for placing, tracking, and managing orders. Prices e
 ## Responsibilities
 
 - **Checkout** — `POST /orders` accepts either the real line-item shape (SKU + quantity, priced server-side with promotions, coupons, and loyalty tiers via `Orders.Application`/`Orders.Domain`) or the legacy Milestone 7 amount-only shape, kept working for k6/Pact/README backward compatibility.
+- **Durable idempotency** — an `Idempotency-Key` is scoped by customer and bound to a normalized request hash in PostgreSQL. Lookup happens before pricing; the key, order, coupon reservation, and Outbox row commit together. Reusing the key with another payload returns `409 Conflict`.
 - **Fulfilment** — `POST /orders/{id}/fulfillment` advances the order lifecycle (`Created → Confirmed → Picking → Shipped → Delivered`) through a single compare-and-set that also queues the implied settlement command (capture on `Shipped`, void on `Cancelled`).
 - **Returns** — partial or full returns, refunding each line's actually-charged total (post-discount), never list price.
 - **Reads** — order summaries (CQRS read model) and full history (event-sourced fold), plus a gRPC `OrderQuery` service demonstrating HTTP/2's per-request load balancing under Linkerd.
@@ -17,7 +18,7 @@ The REST + gRPC entry point for placing, tracking, and managing orders. Prices e
 |---|---|---|
 | in | `Client` / `Storefront.Service` | REST, JWT-authenticated via Keycloak |
 | out | PostgreSQL (`orders` db) | order + line items + Outbox row, one transaction |
-| out | Redis | response cache, idempotency keys (fenced writes), distributed rate limiting |
+| out | Redis | response cache and distributed rate limiting; never the authority for order creation |
 | out | Kafka `orders.created.v1` | published by the Outbox dispatcher, never inline with the request |
 
 ## Run it

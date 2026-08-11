@@ -67,7 +67,7 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
         // near the full-row cost this fix targets.
         var decidedDates = await dbContext.Payments
             .AsNoTracking()
-            .Where(payment => payment.CustomerId == customerId)
+            .Where(payment => payment.IsPrimary && payment.CustomerId == customerId)
             .Select(payment => payment.DecidedAt)
             .ToListAsync(cancellationToken);
         DateTimeOffset? firstSeen = decidedDates.Count > 0 ? decidedDates.Min() : null;
@@ -87,22 +87,47 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
                 _options.NewAccountScore));
         }
 
-        // VELOCITY/ADDRESS_MISMATCH/ATYPICAL_AMOUNT only need a bounded
-        // sample of the customer's history, not their whole lifetime -
-        // payments is never pruned by RetentionSweeper, so without this the
-        // load on every decision grew with lifetime order count. No date
-        // filter or ORDER BY here: this SQLite-backed test double can't
-        // translate a WHERE or ORDER BY over a DateTimeOffset column at all
-        // (confirmed - both throw), the same reason the original code did
-        // its date logic entirely client-side; row count alone is what
-        // actually bounds cost, and Count/ToHashSet/Average below don't
-        // care which HistoryMaxRows-sized subset they get.
-        var history = await dbContext.Payments
+        // These signals intentionally use the most recent bounded sample.
+        // Take() without an order returned an arbitrary provider-dependent
+        // subset: once a customer had more than HistoryMaxRows payments,
+        // fresh velocity and address changes could disappear while old rows
+        // kept influencing the decision. Id is the deterministic tie-breaker
+        // for payments decided at the same instant.
+        var historyQuery = dbContext.Payments
             .AsNoTracking()
-            .Where(payment => payment.CustomerId == customerId)
-            .Take(_options.HistoryMaxRows)
-            .Select(payment => new { payment.Amount, payment.DecidedAt, payment.Approved, payment.ShippingPostalPrefix })
-            .ToListAsync(cancellationToken);
+            .Where(payment => payment.IsPrimary && payment.CustomerId == customerId)
+            .Select(payment => new PaymentHistoryRow(
+                payment.Id,
+                payment.Amount,
+                payment.DecidedAt,
+                payment.Approved,
+                payment.ShippingPostalPrefix));
+
+        IReadOnlyList<PaymentHistoryRow> history;
+        if (string.Equals(
+                dbContext.Database.ProviderName,
+                "Microsoft.EntityFrameworkCore.Sqlite",
+                StringComparison.Ordinal))
+        {
+            // SQLite stores DateTimeOffset as text and its EF provider
+            // cannot translate ordering over it. This branch exists for
+            // the lightweight test provider only; production PostgreSQL
+            // performs the ordering and limit server-side against
+            // ix_payments_customer_history.
+            history = (await historyQuery.ToListAsync(cancellationToken))
+                .OrderByDescending(payment => payment.DecidedAt)
+                .ThenByDescending(payment => payment.Id)
+                .Take(_options.HistoryMaxRows)
+                .ToList();
+        }
+        else
+        {
+            history = await historyQuery
+                .OrderByDescending(payment => payment.DecidedAt)
+                .ThenByDescending(payment => payment.Id)
+                .Take(_options.HistoryMaxRows)
+                .ToListAsync(cancellationToken);
+        }
 
         var velocityWindowStart = now - TimeSpan.FromMinutes(_options.VelocityWindowMinutes);
         var recentCount = history.Count(payment => payment.DecidedAt >= velocityWindowStart);
@@ -152,4 +177,11 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
         var score = signals.Sum(signal => signal.Score);
         return new RiskAssessment(score, score < _options.DeclineScoreThreshold, signals);
     }
+
+    private sealed record PaymentHistoryRow(
+        Guid Id,
+        decimal Amount,
+        DateTimeOffset DecidedAt,
+        bool Approved,
+        string ShippingPostalPrefix);
 }

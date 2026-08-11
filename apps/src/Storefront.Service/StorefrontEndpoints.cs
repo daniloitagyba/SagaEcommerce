@@ -142,7 +142,7 @@ public static class StorefrontEndpoints
         return await response.Content.ReadFromJsonAsync<object>(cancellationToken);
     }
 
-/// <summary>Mirrors Orders.Api's ShippingAddressRequest shape - Storefront has no reference to that assembly to reuse it directly.</summary>
+    /// <summary>Mirrors Orders.Api's ShippingAddressRequest shape - Storefront has no reference to that assembly to reuse it directly.</summary>
     internal sealed record CheckoutShippingAddress(string? Line1, string? City, string? Region, string? PostalCode);
 
     internal sealed record CheckoutRequest(
@@ -151,7 +151,7 @@ public static class StorefrontEndpoints
         string? PaymentMethod = null,
         CheckoutShippingAddress? ShippingAddress = null);
 
-    internal sealed record CartSnapshot(IReadOnlyList<CartSnapshotItem> Items, long Version);
+    internal sealed record CartSnapshot(string CartId, IReadOnlyList<CartSnapshotItem> Items, long Version);
 
     /// <summary>UnitPrice travels with the snapshot so this layer can assert an ExpectedSubtotal without a second Catalog round trip.</summary>
     internal sealed record CartSnapshotItem(string Sku, int Quantity, decimal UnitPrice);
@@ -212,6 +212,15 @@ public static class StorefrontEndpoints
             using var cartRequest = new HttpRequestMessage(HttpMethod.Get, "/carts/me");
             cartRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
             using var cartResponse = await cartClient.SendAsync(cartRequest, cancellationToken);
+            if (cartResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                // Authentication/authorization is a caller outcome, not a
+                // dependency outage. Preserve the upstream status and
+                // challenge headers instead of converting it into 503.
+                await ProxyEndpoints.WriteResponseAsync(httpContext, cartResponse, cancellationToken);
+                return;
+            }
+
             cartResponse.EnsureSuccessStatusCode();
             cart = await cartResponse.Content.ReadFromJsonAsync<CartSnapshot>(JsonOptions, cancellationToken);
         }
@@ -233,13 +242,7 @@ public static class StorefrontEndpoints
             return;
         }
 
-        var expectedSubtotal = cart.Items.Sum(item => item.UnitPrice * item.Quantity);
-        var orderRequest = new CheckoutOrderRequest(
-            [.. cart.Items.Select(item => new CheckoutOrderItem(item.Sku, item.Quantity))],
-            string.IsNullOrWhiteSpace(request.CouponCode) ? null : request.CouponCode,
-            request.PaymentMethod,
-            request.ShippingAddress,
-            expectedSubtotal);
+        var orderRequest = StorefrontCheckoutPolicy.BuildOrderRequest(cart, request);
 
         var ordersClient = httpClientFactory.CreateClient("orders");
 
@@ -250,7 +253,7 @@ public static class StorefrontEndpoints
         upstreamRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
 
         // Deterministic, not client-generated - this exact
-        // cart state ("this shopper, this version") checks out at most
+        // cart state ("this shopper, this cart generation, this version") checks out at most
         // once. A double-submitted click carries the identical version and
         // replays instead of double-charging; adding or removing an item
         // bumps the version, so a genuinely new checkout after editing the
@@ -258,11 +261,12 @@ public static class StorefrontEndpoints
         // same forwarded token, read without verifying it - only
         // uniqueness per shopper matters here, and Orders.Api verifies the
         // token itself regardless of what this layer assumed about it.
-        var subject = UnverifiedJwt.TryGetClaim(authorization, "preferred_username")
-            ?? UnverifiedJwt.TryGetClaim(authorization, "sub");
-        if (subject is not null)
+        var idempotencyKey = StorefrontCheckoutPolicy.BuildIdempotencyKey(authorization, cart);
+        if (idempotencyKey is not null)
         {
-            upstreamRequest.Headers.TryAddWithoutValidation("Idempotency-Key", $"checkout:{subject}:{cart.Version}");
+            upstreamRequest.Headers.TryAddWithoutValidation(
+                "Idempotency-Key",
+                idempotencyKey);
         }
 
         using var response = await ordersClient.SendAsync(upstreamRequest, cancellationToken);
@@ -277,7 +281,8 @@ public static class StorefrontEndpoints
 
             try
             {
-                using var clearRequest = new HttpRequestMessage(HttpMethod.Delete, "/carts/me");
+                var clearPath = $"/carts/me?cartId={Uri.EscapeDataString(cart.CartId)}&expectedVersion={cart.Version}";
+                using var clearRequest = new HttpRequestMessage(HttpMethod.Delete, clearPath);
                 clearRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
                 using var clearResponse = await cartClient.SendAsync(clearRequest, cancellationToken);
                 clearResponse.EnsureSuccessStatusCode();

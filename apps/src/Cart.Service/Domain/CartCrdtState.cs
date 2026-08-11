@@ -70,6 +70,26 @@ public sealed record CartCrdtState(
         return this with { Items = items };
     }
 
+    /// <summary>
+    /// Removes the dots a client observed in an earlier snapshot. Shipping
+    /// this causal context back with an offline remove is what distinguishes
+    /// "remove the item I saw" from "this replica has never seen the item".
+    /// Fresh concurrent dots are intentionally not tombstoned, preserving
+    /// the cart's add-wins policy.
+    /// </summary>
+    public CartCrdtState RemoveObserved(string sku, IEnumerable<CartDot> observedDots)
+    {
+        var current = Items.GetValueOrDefault(sku, CartItemCrdt.Empty);
+        var liveDots = new HashSet<CartDot>(current.LiveDots);
+        liveDots.UnionWith(observedDots);
+        var observed = current with { LiveDots = liveDots };
+        var items = new Dictionary<string, CartItemCrdt>(Items, StringComparer.Ordinal)
+        {
+            [sku] = observed.Remove()
+        };
+        return this with { Items = items };
+    }
+
     /// <summary>The join, lifted key-wise from <see cref="CartItemCrdt.Merge"/> - see the class comment for why that's sufficient.</summary>
     public static CartCrdtState Merge(CartCrdtState a, CartCrdtState b)
     {

@@ -101,6 +101,48 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
         Assert.Equal(orderId, fetched.GetProperty("id").GetGuid());
     }
 
+    [Fact]
+    public async Task IdempotencyKeyReplaysSamePayloadAndRejectsDifferentPayload()
+    {
+        var client = CreateAuthenticatedClient("customer-http-idempotency", "orders:write");
+        var key = $"http-idempotency-{Guid.NewGuid():N}";
+
+        using var firstRequest = CreateOrderRequest(key, 49.90m);
+        var firstResponse = await client.SendAsync(firstRequest);
+        using var replayRequest = CreateOrderRequest(key, 49.90m);
+        var replayResponse = await client.SendAsync(replayRequest);
+        using var conflictRequest = CreateOrderRequest(key, 59.90m);
+        var conflictResponse = await client.SendAsync(conflictRequest);
+
+        Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
+        Assert.Equal("true", replayResponse.Headers.GetValues("Idempotency-Replayed").Single());
+        Assert.Equal(HttpStatusCode.Conflict, conflictResponse.StatusCode);
+
+        var first = await firstResponse.Content.ReadFromJsonAsync<JsonElement>(SerializerOptions);
+        var replay = await replayResponse.Content.ReadFromJsonAsync<JsonElement>(SerializerOptions);
+        Assert.Equal(first.GetProperty("id").GetGuid(), replay.GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task ConcurrentRequestsWithTheSameIdempotencyKeyCreateExactlyOneOrder()
+    {
+        var client = CreateAuthenticatedClient("customer-http-concurrent", "orders:write");
+        var key = $"http-concurrent-{Guid.NewGuid():N}";
+        using var firstRequest = CreateOrderRequest(key, 79.90m);
+        using var secondRequest = CreateOrderRequest(key, 79.90m);
+
+        var responses = await Task.WhenAll(
+            client.SendAsync(firstRequest),
+            client.SendAsync(secondRequest));
+
+        Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Created);
+        Assert.Single(responses, response => response.StatusCode == HttpStatusCode.OK);
+        var payloads = await Task.WhenAll(responses.Select(response =>
+            response.Content.ReadFromJsonAsync<JsonElement>(SerializerOptions)));
+        Assert.Single(payloads.Select(payload => payload.GetProperty("id").GetGuid()).Distinct());
+    }
+
     /// <summary>404, not 403 - GetByIdAsync's own comment: a non-owner gets the same answer as a genuinely missing id, so probing ids can't be used to learn which ones exist.</summary>
     [Fact]
     public async Task AnotherCustomersOrderIsAlsoReportedAsNotFound()
@@ -138,5 +180,17 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
         var response = await client.GetAsync("/health/live");
 
         Assert.True(response.Headers.Contains("X-Instance-ID"));
+    }
+
+    private static HttpRequestMessage CreateOrderRequest(string idempotencyKey, decimal amount)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/orders")
+        {
+            Content = JsonContent.Create(
+                new { customerId = "ignored-for-non-admin", amount, currency = "BRL" },
+                options: SerializerOptions)
+        };
+        request.Headers.Add("Idempotency-Key", idempotencyKey);
+        return request;
     }
 }

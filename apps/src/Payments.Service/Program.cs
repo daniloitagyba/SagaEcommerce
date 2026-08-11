@@ -10,6 +10,7 @@ using Payments.Service.Messaging;
 using Payments.Service.Risk;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton(TimeProvider.System);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
 // Fail loudly at startup instead of silently at runtime. A
@@ -73,6 +74,7 @@ builder.Services.AddOptions<PaymentSettlementOptions>()
     .Validate(options => !string.IsNullOrWhiteSpace(options.CancellationRequestedTopic), "Cancellation-requested topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.SettlementRepliedTopic), "Settlement-replied topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.DeadLetterTopic), "Settlement dead-letter topic is required.")
+    .Validate(options => !string.IsNullOrWhiteSpace(options.ConsumerGroup), "Settlement consumer group is required.")
     .Validate(options => options.ExpirySweepIntervalSeconds > 0, "Expiry sweep interval must be positive.")
     .Validate(options => options.ExpirySweepBatchSize > 0, "Expiry sweep batch size must be positive.")
     .ValidateOnStart();
@@ -135,14 +137,17 @@ builder.Services.AddSingleton<PaymentSettlementProcessor>();
 builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
 builder.Services.AddSingleton<IPaymentDecisionDeadLetterPublisher, PaymentDecisionDeadLetterPublisher>();
 builder.Services.AddScoped<PaymentRiskEvaluator>();
+builder.Services.AddScoped<PaymentDecisionCoordinator>();
 builder.Services.AddSingleton<PaymentMessageProcessor>();
 builder.Services.AddSingleton<PaymentDecisionRequestProcessor>();
 builder.Services.AddScoped<IOutboxEventDispatcher, PaymentOutboxEventDispatcher>();
 builder.Services.AddHostedService<OutboxPublisher<PaymentsDbContext>>();
 
-// Which saga(s) this instance answers to - see SagaMode's
-// own comment. Both is for side-by-side comparison; Choreography is the default.
-var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Choreography);
+// Orchestration is the safe production default because it includes the
+// inventory reservation step. Both remains available for isolated
+// comparisons, while PaymentDecisionCoordinator prevents a comparison from
+// creating two independently settleable payments for one order.
+var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Orchestration);
 
 if (sagaMode is SagaMode.Choreography or SagaMode.Both)
 {
@@ -243,9 +248,7 @@ app.MapGet("/payments/by-order/{orderId:guid}", async (Guid orderId, PaymentsDbC
 {
     var payment = await dbContext.Payments
         .AsNoTracking()
-        .Where(item => item.OrderId == orderId)
-        .OrderByDescending(item => item.DecidedAt)
-        .FirstOrDefaultAsync(cancellationToken);
+        .SingleOrDefaultAsync(item => item.IsPrimary && item.OrderId == orderId, cancellationToken);
 
     return payment is null
         ? Results.NotFound()

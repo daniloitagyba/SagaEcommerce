@@ -31,4 +31,24 @@ public sealed class ResilienceExtensionsTests
         Assert.True(ResilienceExtensions.IsInfrastructureFault(new TimeoutRejectedException()));
         Assert.False(ResilienceExtensions.IsInfrastructureFault(new InvalidOperationException()));
     }
+
+    [Fact]
+    public async Task PostgresPipelineDoesNotRetryNonTransientApplicationErrors()
+    {
+        var provider = new ServiceCollection()
+            .AddOrdersResilience()
+            .BuildServiceProvider()
+            .GetRequiredService<ResiliencePipelineProvider<string>>();
+        var pipeline = provider.GetPipeline(ResilienceExtensions.PostgresPipeline);
+        var attempts = 0;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await pipeline.ExecuteAsync<int>(_ =>
+            {
+                attempts++;
+                throw new InvalidOperationException("not transient");
+            }));
+
+        Assert.Equal(1, attempts);
+    }
 }

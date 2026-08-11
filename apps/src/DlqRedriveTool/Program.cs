@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BuildingBlocks;
@@ -10,24 +12,37 @@ using Confluent.Kafka;
 // the same DeadLetterEnvelope JSON shape and header set.
 if (args.Length == 0 || (args[0] != "inspect" && args[0] != "redrive"))
 {
-    Console.Error.WriteLine("Usage: DlqRedriveTool <inspect|redrive> --bootstrap-servers <host:port> --topic <dlq-topic> [--max-redrives N] [--dry-run] [--idle-seconds N] [--key-filter <substring>]");
+    Console.Error.WriteLine("Usage: DlqRedriveTool <inspect|redrive> --bootstrap-servers <host:port> --topic <dlq-topic> [--consumer-group <group>] [--max-redrives N] [--dry-run] [--idle-seconds N] [--key-filter <substring>]");
     return 1;
 }
 
 var mode = args[0];
-var options = ParseOptions(args);
-
-if (options.BootstrapServers is null || options.Topic is null)
+if (!TryParseOptions(args, out var options, out var validationError))
 {
-    Console.Error.WriteLine("--bootstrap-servers and --topic are required.");
+    Console.Error.WriteLine(validationError);
     return 1;
 }
 
-return mode == "inspect"
-    ? await InspectAsync(options)
-    : await RedriveAsync(options);
+using var cancellationSource = new CancellationTokenSource();
+Console.CancelKeyPress += (_, eventArgs) =>
+{
+    eventArgs.Cancel = true;
+    cancellationSource.Cancel();
+};
 
-static ToolOptions ParseOptions(string[] arguments)
+try
+{
+    return mode == "inspect"
+        ? await InspectAsync(options, cancellationSource.Token)
+        : await RedriveAsync(options, cancellationSource.Token);
+}
+catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested)
+{
+    Console.Error.WriteLine("Operation cancelled.");
+    return 130;
+}
+
+static bool TryParseOptions(string[] arguments, out ToolOptions options, out string? error)
 {
     string? bootstrapServers = null;
     string? topic = null;
@@ -35,44 +50,107 @@ static ToolOptions ParseOptions(string[] arguments)
     var dryRun = false;
     var idleSeconds = 3;
     string? keyFilter = null;
+    string? consumerGroup = null;
 
     for (var i = 1; i < arguments.Length; i++)
     {
+        string? ReadValue()
+        {
+            if (i + 1 >= arguments.Length || arguments[i + 1].StartsWith("--", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            i++;
+            return arguments[i];
+        }
+
         switch (arguments[i])
         {
             case "--bootstrap-servers":
-                bootstrapServers = arguments[++i];
+                bootstrapServers = ReadValue();
                 break;
             case "--topic":
-                topic = arguments[++i];
+                topic = ReadValue();
                 break;
             case "--max-redrives":
-                maxRedrives = int.Parse(arguments[++i], CultureInfo.InvariantCulture);
+                if (!int.TryParse(ReadValue(), NumberStyles.None, CultureInfo.InvariantCulture, out maxRedrives))
+                {
+                    options = ToolOptions.Empty;
+                    error = "--max-redrives must be a positive integer.";
+                    return false;
+                }
+
                 break;
             case "--idle-seconds":
-                idleSeconds = int.Parse(arguments[++i], CultureInfo.InvariantCulture);
+                if (!int.TryParse(ReadValue(), NumberStyles.None, CultureInfo.InvariantCulture, out idleSeconds))
+                {
+                    options = ToolOptions.Empty;
+                    error = "--idle-seconds must be a positive integer.";
+                    return false;
+                }
+
                 break;
             case "--dry-run":
                 dryRun = true;
                 break;
             case "--key-filter":
-                keyFilter = arguments[++i];
+                keyFilter = ReadValue();
                 break;
+            case "--consumer-group":
+                consumerGroup = ReadValue();
+                break;
+            default:
+                options = ToolOptions.Empty;
+                error = $"Unknown option '{arguments[i]}'.";
+                return false;
         }
     }
 
-    return new ToolOptions(bootstrapServers, topic, maxRedrives, dryRun, idleSeconds, keyFilter);
+    options = new ToolOptions(bootstrapServers, topic, maxRedrives, dryRun, idleSeconds, keyFilter, consumerGroup);
+    error = Validate(options);
+    return error is null;
 }
 
-static async Task<int> InspectAsync(ToolOptions options)
+static string? Validate(ToolOptions options)
+{
+    if (string.IsNullOrWhiteSpace(options.BootstrapServers) || string.IsNullOrWhiteSpace(options.Topic))
+    {
+        return "--bootstrap-servers and --topic are required.";
+    }
+
+    if (options.MaxRedrives <= 0)
+    {
+        return "--max-redrives must be a positive integer.";
+    }
+
+    if (options.IdleSeconds <= 0)
+    {
+        return "--idle-seconds must be a positive integer.";
+    }
+
+    if (options.ConsumerGroup is not null && string.IsNullOrWhiteSpace(options.ConsumerGroup))
+    {
+        return "--consumer-group cannot be blank.";
+    }
+
+    if (options.KeyFilter is not null && string.IsNullOrWhiteSpace(options.KeyFilter))
+    {
+        return "--key-filter cannot be blank.";
+    }
+
+    return null;
+}
+
+static async Task<int> InspectAsync(ToolOptions options, CancellationToken cancellationToken)
 {
     using var consumer = BuildConsumer(options.BootstrapServers!, $"dlq-inspect-{Guid.NewGuid():N}");
     consumer.Subscribe(options.Topic);
 
-    var byFailureType = new Dictionary<string, int> {};
+    var byFailureType = new Dictionary<string, int> { };
     var total = 0;
 
-    await foreach (var consumeResult in DrainAsync(consumer, options.IdleSeconds))
+    await foreach (var consumeResult in DrainAsync(consumer, options.IdleSeconds, cancellationToken))
     {
         var envelope = Decode(consumeResult);
         total++;
@@ -96,9 +174,11 @@ static async Task<int> InspectAsync(ToolOptions options)
     return 0;
 }
 
-static async Task<int> RedriveAsync(ToolOptions options)
+static async Task<int> RedriveAsync(ToolOptions options, CancellationToken cancellationToken)
 {
-    using var consumer = BuildConsumer(options.BootstrapServers!, $"dlq-redrive-{Guid.NewGuid():N}");
+    var consumerGroup = options.ConsumerGroup ?? BuildRedriveConsumerGroup(options.Topic!, options.KeyFilter);
+    Console.WriteLine($"Using redrive consumer group '{consumerGroup}'.");
+    using var consumer = BuildConsumer(options.BootstrapServers!, consumerGroup);
     consumer.Subscribe(options.Topic);
     using var producer = new ProducerBuilder<string, byte[]>(new ProducerConfig { BootstrapServers = options.BootstrapServers }).Build();
 
@@ -108,7 +188,7 @@ static async Task<int> RedriveAsync(ToolOptions options)
     var errored = 0;
     var filteredOut = 0;
 
-    await foreach (var consumeResult in DrainAsync(consumer, options.IdleSeconds))
+    await foreach (var consumeResult in DrainAsync(consumer, options.IdleSeconds, cancellationToken))
     {
         read++;
         try
@@ -118,8 +198,15 @@ static async Task<int> RedriveAsync(ToolOptions options)
             if (options.KeyFilter is not null
                 && (envelope.OriginalKey is null || !envelope.OriginalKey.Contains(options.KeyFilter, StringComparison.Ordinal)))
             {
-                // Not committed - a filtered run is a scoped pass, not a verdict on the rest of the topic.
                 filteredOut++;
+                // A filtered run has its own deterministic consumer group,
+                // so advancing past an out-of-scope row cannot hide it from
+                // an unfiltered run or a run with another filter.
+                if (!options.DryRun)
+                {
+                    consumer.Commit(consumeResult);
+                }
+
                 continue;
             }
 
@@ -149,9 +236,9 @@ static async Task<int> RedriveAsync(ToolOptions options)
             if (envelope.OriginalKey is null)
             {
                 // Every producer keys its messages; a null key here would silently break the ordering guarantee on redrive. Flag it instead of guessing.
-                Console.WriteLine($"SKIP (null original key, cannot safely re-key): originalTopic={envelope.OriginalTopic}");
-                skippedOverCap++;
-                continue;
+                Console.WriteLine($"BLOCKED (null original key, cannot safely re-key): originalTopic={envelope.OriginalTopic}");
+                errored++;
+                break;
             }
 
             var headers = new Headers();
@@ -168,16 +255,19 @@ static async Task<int> RedriveAsync(ToolOptions options)
                 Headers = headers
             };
 
-            await producer.ProduceAsync(envelope.OriginalTopic, message);
+            await producer.ProduceAsync(envelope.OriginalTopic, message, cancellationToken);
             consumer.Commit(consumeResult);
             redriven++;
             Console.WriteLine($"REDRIVEN (attempt {redriveCount + 1}): originalTopic={envelope.OriginalTopic} key={envelope.OriginalKey}");
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // One malformed envelope shouldn't sink the batch - not committed, so it's retried next run, not lost.
+            // Stop before a later commit on this partition can leap over
+            // the malformed row. The stable group resumes here after the
+            // operator repairs or removes the poison envelope.
             errored++;
             Console.WriteLine($"ERROR decoding/redriving offset {consumeResult.TopicPartitionOffset}: {exception.Message}");
+            break;
         }
     }
 
@@ -187,6 +277,23 @@ static async Task<int> RedriveAsync(ToolOptions options)
 
     consumer.Close();
     return 0;
+}
+
+static string BuildRedriveConsumerGroup(string topic, string? keyFilter)
+{
+    var safeTopic = new string(topic
+        .Select(character => char.IsLetterOrDigit(character) || character is '.' or '_' or '-'
+            ? character
+            : '-')
+        .ToArray());
+
+    if (keyFilter is null)
+    {
+        return $"dlq-redrive-{safeTopic}";
+    }
+
+    var filterHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(keyFilter)))[..12].ToLowerInvariant();
+    return $"dlq-redrive-{safeTopic}-filter-{filterHash}";
 }
 
 // Not every *DeadLetterPublisher agrees on the wire format: Orders.Worker
@@ -225,12 +332,17 @@ static IConsumer<string, string> BuildConsumer(string bootstrapServers, string g
 // operator action, not a long-running consumer. Idle-seconds of empty
 // polls is the "caught up" signal, since there's no partition assignment
 // to query watermark offsets against before the first poll.
-static async IAsyncEnumerable<ConsumeResult<string, string>> DrainAsync(IConsumer<string, string> consumer, int idleSeconds)
+static async IAsyncEnumerable<ConsumeResult<string, string>> DrainAsync(
+    IConsumer<string, string> consumer,
+    int idleSeconds,
+    [EnumeratorCancellation] CancellationToken cancellationToken)
 {
     var idlePolls = 0;
     while (idlePolls < idleSeconds)
     {
-        var consumeResult = await Task.Run(() => consumer.Consume(TimeSpan.FromSeconds(1)));
+        var consumeResult = await Task.Run(
+            () => consumer.Consume(TimeSpan.FromSeconds(1)),
+            cancellationToken);
         if (consumeResult is null || consumeResult.IsPartitionEOF)
         {
             idlePolls++;
@@ -244,8 +356,7 @@ static async IAsyncEnumerable<ConsumeResult<string, string>> DrainAsync(IConsume
 
 static DeadLetterEnvelopeView Decode(ConsumeResult<string, string> consumeResult)
 {
-    var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-    return JsonSerializer.Deserialize<DeadLetterEnvelopeView>(consumeResult.Message.Value, options)
+    return JsonSerializer.Deserialize<DeadLetterEnvelopeView>(consumeResult.Message.Value, ToolJson.SerializerOptions)
         ?? throw new InvalidOperationException($"Could not decode dead-letter envelope at offset {consumeResult.Offset.Value}.");
 }
 
@@ -269,7 +380,22 @@ static void CopyHeader(Headers source, Headers destination, string key)
     }
 }
 
-internal sealed record ToolOptions(string? BootstrapServers, string? Topic, int MaxRedrives, bool DryRun, int IdleSeconds, string? KeyFilter);
+internal sealed record ToolOptions(
+    string? BootstrapServers,
+    string? Topic,
+    int MaxRedrives,
+    bool DryRun,
+    int IdleSeconds,
+    string? KeyFilter,
+    string? ConsumerGroup)
+{
+    public static readonly ToolOptions Empty = new(null, null, 0, false, 0, null, null);
+}
+
+internal static class ToolJson
+{
+    public static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+}
 
 // Mirrors the wire shape every *DeadLetterPublisher produces - a
 // standalone copy, not a project reference, since this tool has no

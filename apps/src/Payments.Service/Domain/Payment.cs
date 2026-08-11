@@ -12,6 +12,13 @@ public sealed class Payment
 
     public Guid OrderId { get; private set; }
 
+    /// <summary>
+    /// Identifies the single payment that owns this order's lifecycle.
+    /// Older duplicate rows are retained for audit during the migration but
+    /// are never settled or counted as customer history again.
+    /// </summary>
+    public bool IsPrimary { get; private set; }
+
     /// <summary>Lets the risk decision weigh this customer's history, not just the amount.</summary>
     public string CustomerId { get; private set; } = string.Empty;
 
@@ -78,12 +85,43 @@ public sealed class Payment
         TimeSpan authorizationWindow,
         string correlationId)
     {
+        if (orderId == Guid.Empty)
+        {
+            throw new ArgumentException("Order id is required.", nameof(orderId));
+        }
+
+        if (string.IsNullOrWhiteSpace(customerId) || string.IsNullOrWhiteSpace(correlationId))
+        {
+            throw new ArgumentException("Customer and correlation identifiers are required.");
+        }
+
+        if (amount <= 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(amount), "Amount must be positive.");
+        }
+
+        if (string.IsNullOrWhiteSpace(currency))
+        {
+            throw new ArgumentException("Currency is required.", nameof(currency));
+        }
+
+        if (!PaymentMethods.IsSupported(method))
+        {
+            throw new ArgumentException("Payment method is not supported.", nameof(method));
+        }
+
+        if (approved && PaymentMethods.RequiresCapture(method) && authorizationWindow <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(authorizationWindow), "Authorization window must be positive.");
+        }
+
         var requiresCapture = approved && PaymentMethods.RequiresCapture(method);
 
         return new Payment
         {
             Id = Guid.NewGuid(),
             OrderId = orderId,
+            IsPrimary = true,
             CustomerId = customerId,
             Amount = amount,
             Currency = currency,

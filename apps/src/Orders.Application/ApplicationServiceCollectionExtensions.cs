@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.FeatureManagement;
 using Orders.Application.Pricing;
 using Orders.Application.UseCases.CreateOrder;
 using Orders.Domain.Pricing;
@@ -14,7 +13,6 @@ public static class ApplicationServiceCollectionExtensions
 {
     public static IServiceCollection AddOrdersApplication(this IServiceCollection services)
     {
-        services.AddFeatureManagement();
         // Compiling the NRules Rete network is expensive and the result is
         // immutable and thread-safe, so the engine is a singleton and each
         // Price call takes a cheap session off it.

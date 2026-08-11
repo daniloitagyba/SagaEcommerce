@@ -63,10 +63,9 @@ spec:
               value: kafka:9092
             - name: SchemaRegistry__Url
               value: http://schema-registry:8081
-            # Milestone 75: explicit, not left to the code default - must
-            # match orders-worker's Saga__Mode.
+            # Must match orders-worker's Saga__Mode.
             - name: Saga__Mode
-              value: Both
+              value: Orchestration
             - name: InstanceId
               valueFrom:
                 fieldRef:

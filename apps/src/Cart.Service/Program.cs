@@ -41,6 +41,7 @@ builder.Services.AddOptions<CatalogClientOptions>()
     .ValidateOnStart();
 
 builder.Services.AddSingleton<CartStore>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CatalogClientOptions>>().Value;

@@ -102,11 +102,10 @@ spec:
               value: orders-lab
             - name: LeaderElection__LeaseName
               value: orders-worker-saga-sweeper
-            # Milestone 75: explicit, not left to the code default -
-            # Choreography alone never reserves inventory. Must match
-            # payments-service's Saga__Mode.
+            # Orchestration is the normal path because it includes inventory
+            # reservation. Must match payments-service's Saga__Mode.
             - name: Saga__Mode
-              value: Both
+              value: Orchestration
           ports:
             - name: http
               containerPort: 8080

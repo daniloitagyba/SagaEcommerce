@@ -60,10 +60,12 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime
         _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
         _producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = _redpanda.GetBootstrapAddress() }).Build();
 
-        var couponStore = new CouponRedemptionStore(_dataSource, pipelineProvider, NullLogger<CouponRedemptionStore>.Instance);
-        var settlementRequester = new PaymentSettlementRequester(_producer, Options.Create(new PaymentSettlementRequestOptions()), NullLogger<PaymentSettlementRequester>.Instance);
-        var customerTierStore = new CustomerTierStore(_dataSource, pipelineProvider, NullLogger<CustomerTierStore>.Instance);
-        _orderStatusStore = new OrderStatusStore(_dataSource, couponStore, settlementRequester, customerTierStore, pipelineProvider);
+        _orderStatusStore = new OrderStatusStore(
+            _dataSource,
+            new CouponRedemptionStore(),
+            new PaymentSettlementRequester(),
+            new CustomerTierStore(),
+            pipelineProvider);
         _sagaStore = new SagaOrchestrationStore(_dataSource, pipelineProvider);
     }
 
@@ -89,21 +91,9 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime
         // Gone, not sitting at DecidePayment waiting for a decision nobody asked for any more.
         Assert.Equal(0, await SagaRowCountAsync(orderId));
 
-        // Subscribed only now, after the dispatches above have already
-        // produced to this topic - subscribing to a topic that doesn't
-        // exist yet races the consumer's own metadata cache (Confluent.Kafka
-        // "Unknown topic or partition" even after the topic is created a
-        // moment later), the same reason OrderSagaReplyConsumerMultiLineTests'
-        // own release-assert consumer is created this late, not earlier.
-        using var releaseConsumer = SubscribeTo(_options.ReleaseRequestedTopic);
-        var releasedIds = new HashSet<Guid>();
-        for (var i = 0; i < 2; i++)
-        {
-            var published = releaseConsumer.Consume(TimeSpan.FromSeconds(15));
-            Assert.NotNull(published);
-            var release = System.Text.Json.JsonSerializer.Deserialize<InventoryReservationReleaseRequested>(published.Message.Value, SerializerOptions);
-            releasedIds.Add(release!.ReservationId);
-        }
+        var releasedIds = (await QueuedPayloadsAsync(orderId, _options.ReleaseRequestedTopic))
+            .Select(payload => System.Text.Json.JsonSerializer.Deserialize<InventoryReservationReleaseRequested>(payload, SerializerOptions)!.ReservationId)
+            .ToHashSet();
 
         Assert.True(releasedIds.SetEquals([lineA, lineB]));
     }
@@ -121,15 +111,9 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime
         // Still Cancelled - the commit reply must never move it to Confirmed or FulfillmentHold.
         Assert.Equal(OrderStatuses.Cancelled, await CurrentOrderStatusAsync(orderId));
 
-        // Subscribed only now - see the release test's own comment for why.
-        using var restockConsumer = SubscribeTo(_options.RestockRequestedTopic);
-        var restocked = restockConsumer.Consume(TimeSpan.FromSeconds(15));
-        Assert.NotNull(restocked);
-        var restock = System.Text.Json.JsonSerializer.Deserialize<InventoryRestockRequested>(restocked.Message.Value, SerializerOptions);
+        var queued = await QueuedPayloadsAsync(orderId, _options.RestockRequestedTopic);
+        var restock = System.Text.Json.JsonSerializer.Deserialize<InventoryRestockRequested>(Assert.Single(queued), SerializerOptions);
         Assert.Equal("SKU-A", restock!.Sku);
-
-        // The line that never committed has nothing to give back - only one restock, ever.
-        Assert.Null(restockConsumer.Consume(TimeSpan.FromSeconds(2)));
     }
 
     private async Task<(Guid OrderId, Guid LineA, Guid LineB)> SeedTwoLineOrderAsync()
@@ -192,27 +176,31 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime
         return (string)(await command.ExecuteScalarAsync())!;
     }
 
-    private IConsumer<string, string> SubscribeTo(string topic)
+    private async Task<IReadOnlyList<string>> QueuedPayloadsAsync(Guid orderId, string topic)
     {
-        var consumer = new ConsumerBuilder<string, string>(new ConsumerConfig
+        var payloads = new List<string>();
+        await using var command = _dataSource.CreateCommand(
+            "SELECT payload::text FROM saga_outbox_messages WHERE order_id = @order_id AND topic = @topic ORDER BY occurred_at");
+        command.Parameters.AddWithValue("order_id", orderId);
+        command.Parameters.AddWithValue("topic", topic);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
         {
-            BootstrapServers = _redpanda.GetBootstrapAddress(),
-            GroupId = $"cancel-race-assert-{Guid.NewGuid():N}",
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        }).Build();
-        consumer.Subscribe(topic);
-        return consumer;
+            payloads.Add(reader.GetString(0));
+        }
+
+        return payloads;
     }
 
     private OrderSagaReplyConsumer CreateConsumer() =>
         new(
             Options.Create(_options),
-            _producer,
             _sagaStore,
             _orderStatusStore,
             new NoOpCacheInvalidator(),
             new NoOpBestsellersStore(),
             new NoOpCatalogClient(),
+            TimeProvider.System,
             NullLogger<OrderSagaReplyConsumer>.Instance);
 
     private static ConsumeResult<string, string> ReservationReply(Guid orderId, Guid reservationId, string sku, bool reserved)

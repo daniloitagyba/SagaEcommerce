@@ -21,6 +21,10 @@ public sealed class CreateOrderCommandRules : AbstractValidator<CreateOrderComma
             .NotEmpty().WithMessage("CustomerId is required and must not exceed 100 characters.")
             .MaximumLength(100).WithMessage("CustomerId is required and must not exceed 100 characters.");
 
+        RuleFor(command => command.IdempotencyKey!)
+            .MaximumLength(200).WithMessage("Idempotency-Key must not exceed 200 characters.")
+            .When(command => !string.IsNullOrWhiteSpace(command.IdempotencyKey));
+
         When(command => command.IsLineItemCheckout, () =>
         {
             RuleFor(command => command.Items!)

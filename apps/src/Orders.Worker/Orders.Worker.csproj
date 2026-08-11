@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\BuildingBlocks.Caching\BuildingBlocks.Caching.csproj" />
     <ProjectReference Include="..\BuildingBlocks.Contracts\BuildingBlocks.Contracts.csproj" />
+    <ProjectReference Include="..\BuildingBlocks.HttpClients\BuildingBlocks.HttpClients.csproj" />
     <ProjectReference Include="..\BuildingBlocks.Messaging\BuildingBlocks.Messaging.csproj" />
     <ProjectReference Include="..\BuildingBlocks.Observability\BuildingBlocks.Observability.csproj" />
     <ProjectReference Include="..\BuildingBlocks.Persistence\BuildingBlocks.Persistence.csproj" />

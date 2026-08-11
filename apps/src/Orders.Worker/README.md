@@ -17,14 +17,14 @@ Reserve inventory → decide payment → commit or *compensate* (release invento
 
 - **Sagas** — drives the order from `Created` through settlement, keyed by SKU-partitioned Kafka topics so a reservation request is never processed concurrently with another for the same SKU.
 - **Read models** — `OrderProjectionProcessor` maintains a denormalized `order_summaries` table for fast reads; `OrderEventStoreAppender`/`OrderEventStoreProjector` maintain an append-only `order_events` log for temporal queries and the full audit trail.
-- **Side effects** — records completed orders against loyalty tiers, settles or releases coupon redemptions, and increments Redis sorted sets for bestseller tracking (best-effort — a Catalog outage degrades this, never the saga).
+- **Side effects** — status, loyalty, coupon settlement and payment commands commit atomically in PostgreSQL; cross-service commands then leave through the transactional outbox. Redis bestseller tracking remains deliberately best-effort.
 
 ## Talks to
 
 | Direction | What | Why |
 |---|---|---|
 | in | `orders.created.v1`, `payments.*.replied.v1`, `inventory.*.replied.v1` | drives every saga step and projection |
-| out | `inventory.*-requested.v1`, `payments.decision/capture/void-requested.v1` | the next saga step |
+| out | `inventory.*-requested.v1`, `payments.decision/capture/cancellation-requested.v1` | the next saga step |
 | out | PostgreSQL (`orders` db, shared with `Orders.Api`) | saga state, projections, event log |
 | out | Redis | bestsellers, cache invalidation after a status change |
 

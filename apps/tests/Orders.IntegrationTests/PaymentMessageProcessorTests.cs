@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using Payments.Service;
 using Payments.Service.Data;
 using Payments.Service.Risk;
+using System.Text.Json;
 using Testcontainers.PostgreSql;
 using Testcontainers.Redpanda;
 
@@ -45,6 +46,7 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
         // The processor resolves the risk evaluator per message from its own scope, so it must be registered here too.
         services.Configure<PaymentRiskOptions>(_ => { });
         services.AddScoped<PaymentRiskEvaluator>();
+        services.AddScoped<PaymentDecisionCoordinator>();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -105,15 +107,100 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
         Assert.Equal(1, await dbContext.Payments.CountAsync());
     }
 
+    [Fact]
+    public async Task ChoreographyAndOrchestrationReuseOnePrimaryPaymentForTheOrder()
+    {
+        var orderId = Guid.NewGuid();
+        var correlationId = "cross-path-correlation";
+
+        var choreographyResult = await CreateProcessor().ProcessAsync(
+            await CreateConsumeResultAsync(Guid.NewGuid(), orderId, 49.90m),
+            CancellationToken.None);
+
+        var request = new PaymentDecisionRequested(
+            orderId,
+            49.90m,
+            "BRL",
+            correlationId,
+            DateTimeOffset.UtcNow,
+            CustomerId: "integration-customer");
+        var orchestrationResult = await CreateDecisionProcessor().ProcessAsync(
+            new ConsumeResult<string, string>
+            {
+                Topic = "payments.decision-requested.v1",
+                Partition = new Partition(0),
+                Offset = new Offset(1),
+                Message = new Message<string, string>
+                {
+                    Key = orderId.ToString("N"),
+                    Value = JsonSerializer.Serialize(request),
+                    Headers = new Headers()
+                }
+            },
+            CancellationToken.None);
+
+        Assert.Equal(MessageProcessingResult.Processed, choreographyResult);
+        Assert.Equal(MessageProcessingResult.Processed, orchestrationResult);
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
+        var payment = await dbContext.Payments.SingleAsync(item => item.OrderId == orderId);
+        Assert.True(payment.IsPrimary);
+        Assert.Equal(2, await dbContext.OutboxMessages.CountAsync());
+    }
+
+    [Fact]
+    public async Task ReusingAnOrderIdWithDifferentPaymentInputIsRejected()
+    {
+        var orderId = Guid.NewGuid();
+        await CreateProcessor().ProcessAsync(
+            await CreateConsumeResultAsync(Guid.NewGuid(), orderId, 49.90m),
+            CancellationToken.None);
+
+        var conflictingRequest = new PaymentDecisionRequested(
+            orderId,
+            99.90m,
+            "BRL",
+            "conflicting-correlation",
+            DateTimeOffset.UtcNow,
+            CustomerId: "integration-customer");
+
+        await Assert.ThrowsAsync<PaymentDecisionConflictException>(() =>
+            CreateDecisionProcessor().ProcessAsync(
+                new ConsumeResult<string, string>
+                {
+                    Topic = "payments.decision-requested.v1",
+                    Partition = new Partition(0),
+                    Offset = new Offset(2),
+                    Message = new Message<string, string>
+                    {
+                        Key = orderId.ToString("N"),
+                        Value = JsonSerializer.Serialize(conflictingRequest),
+                        Headers = new Headers()
+                    }
+                },
+                CancellationToken.None));
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
+        Assert.Single(await dbContext.Payments.ToListAsync());
+        Assert.Single(await dbContext.OutboxMessages.ToListAsync());
+    }
+
     private PaymentMessageProcessor CreateProcessor()
     {
         return new PaymentMessageProcessor(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _schemaRegistryClient,
             Options.Create(new PaymentsKafkaOptions()),
-            Options.Create(new PaymentRiskOptions()),
             NullLogger<PaymentMessageProcessor>.Instance);
     }
+
+    private PaymentDecisionRequestProcessor CreateDecisionProcessor() =>
+        new(
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new PaymentDecisionRequestOptions()),
+            NullLogger<PaymentDecisionRequestProcessor>.Instance);
 
     private async Task<ConsumeResult<string, byte[]>> CreateConsumeResultAsync(Guid eventId, Guid orderId, decimal amount)
     {

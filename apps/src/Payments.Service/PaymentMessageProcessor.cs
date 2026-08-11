@@ -11,7 +11,6 @@ using Microsoft.Extensions.Options;
 using Payments.Service.Data;
 using Payments.Service.Domain;
 using Payments.Service.Messaging;
-using Payments.Service.Risk;
 
 namespace Payments.Service;
 
@@ -28,11 +27,9 @@ public sealed class PaymentMessageProcessor(
     IServiceScopeFactory scopeFactory,
     ISchemaRegistryClient schemaRegistryClient,
     IOptions<PaymentsKafkaOptions> kafkaOptions,
-    IOptions<PaymentRiskOptions> riskOptions,
     ILogger<PaymentMessageProcessor> logger)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
-    private readonly PaymentRiskOptions _riskOptions = riskOptions.Value;
     private readonly PaymentsKafkaOptions _kafkaOptions = kafkaOptions.Value;
     private readonly AvroDeserializer<GenericRecord> _avroDeserializer = new(schemaRegistryClient);
 
@@ -89,37 +86,28 @@ public sealed class PaymentMessageProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        // The decision now depends on this customer's own
-        // history, read inside the same transaction that will write this
-        // payment - so a concurrent duplicate cannot observe a
-        // half-committed history and reach a different answer.
-        var riskEvaluator = serviceScope.ServiceProvider.GetRequiredService<PaymentRiskEvaluator>();
-        var assessment = await riskEvaluator.EvaluateAsync(
-            orderCreated.CustomerId,
-            orderCreated.Amount,
-            orderCreated.ShippingPostalPrefix,
+        var decisionCoordinator = serviceScope.ServiceProvider.GetRequiredService<PaymentDecisionCoordinator>();
+        var decision = await decisionCoordinator.GetOrCreateAsync(
+            new PaymentDecisionInput(
+                orderCreated.OrderId,
+                orderCreated.CustomerId,
+                orderCreated.Amount,
+                orderCreated.Currency,
+                orderCreated.PaymentMethod,
+                orderCreated.ShippingPostalPrefix,
+                correlationId),
             processedAt,
             cancellationToken);
-        var approved = assessment.Approved;
+        var payment = decision.Payment;
+        var approved = payment.Approved;
 
-        var payment = Payment.Authorize(
-            orderCreated.OrderId,
-            orderCreated.CustomerId,
-            orderCreated.Amount,
-            orderCreated.Currency,
-            orderCreated.PaymentMethod,
-            orderCreated.ShippingPostalPrefix,
-            approved,
-            processedAt,
-            _riskOptions.SettlementWindowFor(orderCreated.PaymentMethod),
-            correlationId);
         var paymentDecided = new PaymentDecided(
             Guid.NewGuid(),
             orderCreated.OrderId,
             payment.Id,
             approved,
-            orderCreated.Amount,
-            orderCreated.Currency,
+            payment.Amount,
+            payment.Currency,
             processedAt,
             correlationId);
         var outboxMessage = OutboxMessage.Create(
@@ -131,17 +119,35 @@ public sealed class PaymentMessageProcessor(
             Activity.Current?.Id,
             Activity.Current?.TraceStateString);
 
-        dbContext.Payments.Add(payment);
         dbContext.OutboxMessages.Add(outboxMessage);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         activity?.SetTag("payment.approved", approved);
-        activity?.SetTag("payment.risk_score", assessment.Score);
+        activity?.SetTag("payment.decision_created", decision.Created);
+        activity?.SetTag("payment.risk_score", decision.Assessment?.Score);
         OrdersTelemetry.RecordProcessed("success");
         OrdersTelemetry.RecordPaymentDecided(approved);
-        PaymentsLog.DecidedWithRisk(logger, orderCreated.OrderId, payment.Id, approved, assessment.Score, assessment.ReasonSummary, correlationId);
+        LogDecision(logger, orderCreated.OrderId, payment, decision, correlationId);
         return MessageProcessingResult.Processed;
+    }
+
+    private static void LogDecision(
+        ILogger logger,
+        Guid orderId,
+        Payment payment,
+        PaymentDecisionResult decision,
+        string correlationId)
+    {
+        if (decision.Assessment is { } assessment)
+        {
+            PaymentsLog.DecidedWithRisk(
+                logger, orderId, payment.Id, payment.Approved,
+                assessment.Score, assessment.ReasonSummary, correlationId);
+            return;
+        }
+
+        PaymentsLog.ReusedDecision(logger, orderId, payment.Id, correlationId);
     }
 
     private async Task<OrderCreated> DeserializeAndValidateAsync(
@@ -196,4 +202,7 @@ public sealed partial class PaymentsLog
 
     [LoggerMessage(EventId = 5006, Level = LogLevel.Information, Message = "Decided payment {PaymentId} for order {OrderId}: approved={Approved} riskScore={RiskScore} signals=[{RiskSignals}] with correlation {CorrelationId}")]
     public static partial void DecidedWithRisk(ILogger logger, Guid orderId, Guid paymentId, bool approved, int riskScore, string riskSignals, string correlationId);
+
+    [LoggerMessage(EventId = 5007, Level = LogLevel.Information, Message = "Reused primary payment {PaymentId} for order {OrderId} instead of creating a second decision (correlation {CorrelationId})")]
+    public static partial void ReusedDecision(ILogger logger, Guid orderId, Guid paymentId, string correlationId);
 }

@@ -18,7 +18,7 @@ public sealed record RateLimitDecision(bool Allowed, int Count, int Limit);
 /// burst a fixed window allows at its boundary. Applied alongside, not
 /// replacing, M11's limiter - a fast local check catches obvious abuse
 /// without a Redis round-trip; this is the authoritative cap. Fails OPEN
-/// on Redis unavailability, same as RedisOrderCache/RedisIdempotencyStore.
+/// on Redis unavailability, same as RedisOrderCache.
 /// </summary>
 public sealed class RedisSlidingWindowRateLimiter(
     IConnectionMultiplexer connectionMultiplexer,

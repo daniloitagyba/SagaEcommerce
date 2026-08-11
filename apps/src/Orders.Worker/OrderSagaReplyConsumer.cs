@@ -18,12 +18,12 @@ namespace Orders.Worker;
 /// </summary>
 public sealed class OrderSagaReplyConsumer(
     IOptions<SagaOrchestrationOptions> options,
-    IProducer<string, string> producer,
     SagaOrchestrationStore store,
     OrderStatusStore orderStatusStore,
     IOrderCacheInvalidator cacheInvalidator,
     IBestsellersStore bestsellersStore,
     ICatalogClient catalogClient,
+    TimeProvider timeProvider,
     ILogger<OrderSagaReplyConsumer> logger)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -76,25 +76,27 @@ public sealed class OrderSagaReplyConsumer(
             return;
         }
 
-        if (lines.Any(line => line.Reserved == false))
+        var reservationCompletion = SagaLineCompletionPolicy.Reservations(lines);
+        if (reservationCompletion == SagaLineCompletion.Failed)
         {
             // The multi-line compensation case: at least one line was
             // rejected outright. Release every sibling line that DID
             // reserve successfully before cancelling - the whole order
             // fails together, so a partial reservation left behind would
             // be inventory nothing will ever release.
-            var completed = await store.TryCompleteAsync(reply.OrderId, SagaStep.ReserveInventory, cancellationToken);
+            var now = timeProvider.GetUtcNow();
+            var completed = await store.TryCompleteAndQueueAsync(
+                reply.OrderId,
+                SagaStep.ReserveInventory,
+                saga => saga.Lines
+                    .Where(line => line.Reserved == true)
+                    .Select(line => CreateReleaseCommand(reply.OrderId, saga.CorrelationId, line, now))
+                    .ToList(),
+                cancellationToken);
             if (completed is null)
             {
                 SagaOrchestratorLog.UnknownReply(logger, reply.OrderId);
                 return;
-            }
-
-            var now = DateTimeOffset.UtcNow;
-            foreach (var line in completed.Lines.Where(line => line.Reserved == true))
-            {
-                var release = new InventoryReservationReleaseRequested(line.ReservationId, reply.OrderId, line.Sku, line.Quantity, completed.CorrelationId, now);
-                await PublishNextStepAsync(_options.ReleaseRequestedTopic, line.Sku, release, reply.OrderId, cancellationToken);
             }
 
             var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
@@ -104,14 +106,39 @@ public sealed class OrderSagaReplyConsumer(
             return;
         }
 
-        if (lines.Any(line => line.Reserved is null))
+        if (reservationCompletion == SagaLineCompletion.Pending)
         {
             // Still waiting on at least one more line's reply.
             return;
         }
 
-        var advanceAt = DateTimeOffset.UtcNow;
-        var advanced = await store.TryAdvanceAsync(reply.OrderId, SagaStep.ReserveInventory, SagaStep.DecidePayment, advanceAt, cancellationToken);
+        var advanceAt = timeProvider.GetUtcNow();
+        var advanced = await store.TryAdvanceAndQueueAsync(
+            reply.OrderId,
+            SagaStep.ReserveInventory,
+            SagaStep.DecidePayment,
+            advanceAt,
+            saga => saga.CancellationRequestedAt is not null
+                ? []
+                :
+                [
+                    SagaOutboxCommand.Create(
+                        reply.OrderId,
+                        _options.DecisionRequestedTopic,
+                        reply.OrderId.ToString("N"),
+                        new PaymentDecisionRequested(
+                            reply.OrderId,
+                            saga.Amount,
+                            saga.Currency,
+                            saga.CorrelationId,
+                            advanceAt,
+                            saga.CustomerId,
+                            saga.PaymentMethod,
+                            saga.ShippingPostalPrefix),
+                        saga.CorrelationId,
+                        advanceAt)
+                ],
+            cancellationToken);
         if (advanced is null)
         {
             SagaOrchestratorLog.UnknownReply(logger, reply.OrderId);
@@ -135,16 +162,6 @@ public sealed class OrderSagaReplyConsumer(
 
         SagaOrchestratorLog.Advanced(logger, reply.OrderId, SagaStep.DecidePayment, advanced.CorrelationId);
 
-        var request = new PaymentDecisionRequested(
-            reply.OrderId,
-            advanced.Amount,
-            advanced.Currency,
-            advanced.CorrelationId,
-            advanceAt,
-            advanced.CustomerId,
-            advanced.PaymentMethod,
-            advanced.ShippingPostalPrefix);
-        await PublishNextStepAsync(_options.DecisionRequestedTopic, reply.OrderId.ToString("N"), request, reply.OrderId, cancellationToken);
     }
 
     /// <summary>
@@ -158,18 +175,19 @@ public sealed class OrderSagaReplyConsumer(
     /// </summary>
     private async Task CancelDuringSagaAsync(Guid orderId, string expectedStep, string outcome, CancellationToken cancellationToken)
     {
-        var completed = await store.TryCompleteAsync(orderId, expectedStep, cancellationToken);
+        var now = timeProvider.GetUtcNow();
+        var completed = await store.TryCompleteAndQueueAsync(
+            orderId,
+            expectedStep,
+            saga => saga.Lines
+                .Where(line => line.Reserved == true)
+                .Select(line => CreateReleaseCommand(orderId, saga.CorrelationId, line, now))
+                .ToList(),
+            cancellationToken);
         if (completed is null)
         {
             SagaOrchestratorLog.UnknownReply(logger, orderId);
             return;
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        foreach (var line in completed.Lines.Where(line => line.Reserved == true))
-        {
-            var release = new InventoryReservationReleaseRequested(line.ReservationId, orderId, line.Sku, line.Quantity, completed.CorrelationId, now);
-            await PublishNextStepAsync(_options.ReleaseRequestedTopic, line.Sku, release, orderId, cancellationToken);
         }
 
         var latencyMs = (now - completed.RequestedAt).TotalMilliseconds;
@@ -185,11 +203,31 @@ public sealed class OrderSagaReplyConsumer(
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = timeProvider.GetUtcNow();
 
         if (reply.Approved)
         {
-            var advanced = await store.TryAdvanceAsync(reply.OrderId, SagaStep.DecidePayment, SagaStep.CommitInventory, now, cancellationToken);
+            var advanced = await store.TryAdvanceAndQueueAsync(
+                reply.OrderId,
+                SagaStep.DecidePayment,
+                SagaStep.CommitInventory,
+                now,
+                saga => saga.Lines
+                    .Select(line => SagaOutboxCommand.Create(
+                        reply.OrderId,
+                        _options.CommitRequestedTopic,
+                        line.Sku,
+                        new InventoryReservationCommitRequested(
+                            line.ReservationId,
+                            reply.OrderId,
+                            line.Sku,
+                            line.Quantity,
+                            saga.CorrelationId,
+                            now),
+                        saga.CorrelationId,
+                        now))
+                    .ToList(),
+                cancellationToken);
             if (advanced is null)
             {
                 SagaOrchestratorLog.UnknownReply(logger, reply.OrderId);
@@ -197,16 +235,19 @@ public sealed class OrderSagaReplyConsumer(
             }
 
             SagaOrchestratorLog.Advanced(logger, reply.OrderId, SagaStep.CommitInventory, advanced.CorrelationId);
-            foreach (var line in advanced.Lines)
-            {
-                var request = new InventoryReservationCommitRequested(line.ReservationId, reply.OrderId, line.Sku, line.Quantity, advanced.CorrelationId, now);
-                await PublishNextStepAsync(_options.CommitRequestedTopic, line.Sku, request, reply.OrderId, cancellationToken);
-            }
         }
         else
         {
             // The compensating transaction: undo the step 1 reservations, since payment was the problem, not them.
-            var advanced = await store.TryAdvanceAsync(reply.OrderId, SagaStep.DecidePayment, SagaStep.ReleaseInventory, now, cancellationToken);
+            var advanced = await store.TryAdvanceAndQueueAsync(
+                reply.OrderId,
+                SagaStep.DecidePayment,
+                SagaStep.ReleaseInventory,
+                now,
+                saga => saga.Lines
+                    .Select(line => CreateReleaseCommand(reply.OrderId, saga.CorrelationId, line, now))
+                    .ToList(),
+                cancellationToken);
             if (advanced is null)
             {
                 SagaOrchestratorLog.UnknownReply(logger, reply.OrderId);
@@ -214,11 +255,6 @@ public sealed class OrderSagaReplyConsumer(
             }
 
             SagaOrchestratorLog.Advanced(logger, reply.OrderId, SagaStep.ReleaseInventory, advanced.CorrelationId);
-            foreach (var line in advanced.Lines)
-            {
-                var request = new InventoryReservationReleaseRequested(line.ReservationId, reply.OrderId, line.Sku, line.Quantity, advanced.CorrelationId, now);
-                await PublishNextStepAsync(_options.ReleaseRequestedTopic, line.Sku, request, reply.OrderId, cancellationToken);
-            }
         }
     }
 
@@ -237,13 +273,35 @@ public sealed class OrderSagaReplyConsumer(
             return;
         }
 
-        if (lines.Any(line => line.Committed is null))
+        if (SagaLineCompletionPolicy.Commits(lines) == SagaLineCompletion.Pending)
         {
             // Still waiting on at least one more line's commit reply.
             return;
         }
 
-        var completed = await store.TryCompleteAsync(reply.OrderId, SagaStep.CommitInventory, cancellationToken);
+        var restockAt = timeProvider.GetUtcNow();
+        var completed = await store.TryCompleteAndQueueAsync(
+            reply.OrderId,
+            SagaStep.CommitInventory,
+            saga => saga.CancellationRequestedAt is null
+                ? []
+                : saga.Lines
+                    .Where(line => line.Committed == true)
+                    .Select(line => SagaOutboxCommand.Create(
+                        reply.OrderId,
+                        _options.RestockRequestedTopic,
+                        line.Sku,
+                        new InventoryRestockRequested(
+                            Guid.NewGuid(),
+                            reply.OrderId,
+                            line.Sku,
+                            line.Quantity,
+                            saga.CorrelationId,
+                            restockAt),
+                        saga.CorrelationId,
+                        restockAt))
+                    .ToList(),
+            cancellationToken);
         if (completed is null)
         {
             SagaOrchestratorLog.UnknownReply(logger, reply.OrderId);
@@ -260,20 +318,13 @@ public sealed class OrderSagaReplyConsumer(
             // returns and the replenishment loop
             // already use. Never confirm, never hold - the order is
             // already Cancelled, and no line here was ever sold.
-            var now = DateTimeOffset.UtcNow;
-            foreach (var line in completed.Lines.Where(line => line.Committed == true))
-            {
-                var restock = new InventoryRestockRequested(Guid.NewGuid(), reply.OrderId, line.Sku, line.Quantity, completed.CorrelationId, now);
-                await PublishNextStepAsync(_options.RestockRequestedTopic, line.Sku, restock, reply.OrderId, cancellationToken);
-            }
-
             var cancelledLatencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
             SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, "CancelledWhileCommitting", cancelledLatencyMs, completed.CorrelationId);
             await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
             return;
         }
 
-        var allCommitted = completed.Lines.All(line => line.Committed == true);
+        var allCommitted = SagaLineCompletionPolicy.Commits(completed.Lines) == SagaLineCompletion.Succeeded;
         var outcome = allCommitted ? "Confirmed" : "ConfirmedButCommitFailed";
         var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
         SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, outcome, latencyMs, completed.CorrelationId);
@@ -335,7 +386,7 @@ public sealed class OrderSagaReplyConsumer(
             return;
         }
 
-        if (lines.Any(line => line.Released is null))
+        if (SagaLineCompletionPolicy.Releases(lines) == SagaLineCompletion.Pending)
         {
             // Still waiting on at least one more line's release reply.
             return;
@@ -348,7 +399,7 @@ public sealed class OrderSagaReplyConsumer(
             return;
         }
 
-        var allReleased = completed.Lines.All(line => line.Released == true);
+        var allReleased = SagaLineCompletionPolicy.Releases(completed.Lines) == SagaLineCompletion.Succeeded;
         var outcome = allReleased ? "RejectedPaymentDeclined" : "RejectedPaymentDeclinedButReleaseFailed";
         var latencyMs = (reply.DecidedAt - completed.RequestedAt).TotalMilliseconds;
         SagaOrchestratorLog.SagaCompleted(logger, reply.OrderId, outcome, latencyMs, completed.CorrelationId);
@@ -398,38 +449,40 @@ public sealed class OrderSagaReplyConsumer(
         }
     }
 
-    private async Task PublishNextStepAsync<TRequest>(
-        string topic,
-        string key,
-        TRequest request,
+    private SagaOutboxCommand CreateReleaseCommand(
         Guid orderId,
-        CancellationToken cancellationToken)
-    {
-        var message = new Message<string, string>
-        {
-            Key = key,
-            Value = JsonSerializer.Serialize(request, SerializerOptions)
-        };
-
-        try
-        {
-            await producer.ProduceAsync(topic, message, cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            SagaOrchestratorLog.NextStepPublishFailed(logger, orderId, exception);
-        }
-    }
+        string correlationId,
+        SagaLineRecord line,
+        DateTimeOffset occurredAt) =>
+        SagaOutboxCommand.Create(
+            orderId,
+            _options.ReleaseRequestedTopic,
+            line.Sku,
+            new InventoryReservationReleaseRequested(
+                line.ReservationId,
+                orderId,
+                line.Sku,
+                line.Quantity,
+                correlationId,
+                occurredAt),
+            correlationId,
+            occurredAt);
 
     private static T? Deserialize<T>(string payload)
     {
         try
         {
-            return JsonSerializer.Deserialize<T>(payload, SerializerOptions);
+            return JsonSerializer.Deserialize<T>(payload, SerializerOptions)
+                ?? throw new JsonException($"The {typeof(T).Name} payload deserialized to null.");
         }
-        catch (JsonException)
+        catch (JsonException exception)
         {
-            return default;
+            throw new InvalidSagaReplyMessageException(
+                $"The Kafka message is not a valid {typeof(T).Name} reply.",
+                exception);
         }
     }
 }
+
+public sealed class InvalidSagaReplyMessageException(string message, Exception? innerException = null)
+    : Exception(message, innerException);

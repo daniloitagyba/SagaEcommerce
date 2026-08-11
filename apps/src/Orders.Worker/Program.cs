@@ -71,6 +71,9 @@ builder.Services.AddOptions<SagaOrchestrationOptions>()
     .Validate(options => !string.IsNullOrWhiteSpace(options.ReleaseRequestedTopic), "Release-requested topic is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.ReleaseRepliedTopic), "Release-replied topic is required.")
     .Validate(options => options.TimeoutSeconds > 0, "Saga timeout must be positive.")
+    .Validate(options => options.OutboxBatchSize is > 0 and <= 100, "Saga outbox batch size must be between 1 and 100.")
+    .Validate(options => options.OutboxPollIntervalMilliseconds >= 100, "Saga outbox poll interval must be at least 100 milliseconds.")
+    .Validate(options => options.OutboxMaximumRetryDelaySeconds > 0, "Saga outbox maximum retry delay must be positive.")
     .ValidateOnStart();
 builder.Services.AddOptions<OrderEventStoreOptions>()
     .Bind(builder.Configuration.GetSection(OrderEventStoreOptions.SectionName))
@@ -93,13 +96,15 @@ builder.Services.AddOptions<CatalogClientOptions>()
 var connectionString = builder.Configuration.GetConnectionString("Orders")
     ?? throw new InvalidOperationException("Connection string 'Orders' is required.");
 builder.Services.AddSingleton(NpgsqlDataSource.Create(connectionString));
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<RetentionOptions>(options =>
 {
     options.ConnectionString = connectionString;
     options.Targets =
     [
         new RetentionTarget("outbox_messages", "processed_at"),
-        new RetentionTarget("inbox_messages", "processed_at")
+        new RetentionTarget("inbox_messages", "processed_at"),
+        new RetentionTarget("saga_outbox_messages", "processed_at")
     ];
     options.RetentionDays = builder.Configuration.GetValue("Retention:RetentionDays", 7);
 });
@@ -107,11 +112,6 @@ builder.Services.AddHostedService<RetentionSweeper>();
 builder.Services.AddOrdersResilience();
 builder.Services.AddOrdersSchemaRegistry(builder.Configuration);
 builder.Services.AddSingleton<InboxStore>();
-builder.Services.AddOptions<PaymentSettlementRequestOptions>()
-    .Bind(builder.Configuration.GetSection(PaymentSettlementRequestOptions.SectionName))
-    .Validate(options => !string.IsNullOrWhiteSpace(options.CaptureRequestedTopic), "Capture-requested topic is required.")
-    .Validate(options => !string.IsNullOrWhiteSpace(options.CancellationRequestedTopic), "Cancellation-requested topic is required.")
-    .ValidateOnStart();
 builder.Services.AddSingleton<PaymentSettlementRequester>();
 builder.Services.AddSingleton<CouponRedemptionStore>();
 builder.Services.AddSingleton<CustomerTierStore>();
@@ -207,7 +207,7 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 });
 // Which saga(s) this instance answers to - see SagaMode's
 // own comment. Both is for side-by-side comparison; Choreography is the default.
-var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Choreography);
+var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Orchestration);
 
 if (sagaMode is SagaMode.Choreography or SagaMode.Both)
 {
@@ -292,6 +292,7 @@ if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
             processingOptions, processor.DispatchAsync, deadLetterPublisher.PublishAsync, logger);
     });
     builder.Services.AddHostedService<SagaTimeoutSweeper>();
+    builder.Services.AddHostedService<SagaOutboxPublisher>();
 }
 
 builder.Services.AddSingleton<OrderEventStoreAppender>();

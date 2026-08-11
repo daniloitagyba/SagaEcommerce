@@ -2,7 +2,13 @@
 
 ![Cart.Service architecture](../../../docs/images/services/cart-service.png)
 
-Redis **is** the system of record here, not a cache in front of one — there's no Postgres fallback and no cache-aside factory delegate. If this data is lost, the cart is simply gone; an acceptable trade for ephemeral, reconstructable, low-value state, unlike orders or payments. A cart is a single Redis Hash (field = SKU, value = JSON `CartLineItem`), so the whole cart is read and its TTL refreshed in one round trip.
+Redis **is** the system of record here, not a cache in front of one — there's no Postgres fallback and no cache-aside factory delegate. If this data is lost, the cart is simply gone; an acceptable trade for ephemeral, reconstructable, low-value state, unlike orders or payments. A cart is one Redis Hash: SKU fields contain the materialized lines and private fields contain its generation id, version, and persisted CRDT causal state.
+
+Every mutation is a versioned Lua compare-and-swap that replaces the materialized lines and causal state, increments the version, and refreshes the TTL atomically. Checkout reads one consistent snapshot. Its subsequent clear supplies the generation id and version it read, so an item added while the order was being created is preserved instead of being deleted by a stale checkout.
+
+Offline merge operations carry a client-minted `operationId`. The identifier is stable across retries and becomes that operation's PN-counter component: replaying it is idempotent, while a second legitimate increase has a different identifier and contributes independently.
+
+Cart responses also expose `causalContexts`, keyed by SKU. An offline `Remove` must return the observed dots for that SKU; the service tombstones exactly those observations. This makes “remove the item I saw” effective while preserving a genuinely concurrent add under the cart's add-wins policy.
 
 ## The price you saw is the price you keep — until checkout
 

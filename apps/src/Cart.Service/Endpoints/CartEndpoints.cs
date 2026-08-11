@@ -6,18 +6,27 @@ namespace Cart.Service.Endpoints;
 
 public sealed record UpdateCartItemRequest(int Quantity);
 
+public sealed record CartObservedDot(string ReplicaId, long Counter);
+
 /// <summary>
 /// One operation a client tracked while it couldn't reach
 /// this service - a different tab, a device that went offline - replayed
 /// here rather than shipped as raw CRDT dots, which are an implementation
 /// detail this wire contract has no reason to expose. Kind is
-/// "Increase" | "Decrease" | "Remove"; the server mints its own dot for
-/// each Increase (CartStore.MergeAsync), since only the server's own
-/// operations need to be causally distinguishable from each other here -
-/// see CartCrdtState's class comment for why per-key CRDT composition
-/// makes this sufficient without a client-supplied clock.
+/// "Increase" | "Decrease" | "Remove". OperationId is minted once by the
+/// client and retained across retries; the server derives the CRDT replica
+/// component from it, making a retry idempotent without collapsing two
+/// genuinely different offline operations.
 /// </summary>
-public sealed record CartMergeOperation(string Sku, string Kind, int Delta = 0, string? ProductName = null, decimal? UnitPrice = null, string? Currency = null);
+public sealed record CartMergeOperation(
+    string Sku,
+    string Kind,
+    int Delta = 0,
+    string? ProductName = null,
+    decimal? UnitPrice = null,
+    string? Currency = null,
+    Guid OperationId = default,
+    IReadOnlyList<CartObservedDot>? ObservedDots = null);
 
 public sealed record CartMergeRequest(IReadOnlyList<CartMergeOperation>? Operations);
 
@@ -51,11 +60,9 @@ public static class CartEndpoints
         CancellationToken cancellationToken)
     {
         var cartId = httpContext.GetCustomerId();
-        var items = await cartStore.GetAsync(cartId, cancellationToken);
-        var ttl = await cartStore.GetTimeToLiveAsync(cartId, cancellationToken);
-        var version = await cartStore.GetVersionAsync(cartId, cancellationToken);
+        var snapshot = await cartStore.GetSnapshotAsync(cartId, cancellationToken);
 
-        return Results.Ok(ToCartResponse(items, ttl, version));
+        return Results.Ok(ToCartResponse(snapshot));
     }
 
     private static async Task<IResult> PutItemAsync(
@@ -64,6 +71,7 @@ public static class CartEndpoints
         HttpContext httpContext,
         CartStore cartStore,
         ICatalogClient catalogClient,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
         if (request.Quantity <= 0)
@@ -92,15 +100,13 @@ public static class CartEndpoints
                 return Results.NotFound(new { message = $"No product with sku '{sku}' was found in the catalog." });
             }
 
-            item = new CartLineItem(sku, request.Quantity, product.Price, product.Currency, product.Name, DateTimeOffset.UtcNow);
+            item = new CartLineItem(sku, request.Quantity, product.Price, product.Currency, product.Name, timeProvider.GetUtcNow());
         }
 
         await cartStore.UpsertItemAsync(cartId, item, cancellationToken);
 
-        var items = await cartStore.GetAsync(cartId, cancellationToken);
-        var ttl = await cartStore.GetTimeToLiveAsync(cartId, cancellationToken);
-        var version = await cartStore.GetVersionAsync(cartId, cancellationToken);
-        return Results.Ok(ToCartResponse(items, ttl, version));
+        var snapshot = await cartStore.GetSnapshotAsync(cartId, cancellationToken);
+        return Results.Ok(ToCartResponse(snapshot));
     }
 
     private static async Task<IResult> DeleteItemAsync(
@@ -114,12 +120,35 @@ public static class CartEndpoints
     }
 
     private static async Task<IResult> ClearCartAsync(
+        string? cartId,
+        long? expectedVersion,
         HttpContext httpContext,
         CartStore cartStore,
         CancellationToken cancellationToken)
     {
-        await cartStore.ClearAsync(httpContext.GetCustomerId(), cancellationToken);
-        return Results.NoContent();
+        var ownerId = httpContext.GetCustomerId();
+        if (cartId is null && expectedVersion is null)
+        {
+            await cartStore.ClearAsync(ownerId, cancellationToken);
+            return Results.NoContent();
+        }
+
+        if (string.IsNullOrWhiteSpace(cartId) || expectedVersion is null || expectedVersion < 0)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                ["cart"] = ["cartId and a non-negative expectedVersion must be supplied together."]
+            });
+        }
+
+        var cleared = await cartStore.ClearIfVersionAsync(
+            ownerId, cartId, expectedVersion.Value, cancellationToken);
+        return cleared
+            ? Results.NoContent()
+            : Results.Problem(
+                detail: "The cart changed after checkout started and was preserved.",
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Cart Changed");
     }
 
     /// <summary>
@@ -134,19 +163,19 @@ public static class CartEndpoints
         CartMergeRequest request,
         HttpContext httpContext,
         CartStore cartStore,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
-        var (clientState, errors) = BuildClientState(request.Operations, DateTimeOffset.UtcNow.Ticks);
+        var (clientState, errors) = BuildClientState(request.Operations, timeProvider);
         if (errors is not null)
         {
             return Results.ValidationProblem(errors);
         }
 
         var cartId = httpContext.GetCustomerId();
-        var merged = await cartStore.MergeAsync(cartId, clientState!, cancellationToken);
-        var ttl = await cartStore.GetTimeToLiveAsync(cartId, cancellationToken);
-        var version = await cartStore.GetVersionAsync(cartId, cancellationToken);
-        return Results.Ok(ToCartResponse(merged, ttl, version));
+        await cartStore.MergeAsync(cartId, clientState!, cancellationToken);
+        var snapshot = await cartStore.GetSnapshotAsync(cartId, cancellationToken);
+        return Results.Ok(ToCartResponse(snapshot));
     }
 
     /// <summary>
@@ -158,7 +187,8 @@ public static class CartEndpoints
     /// even valid happens here first.
     /// </summary>
     internal static (CartCrdtState? State, IReadOnlyDictionary<string, string[]>? Errors) BuildClientState(
-        IReadOnlyList<CartMergeOperation>? operations, long dotCounterSeed)
+        IReadOnlyList<CartMergeOperation>? operations,
+        TimeProvider? timeProvider = null)
     {
         if (operations is null || operations.Count == 0)
         {
@@ -169,7 +199,7 @@ public static class CartEndpoints
         }
 
         var clientState = CartCrdtState.Empty;
-        var dotCounter = dotCounterSeed;
+        var operationIds = new HashSet<Guid>();
 
         foreach (var operation in operations)
         {
@@ -181,23 +211,47 @@ public static class CartEndpoints
                 });
             }
 
+            if (operation.OperationId == Guid.Empty || !operationIds.Add(operation.OperationId))
+            {
+                return (null, new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    ["operations"] = ["Every operation must carry a unique, non-empty operationId."]
+                });
+            }
+
+            // One PN-counter component per stable operation. Replaying the
+            // same request merges the same component with Math.Max (no
+            // double application); a genuinely new operation has a new
+            // component and therefore contributes independently.
+            var replicaId = $"offline-operation:{operation.OperationId:N}";
+
             switch (operation.Kind)
             {
                 case "Increase" when operation.Delta > 0 && operation.UnitPrice is not null && operation.Currency is not null && operation.ProductName is not null:
                     clientState = clientState.Increase(
-                        operation.Sku, "offline-client", operation.Delta, dotCounter++,
-                        new CartItemMetadata(operation.ProductName, operation.UnitPrice.Value, operation.Currency, DateTimeOffset.UtcNow));
+                        operation.Sku, replicaId, operation.Delta, dotCounter: 1,
+                        new CartItemMetadata(
+                            operation.ProductName,
+                            operation.UnitPrice.Value,
+                            operation.Currency,
+                            (timeProvider ?? TimeProvider.System).GetUtcNow()));
                     break;
                 case "Decrease" when operation.Delta > 0:
-                    clientState = clientState.Decrease(operation.Sku, "offline-client", operation.Delta);
+                    clientState = clientState.Decrease(operation.Sku, replicaId, operation.Delta);
                     break;
-                case "Remove":
-                    clientState = clientState.Remove(operation.Sku);
+                case "Remove" when operation.ObservedDots is { Count: > 0 and <= 256 }
+                                   && operation.ObservedDots.All(dot =>
+                                       !string.IsNullOrWhiteSpace(dot.ReplicaId)
+                                       && dot.ReplicaId.Length <= 200
+                                       && dot.Counter > 0):
+                    clientState = clientState.RemoveObserved(
+                        operation.Sku,
+                        operation.ObservedDots.Select(dot => new CartDot(dot.ReplicaId, dot.Counter)));
                     break;
                 default:
                     return (null, new Dictionary<string, string[]>(StringComparer.Ordinal)
                     {
-                        ["operations"] = [$"Operation for sku '{operation.Sku}' has kind '{operation.Kind}' with missing or invalid arguments. Increase requires a positive delta, productName, unitPrice and currency; Decrease requires a positive delta; Remove requires neither."]
+                        ["operations"] = [$"Operation for sku '{operation.Sku}' has kind '{operation.Kind}' with missing or invalid arguments. Increase requires a positive delta, productName, unitPrice and currency; Decrease requires a positive delta; Remove requires between 1 and 256 valid observedDots from the cart snapshot."]
                     });
             }
         }
@@ -205,16 +259,28 @@ public static class CartEndpoints
         return (clientState, null);
     }
 
-    private static object ToCartResponse(IReadOnlyList<CartLineItem> items, TimeSpan? ttl, long version)
+    private static object ToCartResponse(CartSnapshot snapshot)
     {
+        var items = snapshot.Items;
         var total = items.Sum(item => item.UnitPrice * item.Quantity);
         return new
         {
+            cartId = snapshot.CartId,
             items,
             total,
             currency = items.Count > 0 ? items[0].Currency : "BRL",
-            expiresInSeconds = ttl.HasValue ? (int)ttl.Value.TotalSeconds : (int?)null,
-            version
+            expiresInSeconds = snapshot.TimeToLive.HasValue ? (int)snapshot.TimeToLive.Value.TotalSeconds : (int?)null,
+            version = snapshot.Version,
+            causalContexts = snapshot.State.Items
+                .Where(entry => entry.Value.IsPresent)
+                .ToDictionary(
+                    entry => entry.Key,
+                    entry => entry.Value.LiveDots
+                        .OrderBy(dot => dot.ReplicaId, StringComparer.Ordinal)
+                        .ThenBy(dot => dot.Counter)
+                        .Select(dot => new CartObservedDot(dot.ReplicaId, dot.Counter))
+                        .ToArray(),
+                    StringComparer.Ordinal)
         };
     }
 }

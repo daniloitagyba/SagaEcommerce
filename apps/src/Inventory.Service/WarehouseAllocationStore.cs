@@ -9,10 +9,10 @@ namespace Inventory.Service;
 /// plan and records it; commit and release replay exactly what reserve
 /// recorded rather than guessing which building the stock came from.
 ///
-/// No row locking needed: Inventory.Service consumes reservation commands
-/// partitioned by SKU, so two requests for the same SKU are never processed
-/// concurrently - the same guarantee <see cref="InventoryItem"/> has always
-/// relied on, now spanning several rows instead of one.
+/// Mutating callers hold a transaction-scoped advisory lock for the SKU.
+/// That lock is deliberately acquired by the message processor rather than
+/// inferred from Kafka partitioning: stock changes arrive on several topics,
+/// whose partitions can be assigned to different replicas concurrently.
 /// </summary>
 public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
 {
@@ -48,9 +48,9 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
 
     /// <summary>
     /// Applies a plan and records it. Returns not-applied when any leg
-    /// fails, which can only happen if availability moved between the read
-    /// and the write - impossible under per-SKU partitioning, but checked
-    /// rather than assumed, because the assumption is the load-bearing one.
+    /// fails. The caller's SKU lock normally keeps availability stable, but
+    /// the full validation remains a defensive invariant for direct callers
+    /// and corrupted allocation plans.
     /// </summary>
     public async Task<ReservationOutcome> TryApplyReservationAsync(
         Guid reservationId,
@@ -64,27 +64,34 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
             return ReservationOutcome.Refused;
         }
 
+        var warehouseCodes = plan.Lines.Select(line => line.WarehouseCode).ToArray();
+        var stocks = await dbContext.WarehouseStocks
+            .Where(item => item.Sku == sku && warehouseCodes.Contains(item.WarehouseCode))
+            .ToDictionaryAsync(item => item.WarehouseCode, StringComparer.Ordinal, cancellationToken);
+
+        // Validate every leg before mutating any tracked entity. Returning
+        // after the first mutation used to leave a partial plan pending in
+        // the DbContext, which the caller then persisted with the reply.
+        if (stocks.Count != plan.Lines.Count
+            || plan.Lines.Any(line => !stocks.TryGetValue(line.WarehouseCode, out var stock)
+                || line.Quantity <= 0
+                || stock.AvailableQuantity < line.Quantity))
+        {
+            return ReservationOutcome.Refused;
+        }
+
         var crossed = new List<WarehouseStock>();
 
         foreach (var line in plan.Lines)
         {
-            var stock = await dbContext.WarehouseStocks
-                .SingleOrDefaultAsync(item => item.Sku == sku && item.WarehouseCode == line.WarehouseCode, cancellationToken);
-
-            if (stock is null)
-            {
-                return ReservationOutcome.Refused;
-            }
+            var stock = stocks[line.WarehouseCode];
 
             // Sampled before the reservation, so what is reported is the
             // moment the warehouse went low - not every subsequent order
             // that finds it already low.
             var wasStocked = !stock.NeedsReplenishment;
 
-            if (!stock.TryReserve(line.Quantity, now))
-            {
-                return ReservationOutcome.Refused;
-            }
+            _ = stock.TryReserve(line.Quantity, now);
 
             if (wasStocked && stock.NeedsReplenishment)
             {
@@ -129,10 +136,12 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
         }
 
         var outcome = await TryApplyReservationAsync(reservationId, sku, plan, now, cancellationToken);
-        if (!outcome.Applied || !item.TryReserve(quantity, now))
+        if (!outcome.Applied)
         {
             return ReservationDecision.Refused;
         }
+
+        await SynchronizeItemAsync(item, sku, now, cancellationToken);
 
         return new ReservationDecision(true, outcome.CrossedReorderPoint);
     }
@@ -150,36 +159,46 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
 
         if (allocations.Count == 0)
         {
-            // Nothing recorded - either an unknown reservation or one made
-            // before per-warehouse tracking existed. The caller falls back to the
-            // single-warehouse path so orders in flight during the rollout
-            // still settle.
+            // Nothing recorded means an unknown or already-settled
+            // reservation. Guessing a warehouse here could settle stock
+            // owned by a different order, so failure is explicit.
+            return false;
+        }
+
+        var sku = allocations[0].Sku;
+        if (allocations.Any(allocation => !string.Equals(allocation.Sku, sku, StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        var warehouseCodes = allocations.Select(allocation => allocation.WarehouseCode).Distinct(StringComparer.Ordinal).ToArray();
+        var stocks = await dbContext.WarehouseStocks
+            .Where(item => item.Sku == sku && warehouseCodes.Contains(item.WarehouseCode))
+            .ToDictionaryAsync(item => item.WarehouseCode, StringComparer.Ordinal, cancellationToken);
+        var item = await dbContext.InventoryItems.SingleOrDefaultAsync(entity => entity.Sku == sku, cancellationToken);
+
+        // As with reserve, validate the entire recorded plan before
+        // applying it. A missing or insufficient later leg must not leave
+        // earlier warehouse rows committed or released.
+        if (item is null
+            || stocks.Count != warehouseCodes.Length
+            || allocations.Any(allocation => !stocks.TryGetValue(allocation.WarehouseCode, out var stock)
+                || allocation.Quantity <= 0
+                || stock.ReservedQuantity < allocation.Quantity))
+        {
             return false;
         }
 
         foreach (var allocation in allocations)
         {
-            var stock = await dbContext.WarehouseStocks
-                .SingleOrDefaultAsync(
-                    item => item.Sku == allocation.Sku && item.WarehouseCode == allocation.WarehouseCode,
-                    cancellationToken);
-
-            if (stock is null)
-            {
-                return false;
-            }
-
-            var applied = commit
+            var stock = stocks[allocation.WarehouseCode];
+            _ = commit
                 ? stock.TryCommit(allocation.Quantity, now)
                 : stock.TryRelease(allocation.Quantity, now);
-
-            if (!applied)
-            {
-                return false;
-            }
         }
 
         dbContext.ReservationAllocations.RemoveRange(allocations);
+        await SynchronizeItemAsync(item, sku, now, cancellationToken);
         return true;
     }
 
@@ -253,18 +272,44 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var stock = await dbContext.WarehouseStocks
+        var stocks = await dbContext.WarehouseStocks
             .Where(item => item.Sku == sku)
             .OrderBy(item => item.AvailableQuantity)
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
 
-        if (stock is null)
+        var item = await dbContext.InventoryItems.SingleOrDefaultAsync(entity => entity.Sku == sku, cancellationToken);
+        if (stocks.Count == 0 || item is null || quantity <= 0)
         {
             return false;
         }
 
+        var stock = stocks[0];
         stock.Restock(quantity, now);
+        item.SynchronizeFromWarehouses(
+            stocks.Sum(candidate => candidate.AvailableQuantity),
+            stocks.Sum(candidate => candidate.ReservedQuantity),
+            now);
         return true;
+    }
+
+    private async Task SynchronizeItemAsync(
+        InventoryItem item,
+        string sku,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await dbContext.WarehouseStocks
+            .Where(stock => stock.Sku == sku)
+            .LoadAsync(cancellationToken);
+
+        var stocks = dbContext.WarehouseStocks.Local
+            .Where(stock => string.Equals(stock.Sku, sku, StringComparison.Ordinal))
+            .ToList();
+
+        item.SynchronizeFromWarehouses(
+            stocks.Sum(stock => stock.AvailableQuantity),
+            stocks.Sum(stock => stock.ReservedQuantity),
+            now);
     }
 
     private static int WarehousePriority(string warehouseCode) => warehouseCode switch

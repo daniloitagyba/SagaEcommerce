@@ -765,15 +765,6 @@ services:
       # non-obvious-default trap the Kafka/Redis overrides above cover.
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-1
-      # Off by default (FeatureManagement has no config section in
-      # appsettings.json); kubernetes/base/orders-api.yaml:98 turns it on,
-      # Compose never did. StorefrontEndpoints.CheckoutAsync deliberately
-      # computes checkout:{subject}:{cart.Version} specifically so a
-      # double-clicked checkout can't double-charge, but
-      # CreateOrderHandler only honors it when this flag is set - without
-      # it, that key is silently ignored and a double-click creates two
-      # orders and two card holds, no log or metric marking the drop.
-      FeatureManagement__IdempotencyKey: "true"
 
   orders-api-2:
     <<: *api-common
@@ -789,8 +780,6 @@ services:
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-2
-      # Same as orders-api-1 above.
-      FeatureManagement__IdempotencyKey: "true"
 
   orders-worker:
     profiles: ["compose-apps"]
@@ -823,15 +812,10 @@ services:
       OrderProjectionKafka__BootstrapServers: kafka:9092
       SagaOrchestration__BootstrapServers: kafka:9092
       OrderEventStore__BootstrapServers: kafka:9092
-      # Milestone 75: Both (matches payments-service below) - see SagaMode's
-      # own comment for what each mode starts/stops. Choreography alone
-      # never reserves inventory (OrderMessageProcessor has no inventory
-      # step at all), so it was silently running every order without a
-      # stock check; Both keeps that path exercised for comparison while
-      # making Orchestration's inventory reservation the one that's
-      # actually load-bearing. Requires payments-service set to Both too,
-      # so every request/reply pair has someone to talk to.
-      Saga__Mode: Both
+      # Orchestration is the normal application path because it reserves
+      # inventory before deciding payment. Both is reserved for isolated
+      # comparison runs and is not a deployment default.
+      Saga__Mode: Orchestration
       # Milestone 88 follow-up: this service's own credentials for the
       # anti-entropy sweep's two cross-service reads (GET /payments/by-order,
       # GET /inventory/backorders) - reuses orders-api-clients, the same
@@ -890,9 +874,8 @@ services:
       # four times.
       PaymentSettlement__BootstrapServers: kafka:9092
       PaymentSettlement__ExpirySweepIntervalSeconds: "30"
-      # Milestone 75: must match orders-worker's Saga__Mode above - see that
-      # comment.
-      Saga__Mode: Both
+      # Must match orders-worker's Saga__Mode above.
+      Saga__Mode: Orchestration
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
     depends_on:

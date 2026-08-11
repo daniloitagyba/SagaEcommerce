@@ -1,8 +1,5 @@
-using BuildingBlocks;
 using Npgsql;
 using NpgsqlTypes;
-using Polly;
-using Polly.Registry;
 
 namespace Orders.Worker;
 
@@ -11,10 +8,7 @@ namespace Orders.Worker;
 /// on <em>confirmation</em>, not creation, or placing and cancelling would
 /// be the cheapest route to Gold. Raw Npgsql, matching this worker's other writes.
 /// </summary>
-public sealed class CustomerTierStore(
-    NpgsqlDataSource dataSource,
-    ResiliencePipelineProvider<string> pipelineProvider,
-    ILogger<CustomerTierStore> logger)
+public sealed class CustomerTierStore
 {
     // One statement: increment and re-derive tier together, or two concurrent confirmations could each miss the other's contribution.
     private const string RecordSql = """
@@ -26,13 +20,12 @@ public sealed class CustomerTierStore(
                 WHEN lifetime_spend + @amount >= @silver_threshold THEN @silver
                 ELSE @bronze
             END
-        WHERE id = @id
-        RETURNING tier;
+        WHERE id = @id;
         """;
 
-    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
-
     public async Task RecordCompletedOrderAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         string customerId,
         decimal amount,
         CancellationToken cancellationToken)
@@ -42,25 +35,17 @@ public sealed class CustomerTierStore(
             return;
         }
 
-        var tier = await _pipeline.ExecuteAsync(async ct =>
-        {
-            await using var command = dataSource.CreateCommand(RecordSql);
-            command.Parameters.AddWithValue("id", NpgsqlDbType.Varchar, customerId);
-            command.Parameters.AddWithValue("amount", NpgsqlDbType.Numeric, amount);
-            command.Parameters.AddWithValue("gold_threshold", NpgsqlDbType.Numeric, CustomerTierThresholds.Gold);
-            command.Parameters.AddWithValue("silver_threshold", NpgsqlDbType.Numeric, CustomerTierThresholds.Silver);
-            command.Parameters.AddWithValue("gold", NpgsqlDbType.Varchar, CustomerTierThresholds.GoldName);
-            command.Parameters.AddWithValue("silver", NpgsqlDbType.Varchar, CustomerTierThresholds.SilverName);
-            command.Parameters.AddWithValue("bronze", NpgsqlDbType.Varchar, CustomerTierThresholds.BronzeName);
-
-            await using var reader = await command.ExecuteReaderAsync(ct);
-            return await reader.ReadAsync(ct) ? reader.GetString(0) : null;
-        }, cancellationToken);
-
-        if (tier is not null)
-        {
-            CustomerTierLog.Recorded(logger, customerId, amount, tier);
-        }
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = RecordSql;
+        command.Parameters.AddWithValue("id", NpgsqlDbType.Varchar, customerId);
+        command.Parameters.AddWithValue("amount", NpgsqlDbType.Numeric, amount);
+        command.Parameters.AddWithValue("gold_threshold", NpgsqlDbType.Numeric, CustomerTierThresholds.Gold);
+        command.Parameters.AddWithValue("silver_threshold", NpgsqlDbType.Numeric, CustomerTierThresholds.Silver);
+        command.Parameters.AddWithValue("gold", NpgsqlDbType.Varchar, CustomerTierThresholds.GoldName);
+        command.Parameters.AddWithValue("silver", NpgsqlDbType.Varchar, CustomerTierThresholds.SilverName);
+        command.Parameters.AddWithValue("bronze", NpgsqlDbType.Varchar, CustomerTierThresholds.BronzeName);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }
 
@@ -75,10 +60,4 @@ public static class CustomerTierThresholds
     public const string BronzeName = "Bronze";
     public const string SilverName = "Silver";
     public const string GoldName = "Gold";
-}
-
-public sealed partial class CustomerTierLog
-{
-    [LoggerMessage(EventId = 9300, Level = LogLevel.Information, Message = "Recorded {Amount} for customer {CustomerId}; standing is now {Tier}")]
-    public static partial void Recorded(ILogger logger, string customerId, decimal amount, string tier);
 }

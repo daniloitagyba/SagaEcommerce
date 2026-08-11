@@ -6,13 +6,15 @@ Decides whether to approve a payment, then moves the money — split into two ex
 
 ## Scored risk, not a threshold
 
-`PaymentRiskEvaluator` replaced "decline anything over 1000" with signals that compound: `HIGH_VALUE`, `FIRST_PURCHASE`, `VELOCITY` (rapid repeat orders), `NEW_ACCOUNT` (a minutes-old account ordering again), `ADDRESS_MISMATCH`, `ATYPICAL_AMOUNT` (relative to *this* customer's own history). None of them alone triggers a decline; a large first purchase from a brand-new account does, because the signals stack. Both saga paths (choreographed and orchestrated) run the exact same evaluator, so `Saga:Mode` comparisons are meaningful.
+`PaymentRiskEvaluator` replaced "decline anything over 1000" with signals that compound: `HIGH_VALUE`, `FIRST_PURCHASE`, `VELOCITY` (rapid repeat orders), `NEW_ACCOUNT` (a minutes-old account ordering again), `ADDRESS_MISMATCH`, `ATYPICAL_AMOUNT` (relative to *this* customer's own history). None of them alone triggers a decline; a large first purchase from a brand-new account does, because the signals stack. The bounded history sample is explicitly ordered newest-first with a deterministic tie-breaker, so old rows cannot displace recent velocity or address evidence. Both saga paths (choreographed and orchestrated) run the exact same evaluator, so `Saga:Mode` comparisons are meaningful.
+
+`Orchestration` is the deployment default because it includes inventory reservation. If `Both` is enabled for an isolated comparison, both consumers share a transaction-scoped order lock and the database permits only one primary payment per order; the second path reuses that decision rather than creating another chargeable lifecycle.
 
 ## Responsibilities
 
 - **Decide** — approve or decline, scored, recorded with the reasons that fired.
 - **Authorize → capture** — a card lands in `Authorized` with an expiring hold; Pix settles instantly (`Captured`); a boleto waits in `AwaitingPayment` with nothing held at all. `PaymentAuthorizationSweeper` expires holds nobody ever captured (Postgres advisory lock, not a Kubernetes Lease — `SKIP LOCKED` already makes concurrent sweeps safe).
-- **Settle** — capture, void, or partial/cumulative refund, each guarded in the domain so a redelivered command is a no-op, never a double charge.
+- **Settle** — capture, void, or partial/cumulative refund. Every transition locks the primary payment row; partial refunds also claim `ReturnId` in the transactional inbox, so re-delivery cannot apply the same refund twice.
 
 ## Talks to
 

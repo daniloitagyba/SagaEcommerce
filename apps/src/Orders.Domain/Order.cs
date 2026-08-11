@@ -38,7 +38,7 @@ public sealed class Order
     public string? CouponCode { get; private set; }
 
     /// <summary>
-    /// "Card" or "Pix", deciding whether Payments holds an
+    /// "Card", "Pix" or "Boleto", deciding whether Payments holds an
     /// authorization to capture at shipment or charges outright. A plain
     /// string, not a BuildingBlocks.PaymentMethods reference - Orders.Domain
     /// must not depend on the messaging contracts' wire format.
@@ -158,6 +158,8 @@ public sealed class Order
     /// </summary>
     public static Order Create(string customerId, decimal amount, string currency, DateTimeOffset createdAt)
     {
+        EnsureIdentityAndMoney(customerId, amount, currency);
+
         return new Order
         {
             Id = Guid.NewGuid(),
@@ -194,6 +196,26 @@ public sealed class Order
     {
         ArgumentNullException.ThrowIfNull(lines);
 
+        if (string.IsNullOrWhiteSpace(customerId))
+        {
+            throw new ArgumentException("Customer id is required.", nameof(customerId));
+        }
+
+        if (string.IsNullOrWhiteSpace(currency))
+        {
+            throw new ArgumentException("Currency is required.", nameof(currency));
+        }
+
+        if (discountTotal < 0m || shippingTotal < 0m || taxTotal < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(discountTotal), "Order totals cannot be negative.");
+        }
+
+        if (string.IsNullOrWhiteSpace(paymentMethod))
+        {
+            throw new ArgumentException("Payment method is required.", nameof(paymentMethod));
+        }
+
         if (lines.Count == 0)
         {
             throw new ArgumentException("An order must have at least one line.", nameof(lines));
@@ -217,11 +239,33 @@ public sealed class Order
         }
 
         order.Subtotal = order._lines.Sum(line => line.LineSubtotal);
+        if (discountTotal > order.Subtotal)
+        {
+            throw new ArgumentOutOfRangeException(nameof(discountTotal), "Discount cannot exceed the subtotal.");
+        }
         order.DiscountTotal = discountTotal;
         order.ShippingTotal = shippingTotal;
         order.TaxTotal = taxTotal;
         order.Amount = order.Subtotal - discountTotal + shippingTotal + taxTotal;
 
         return order;
+    }
+
+    private static void EnsureIdentityAndMoney(string customerId, decimal amount, string currency)
+    {
+        if (string.IsNullOrWhiteSpace(customerId))
+        {
+            throw new ArgumentException("Customer id is required.", nameof(customerId));
+        }
+
+        if (amount <= 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(amount), "Amount must be positive.");
+        }
+
+        if (string.IsNullOrWhiteSpace(currency))
+        {
+            throw new ArgumentException("Currency is required.", nameof(currency));
+        }
     }
 }

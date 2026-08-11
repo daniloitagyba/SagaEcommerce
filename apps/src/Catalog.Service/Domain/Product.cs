@@ -12,6 +12,45 @@ namespace Catalog.Service.Domain;
 /// </summary>
 public sealed class Product
 {
+    public static Product Create(
+        string name,
+        string description,
+        string categorySlug,
+        decimal price,
+        string currency,
+        string sku,
+        Dictionary<string, string>? attributes,
+        IReadOnlyList<string>? images,
+        DateTimeOffset createdAt)
+    {
+        if (string.IsNullOrWhiteSpace(name)
+            || string.IsNullOrWhiteSpace(categorySlug)
+            || string.IsNullOrWhiteSpace(sku))
+        {
+            throw new ArgumentException("Name, category slug and SKU are required.");
+        }
+
+        if (price <= 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(price), "Price must be positive.");
+        }
+
+        return new Product
+        {
+            Name = name.Trim(),
+            Description = description.Trim(),
+            CategorySlug = categorySlug.Trim(),
+            Price = price,
+            Currency = string.IsNullOrWhiteSpace(currency) ? "BRL" : currency.Trim().ToUpperInvariant(),
+            Sku = sku.Trim(),
+            Attributes = attributes is null
+                ? []
+                : new Dictionary<string, string>(attributes, StringComparer.Ordinal),
+            Images = images is null ? [] : [.. images],
+            CreatedAt = createdAt
+        };
+    }
+
     public string Id { get; set; } = string.Empty;
 
     public string Name { get; set; } = string.Empty;

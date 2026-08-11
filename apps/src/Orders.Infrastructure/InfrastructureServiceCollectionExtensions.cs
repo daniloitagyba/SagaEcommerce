@@ -8,7 +8,6 @@ using Microsoft.Extensions.Options;
 using Orders.Application.Ports;
 using Orders.Infrastructure.Caching;
 using Orders.Infrastructure.Data;
-using Orders.Infrastructure.Idempotency;
 using Orders.Infrastructure.Messaging;
 using Orders.Infrastructure.RateLimiting;
 
@@ -28,13 +27,6 @@ public static class InfrastructureServiceCollectionExtensions
             .Validate(options => options.LockTimeoutMilliseconds > 0, "Cache lock timeout must be positive.")
             .Validate(options => options.LockRetryAttempts >= 0, "Cache lock retry attempts must not be negative.")
             .Validate(options => options.LockRetryDelayMilliseconds > 0, "Cache lock retry delay must be positive.")
-            .ValidateOnStart();
-        services.AddOptions<IdempotencyOptions>()
-            .Bind(configuration.GetSection(IdempotencyOptions.SectionName))
-            .Validate(options => options.TimeToLiveHours > 0, "Idempotency time-to-live must be positive.")
-            .Validate(options => options.LockTimeoutMilliseconds > 0, "Idempotency lock timeout must be positive.")
-            .Validate(options => options.LockRetryAttempts >= 0, "Idempotency lock retry attempts must not be negative.")
-            .Validate(options => options.LockRetryDelayMilliseconds > 0, "Idempotency lock retry delay must be positive.")
             .ValidateOnStart();
         services.AddOptions<DistributedRateLimitOptions>()
             .Bind(configuration.GetSection(DistributedRateLimitOptions.SectionName))
@@ -94,7 +86,11 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddOrdersResilience();
         services.AddOrdersRedis(configuration);
 
-        services.AddScoped<IOrderRepository, Persistence.EfOrderRepository>();
+        services.AddScoped<Persistence.EfOrderRepository>();
+        services.AddScoped<IOrderRepository>(serviceProvider =>
+            serviceProvider.GetRequiredService<Persistence.EfOrderRepository>());
+        services.AddScoped<IOrderCreationRepository>(serviceProvider =>
+            serviceProvider.GetRequiredService<Persistence.EfOrderRepository>());
         services.AddScoped<ICouponRepository, Persistence.EfCouponRepository>();
         services.AddScoped<ICustomerRepository, Persistence.EfCustomerRepository>();
         services.AddScoped<IOrderStatusRepository, Persistence.EfOrderStatusRepository>();
@@ -105,7 +101,6 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IOrderSummaryRepository, Persistence.EfOrderSummaryRepository>();
         services.AddScoped<IOrderEventStoreRepository, Persistence.EfOrderEventStoreRepository>();
         services.AddSingleton<IOrderCache, RedisOrderCache>();
-        services.AddSingleton<IIdempotencyStore, RedisIdempotencyStore>();
         services.AddSingleton<RedisSlidingWindowRateLimiter>();
         services.AddSingleton<IOrderEventPublisher, KafkaOrderEventPublisher>();
         services.AddScoped<IOutboxEventDispatcher, OrderOutboxEventDispatcher>();

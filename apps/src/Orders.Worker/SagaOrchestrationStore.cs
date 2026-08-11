@@ -128,6 +128,31 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
         decimal amount,
         string currency,
         DateTimeOffset requestedAt,
+        CancellationToken cancellationToken) =>
+        TrackReserveRequestedAndQueueAsync(
+            orderId,
+            correlationId,
+            customerId,
+            paymentMethod,
+            shippingPostalPrefix,
+            lines,
+            amount,
+            currency,
+            requestedAt,
+            [],
+            cancellationToken);
+
+    public Task TrackReserveRequestedAndQueueAsync(
+        Guid orderId,
+        string correlationId,
+        string customerId,
+        string paymentMethod,
+        string shippingPostalPrefix,
+        IReadOnlyList<SagaReservationLine> lines,
+        decimal amount,
+        string currency,
+        DateTimeOffset requestedAt,
+        IReadOnlyList<SagaOutboxCommand> outboxCommands,
         CancellationToken cancellationToken)
     {
         return _pipeline.ExecuteAsync(async ct =>
@@ -135,6 +160,7 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
             await using var connection = await dataSource.OpenConnectionAsync(ct);
             await using var transaction = await connection.BeginTransactionAsync(ct);
 
+            int insertedParent;
             await using (var command = new NpgsqlCommand(InsertParentSql, connection, transaction))
             {
                 command.Parameters.AddWithValue("order_id", NpgsqlDbType.Uuid, orderId);
@@ -146,19 +172,24 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
                 command.Parameters.AddWithValue("step", NpgsqlDbType.Varchar, SagaStep.ReserveInventory);
                 command.Parameters.AddWithValue("amount", NpgsqlDbType.Numeric, amount);
                 command.Parameters.AddWithValue("currency", NpgsqlDbType.Varchar, currency);
-                await command.ExecuteNonQueryAsync(ct);
+                insertedParent = await command.ExecuteNonQueryAsync(ct);
             }
 
-            for (var index = 0; index < lines.Count; index++)
+            if (insertedParent > 0)
             {
-                var line = lines[index];
-                await using var command = new NpgsqlCommand(InsertLineSql, connection, transaction);
-                command.Parameters.AddWithValue("order_id", NpgsqlDbType.Uuid, orderId);
-                command.Parameters.AddWithValue("line_index", NpgsqlDbType.Integer, index);
-                command.Parameters.AddWithValue("reservation_id", NpgsqlDbType.Uuid, line.ReservationId);
-                command.Parameters.AddWithValue("sku", NpgsqlDbType.Varchar, line.Sku);
-                command.Parameters.AddWithValue("quantity", NpgsqlDbType.Integer, line.Quantity);
-                await command.ExecuteNonQueryAsync(ct);
+                for (var index = 0; index < lines.Count; index++)
+                {
+                    var line = lines[index];
+                    await using var command = new NpgsqlCommand(InsertLineSql, connection, transaction);
+                    command.Parameters.AddWithValue("order_id", NpgsqlDbType.Uuid, orderId);
+                    command.Parameters.AddWithValue("line_index", NpgsqlDbType.Integer, index);
+                    command.Parameters.AddWithValue("reservation_id", NpgsqlDbType.Uuid, line.ReservationId);
+                    command.Parameters.AddWithValue("sku", NpgsqlDbType.Varchar, line.Sku);
+                    command.Parameters.AddWithValue("quantity", NpgsqlDbType.Integer, line.Quantity);
+                    await command.ExecuteNonQueryAsync(ct);
+                }
+
+                await SagaOutboxWriter.EnqueueAsync(connection, transaction, outboxCommands, ct);
             }
 
             await transaction.CommitAsync(ct);
@@ -170,25 +201,50 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
         string expectedCurrentStep,
         string nextStep,
         DateTimeOffset requestedAt,
+        CancellationToken cancellationToken) =>
+        TryAdvanceAndQueueAsync(
+            orderId,
+            expectedCurrentStep,
+            nextStep,
+            requestedAt,
+            _ => [],
+            cancellationToken);
+
+    public Task<SagaOrchestrationRecord?> TryAdvanceAndQueueAsync(
+        Guid orderId,
+        string expectedCurrentStep,
+        string nextStep,
+        DateTimeOffset requestedAt,
+        Func<SagaOrchestrationRecord, IReadOnlyList<SagaOutboxCommand>> commandFactory,
         CancellationToken cancellationToken)
     {
         return _pipeline.ExecuteAsync(async ct =>
         {
-            await using var command = dataSource.CreateCommand(TryAdvanceSql);
-            command.Parameters.AddWithValue("order_id", NpgsqlDbType.Uuid, orderId);
-            command.Parameters.AddWithValue("expected_step", NpgsqlDbType.Varchar, expectedCurrentStep);
-            command.Parameters.AddWithValue("next_step", NpgsqlDbType.Varchar, nextStep);
-            command.Parameters.AddWithValue("requested_at", NpgsqlDbType.TimestampTz, requestedAt);
-            await using var reader = await command.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct))
+            await using var connection = await dataSource.OpenConnectionAsync(ct);
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            SagaOrchestrationRecord? parent;
+
+            await using (var command = new NpgsqlCommand(TryAdvanceSql, connection, transaction))
             {
+                command.Parameters.AddWithValue("order_id", NpgsqlDbType.Uuid, orderId);
+                command.Parameters.AddWithValue("expected_step", NpgsqlDbType.Varchar, expectedCurrentStep);
+                command.Parameters.AddWithValue("next_step", NpgsqlDbType.Varchar, nextStep);
+                command.Parameters.AddWithValue("requested_at", NpgsqlDbType.TimestampTz, requestedAt);
+                await using var reader = await command.ExecuteReaderAsync(ct);
+                parent = await reader.ReadAsync(ct) ? await ReadParentAsync(reader, ct) : null;
+            }
+
+            if (parent is null)
+            {
+                await transaction.RollbackAsync(ct);
                 return null;
             }
 
-            var parent = await ReadParentAsync(reader, ct);
-            await reader.CloseAsync();
-            var lines = await SelectLinesAsync(orderId, ct);
-            return parent with { Lines = lines };
+            var lines = await SelectLinesAsync(connection, transaction, orderId, ct);
+            var result = parent with { Lines = lines };
+            await SagaOutboxWriter.EnqueueAsync(connection, transaction, commandFactory(result), ct);
+            await transaction.CommitAsync(ct);
+            return result;
         }, cancellationToken).AsTask();
     }
 
@@ -203,6 +259,13 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
     public Task<SagaOrchestrationRecord?> TryCompleteAsync(
         Guid orderId,
         string expectedCurrentStep,
+        CancellationToken cancellationToken) =>
+        TryCompleteAndQueueAsync(orderId, expectedCurrentStep, _ => [], cancellationToken);
+
+    public Task<SagaOrchestrationRecord?> TryCompleteAndQueueAsync(
+        Guid orderId,
+        string expectedCurrentStep,
+        Func<SagaOrchestrationRecord, IReadOnlyList<SagaOutboxCommand>> commandFactory,
         CancellationToken cancellationToken)
     {
         return _pipeline.ExecuteAsync(async ct =>
@@ -224,8 +287,16 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
                 }
             }
 
+            if (parent is null)
+            {
+                await transaction.RollbackAsync(ct);
+                return null;
+            }
+
+            var result = parent with { Lines = lines };
+            await SagaOutboxWriter.EnqueueAsync(connection, transaction, commandFactory(result), ct);
             await transaction.CommitAsync(ct);
-            return parent is null ? null : parent with { Lines = lines };
+            return result;
         }, cancellationToken).AsTask();
     }
 
@@ -280,6 +351,14 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
         TimeSpan timeout,
         DateTimeOffset now,
         int batchSize,
+        CancellationToken cancellationToken) =>
+        ClaimTimedOutAndQueueAsync(timeout, now, batchSize, (_, _) => [], cancellationToken);
+
+    public Task<IReadOnlyList<(Guid OrderId, SagaOrchestrationRecord Saga)>> ClaimTimedOutAndQueueAsync(
+        TimeSpan timeout,
+        DateTimeOffset now,
+        int batchSize,
+        Func<Guid, SagaOrchestrationRecord, IReadOnlyList<SagaOutboxCommand>> commandFactory,
         CancellationToken cancellationToken)
     {
         return _pipeline.ExecuteAsync(async ct =>
@@ -353,14 +432,6 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
                 }
             }
 
-            await using (var command = new NpgsqlCommand(DeleteByIdsSql, connection, transaction))
-            {
-                command.Parameters.AddWithValue("order_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, idsArray);
-                await command.ExecuteNonQueryAsync(ct);
-            }
-
-            await transaction.CommitAsync(ct);
-
             var claimed = new List<(Guid, SagaOrchestrationRecord)>();
             foreach (var orderId in candidateIds)
             {
@@ -370,9 +441,22 @@ public sealed class SagaOrchestrationStore(NpgsqlDataSource dataSource, Resilien
                 }
 
                 linesByOrder.TryGetValue(orderId, out var lines);
-                claimed.Add((orderId, parent with { Lines = lines ?? [] }));
+                var saga = parent with { Lines = lines ?? [] };
+                claimed.Add((orderId, saga));
+                await SagaOutboxWriter.EnqueueAsync(
+                    connection,
+                    transaction,
+                    commandFactory(orderId, saga),
+                    ct);
             }
 
+            await using (var command = new NpgsqlCommand(DeleteByIdsSql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("order_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid, idsArray);
+                await command.ExecuteNonQueryAsync(ct);
+            }
+
+            await transaction.CommitAsync(ct);
             return (IReadOnlyList<(Guid, SagaOrchestrationRecord)>)claimed;
         }, cancellationToken).AsTask();
     }

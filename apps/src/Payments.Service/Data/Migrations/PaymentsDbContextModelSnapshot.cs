@@ -169,6 +169,10 @@ namespace Payments.Service.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("decided_at");
 
+                    b.Property<bool>("IsPrimary")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_primary");
+
                     b.Property<string>("Method")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -208,7 +212,9 @@ namespace Payments.Service.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("OrderId")
-                        .HasDatabaseName("ix_payments_order_id");
+                        .IsUnique()
+                        .HasDatabaseName("ux_payments_primary_order_id")
+                        .HasFilter("is_primary");
 
                     b.HasIndex("CustomerId", "DecidedAt")
                         .HasDatabaseName("ix_payments_customer_history");

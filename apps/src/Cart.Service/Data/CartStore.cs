@@ -7,6 +7,13 @@ using StackExchange.Redis;
 
 namespace Cart.Service.Data;
 
+public sealed record CartSnapshot(
+    string CartId,
+    IReadOnlyList<CartLineItem> Items,
+    TimeSpan? TimeToLive,
+    long Version,
+    CartCrdtState State);
+
 /// <summary>
 /// Redis IS the system of record here, not a cache in front of one - no
 /// Postgres fallback, no cache-aside factory like RedisOrderCache. If lost,
@@ -27,25 +34,65 @@ public sealed class CartStore(
     IOptions<CartOptions> options)
 {
     public const string ResiliencePipelineName = "cart-redis";
+    private const int MaximumCasAttempts = 100;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly CartOptions _options = options.Value;
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResiliencePipelineName);
 
-    public Task<IReadOnlyList<CartLineItem>> GetAsync(string cartId, CancellationToken cancellationToken)
+    public Task<CartSnapshot> GetSnapshotAsync(string ownerId, CancellationToken cancellationToken)
     {
         return _pipeline.ExecuteAsync(async ct =>
         {
             var database = connectionMultiplexer.GetDatabase();
-            var entries = await database.HashGetAllAsync(CartKey(cartId)).WaitAsync(ct);
-            return (IReadOnlyList<CartLineItem>)entries
-                // __version shares the hash with real line items (see GetVersionAsync) - not a Sku, skipped here.
-                .Where(entry => entry.Name != VersionField)
-                .Select(entry => Deserialize(entry.Value!))
+            var result = await database.ScriptEvaluateAsync(
+                ReadSnapshotScript,
+                [CartKey(ownerId)],
+                []).WaitAsync(ct);
+            var values = (RedisResult[]?)result;
+            if (values is null || values.Length == 0)
+            {
+                return new CartSnapshot(string.Empty, [], null, 0, CartCrdtState.Empty);
+            }
+
+            var ttlMilliseconds = long.Parse(values[0].ToString(), System.Globalization.CultureInfo.InvariantCulture);
+            var cartId = string.Empty;
+            var version = 0L;
+            var items = new List<CartLineItem>();
+            var entries = new List<HashEntry>();
+
+            for (var index = 1; index + 1 < values.Length; index += 2)
+            {
+                var field = values[index].ToString();
+                var value = values[index + 1].ToString();
+                entries.Add(new HashEntry(field, value));
+                if (field == VersionField)
+                {
+                    version = long.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+                }
+                else if (field == CartIdField)
+                {
+                    cartId = value;
+                }
+                else if (!IsMetadataField(field))
+                {
+                    items.Add(Deserialize(value));
+                }
+            }
+
+            return new CartSnapshot(
+                cartId,
+                items
                 .OrderBy(item => item.AddedAt)
-                .ToList();
+                .ToList(),
+                ttlMilliseconds >= 0 ? TimeSpan.FromMilliseconds(ttlMilliseconds) : null,
+                version,
+                CartCrdtCodec.Read(entries, IsMetadataField));
         }, cancellationToken).AsTask();
     }
+
+    public async Task<IReadOnlyList<CartLineItem>> GetAsync(string ownerId, CancellationToken cancellationToken) =>
+        (await GetSnapshotAsync(ownerId, cancellationToken)).Items;
 
     public Task<CartLineItem?> GetItemAsync(string cartId, string sku, CancellationToken cancellationToken)
     {
@@ -57,41 +104,50 @@ public sealed class CartStore(
         }, cancellationToken).AsTask();
     }
 
-    public Task UpsertItemAsync(string cartId, CartLineItem item, CancellationToken cancellationToken)
+    public Task UpsertItemAsync(string ownerId, CartLineItem item, CancellationToken cancellationToken)
     {
-        return _pipeline.ExecuteAsync(async ct =>
-        {
-            var database = connectionMultiplexer.GetDatabase();
-            var key = CartKey(cartId);
-            var payload = JsonSerializer.Serialize(item, SerializerOptions);
-            await database.HashSetAsync(key, item.Sku, payload).WaitAsync(ct);
-            await database.HashIncrementAsync(key, VersionField).WaitAsync(ct);
-            await database.KeyExpireAsync(key, TimeSpan.FromSeconds(_options.TimeToLiveSeconds)).WaitAsync(ct);
-        }, cancellationToken).AsTask();
+        return MutateAsync(
+            ownerId,
+            state =>
+            {
+                var current = state.Items.GetValueOrDefault(item.Sku, CartItemCrdt.Empty);
+                var currentQuantity = current.EffectiveQuantity;
+                var metadata = new CartItemMetadata(
+                    item.ProductName, item.UnitPrice, item.Currency, item.AddedAt);
+                var next = item.Quantity > currentQuantity
+                    ? state.Increase(
+                        item.Sku,
+                        "server",
+                        item.Quantity - currentQuantity,
+                        NextServerDot(state),
+                        metadata)
+                    : item.Quantity < currentQuantity
+                        ? state.Decrease(item.Sku, "server", currentQuantity - item.Quantity)
+                        : state;
+
+                // A removed line retains counters and tombstones as causal
+                // history. Re-adding it needs a fresh live dot even when the
+                // target quantity required only a decrease (or no counter
+                // change at all), otherwise it would remain absent.
+                if (!current.IsPresent)
+                {
+                    next = next.Increase(
+                        item.Sku, "server", 0, NextServerDot(next), metadata);
+                }
+
+                return (next, true);
+            },
+            cancellationToken);
     }
 
-    public Task<bool> RemoveItemAsync(string cartId, string sku, CancellationToken cancellationToken)
+    public Task<bool> RemoveItemAsync(string ownerId, string sku, CancellationToken cancellationToken)
     {
-        return _pipeline.ExecuteAsync(async ct =>
-        {
-            var database = connectionMultiplexer.GetDatabase();
-            var key = CartKey(cartId);
-            var removed = await database.HashDeleteAsync(key, sku).WaitAsync(ct);
-            if (removed)
-            {
-                await database.HashIncrementAsync(key, VersionField).WaitAsync(ct);
-            }
-
-            // > 1, not > 0: the version field itself is a hash entry, so an
-            // otherwise-empty cart still has one field left after the item
-            // above is gone.
-            if (removed && await database.HashLengthAsync(key).WaitAsync(ct) > 1)
-            {
-                await database.KeyExpireAsync(key, TimeSpan.FromSeconds(_options.TimeToLiveSeconds)).WaitAsync(ct);
-            }
-
-            return removed;
-        }, cancellationToken).AsTask();
+        return MutateAsync(
+            ownerId,
+            state => state.Items.TryGetValue(sku, out var item) && item.IsPresent
+                ? (state.Remove(sku), true)
+                : (state, false),
+            cancellationToken);
     }
 
     public Task<bool> ClearAsync(string cartId, CancellationToken cancellationToken)
@@ -100,6 +156,23 @@ public sealed class CartStore(
         {
             var database = connectionMultiplexer.GetDatabase();
             return await database.KeyDeleteAsync(CartKey(cartId)).WaitAsync(ct);
+        }, cancellationToken).AsTask();
+    }
+
+    public Task<bool> ClearIfVersionAsync(
+        string ownerId,
+        string cartId,
+        long expectedVersion,
+        CancellationToken cancellationToken)
+    {
+        return _pipeline.ExecuteAsync(async ct =>
+        {
+            var database = connectionMultiplexer.GetDatabase();
+            var cleared = await database.ScriptEvaluateAsync(
+                ClearIfVersionScript,
+                [CartKey(ownerId)],
+                [CartIdField, cartId, VersionField, expectedVersion]).WaitAsync(ct);
+            return (long)cleared == 1;
         }, cancellationToken).AsTask();
     }
 
@@ -136,12 +209,9 @@ public sealed class CartStore(
     /// (a different tab, a device that lost connectivity) against whatever
     /// is currently stored, via CartCrdtState.Merge - see that type for the
     /// no-resurrection and add-wins properties this buys over the plain
-    /// last-write-wins upserts above. Read-modify-write against a single
-    /// Redis key, not compare-and-swap: this store already accepts that
-    /// race for every other mutation (see UpsertItemAsync), and the CRDT
-    /// merge itself is what makes a lost race here harmless rather than
-    /// silently wrong - re-running Merge with the same inputs is idempotent,
-    /// so a retried merge after a lost race converges anyway.
+    /// last-write-wins upserts above. The final replace is a versioned
+    /// compare-and-swap; a concurrent mutation causes a re-read and merge,
+    /// so no writer can silently overwrite a state it never observed.
     /// </summary>
     public Task<IReadOnlyList<CartLineItem>> MergeAsync(
         string cartId, CartCrdtState clientState, CancellationToken cancellationToken)
@@ -151,69 +221,115 @@ public sealed class CartStore(
             var database = connectionMultiplexer.GetDatabase();
             var key = CartKey(cartId);
 
-            var entries = await database.HashGetAllAsync(key).WaitAsync(ct);
-            var currentItems = entries
-                .Where(entry => entry.Name != VersionField)
-                .Select(entry => Deserialize(entry.Value!))
-                .ToList();
+            for (var attempt = 0; attempt < MaximumCasAttempts; attempt++)
+            {
+                var entries = await database.HashGetAllAsync(key).WaitAsync(ct);
+                var expectedVersionValue = entries.FirstOrDefault(entry => entry.Name == VersionField).Value;
+                var expectedVersion = expectedVersionValue.HasValue ? (long)expectedVersionValue : 0L;
+                var serverState = CartCrdtCodec.Read(entries, IsMetadataField);
+                var merged = CartCrdtState.Merge(serverState, clientState);
+                var replaced = await TryWriteStateAsync(database, key, merged, expectedVersion, ct);
 
-            var serverState = ToServerCrdtState(currentItems);
-            var merged = CartCrdtState.Merge(serverState, clientState);
-            var mergedItems = merged.ToLineItems();
+                if (replaced)
+                {
+                    return (IReadOnlyList<CartLineItem>)merged.ToLineItems().OrderBy(item => item.AddedAt).ToList();
+                }
 
-            // Whole-hash replace (bar the version field) rather than a
-            // per-field diff: simpler, and correct regardless of which
-            // SKUs the merge added, changed, or dropped - a diff would
-            // just be this same computation done twice. Done as one Lua
-            // script (atomic - Redis runs it as a single command), not the
-            // delete-then-set round trip this used to be: a reader landing
-            // in the gap between those two calls (StorefrontEndpoints.
-            // CheckoutAsync reading /carts/me mid-merge, most concretely)
-            // would see a torn, empty-or-partial cart. The read-modify-write
-            // race the comment above already accepts is a different,
-            // narrower thing - two merges computing from the same snapshot
-            // and one clobbering the other's result - and CartCrdtState.Merge
-            // being idempotent under retry is what makes that one harmless.
-            var newFieldsBySku = mergedItems.ToDictionary(
-                item => item.Sku,
-                item => JsonSerializer.Serialize(item, SerializerOptions),
-                StringComparer.Ordinal);
-            var newFieldsJson = JsonSerializer.Serialize(newFieldsBySku, SerializerOptions);
-            await database.ScriptEvaluateAsync(
-                ReplaceHashScript,
-                [key],
-                [VersionField, (long)_options.TimeToLiveSeconds, newFieldsJson]).WaitAsync(ct);
+                await Task.Delay(TimeSpan.FromMilliseconds(1), ct);
+            }
 
-            return (IReadOnlyList<CartLineItem>)mergedItems.OrderBy(item => item.AddedAt).ToList();
+            throw new InvalidOperationException($"The cart changed too frequently to merge after {MaximumCasAttempts} attempts.");
         }, cancellationToken).AsTask();
     }
 
-    /// <summary>
-    /// Treats whatever is currently stored as if it came from one
-    /// server-side replica - a single synthetic dot per present SKU is
-    /// enough for CartItemCrdt.Merge to reason about correctly, since the
-    /// server's own state was never itself divergent (this store is the
-    /// only writer that isn't a merge).
-    /// </summary>
-    private static CartCrdtState ToServerCrdtState(IReadOnlyList<CartLineItem> currentItems)
+    private Task<bool> MutateAsync(
+        string ownerId,
+        Func<CartCrdtState, (CartCrdtState State, bool Changed)> mutation,
+        CancellationToken cancellationToken)
     {
-        var items = new Dictionary<string, CartItemCrdt>(StringComparer.Ordinal);
-        var metadata = new Dictionary<string, CartItemMetadata>(StringComparer.Ordinal);
-
-        foreach (var item in currentItems)
+        return _pipeline.ExecuteAsync(async ct =>
         {
-            var dot = new CartDot("server", item.AddedAt.ToUnixTimeMilliseconds());
-            items[item.Sku] = new CartItemCrdt(
-                new HashSet<CartDot> { dot },
-                new HashSet<CartDot>(),
-                new Dictionary<string, (long, long)> { ["server"] = (item.Quantity, 0) });
-            metadata[item.Sku] = new CartItemMetadata(item.ProductName, item.UnitPrice, item.Currency, item.AddedAt);
-        }
+            var database = connectionMultiplexer.GetDatabase();
+            var key = CartKey(ownerId);
 
-        return new CartCrdtState(items, metadata);
+            for (var attempt = 0; attempt < MaximumCasAttempts; attempt++)
+            {
+                var entries = await database.HashGetAllAsync(key).WaitAsync(ct);
+                var expectedVersionValue = entries.FirstOrDefault(entry => entry.Name == VersionField).Value;
+                var expectedVersion = expectedVersionValue.HasValue ? (long)expectedVersionValue : 0L;
+                var (state, changed) = mutation(CartCrdtCodec.Read(entries, IsMetadataField));
+                if (!changed)
+                {
+                    return false;
+                }
+
+                if (await TryWriteStateAsync(database, key, state, expectedVersion, ct))
+                {
+                    return true;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(1), ct);
+            }
+
+            throw new InvalidOperationException($"The cart changed too frequently to mutate after {MaximumCasAttempts} attempts.");
+        }, cancellationToken).AsTask();
     }
 
+    private async Task<bool> TryWriteStateAsync(
+        IDatabase database,
+        RedisKey key,
+        CartCrdtState state,
+        long expectedVersion,
+        CancellationToken cancellationToken)
+    {
+        var newFieldsBySku = state.ToLineItems().ToDictionary(
+            item => item.Sku,
+            item => JsonSerializer.Serialize(item, SerializerOptions),
+            StringComparer.Ordinal);
+        var replaced = await database.ScriptEvaluateAsync(
+            ReplaceHashScript,
+            [key],
+            [VersionField, CartIdField, Guid.NewGuid().ToString("N"), expectedVersion,
+                (long)_options.TimeToLiveSeconds,
+                JsonSerializer.Serialize(newFieldsBySku, SerializerOptions),
+                CrdtField,
+                CartCrdtCodec.Serialize(state)]).WaitAsync(cancellationToken);
+        return (long)replaced == 1;
+    }
+
+    private static long NextServerDot(CartCrdtState state) =>
+        state.Items.Values
+            .SelectMany(item => item.LiveDots.Concat(item.TombstoneDots))
+            .Where(dot => string.Equals(dot.ReplicaId, "server", StringComparison.Ordinal))
+            .Select(dot => dot.Counter)
+            .DefaultIfEmpty(0)
+            .Max() + 1;
+
     private const string VersionField = "__version";
+    private const string CartIdField = "__cart_id";
+    private const string CrdtField = "__crdt";
+
+    private static bool IsMetadataField(string field) => field.StartsWith("__", StringComparison.Ordinal);
+
+    private const string ReadSnapshotScript = """
+        local result = { redis.call('PTTL', KEYS[1]) }
+        local entries = redis.call('HGETALL', KEYS[1])
+        for _, value in ipairs(entries) do
+            table.insert(result, value)
+        end
+        return result
+        """;
+
+    private const string ClearIfVersionScript = """
+        local key = KEYS[1]
+        if redis.call('HGET', key, ARGV[1]) ~= ARGV[2] then
+            return 0
+        end
+        if tonumber(redis.call('HGET', key, ARGV[3]) or '-1') ~= tonumber(ARGV[4]) then
+            return 0
+        end
+        return redis.call('DEL', key)
+        """;
 
     // Replaces every field but the version one, then bumps the version and
     // refreshes the TTL - all as a single Redis command, so no concurrent
@@ -224,12 +340,25 @@ public sealed class CartStore(
     private const string ReplaceHashScript = """
         local key = KEYS[1]
         local versionField = ARGV[1]
-        local ttlSeconds = ARGV[2]
-        local newFields = cjson.decode(ARGV[3])
+        local cartIdField = ARGV[2]
+        local newCartId = ARGV[3]
+        local expectedVersion = tonumber(ARGV[4])
+        local ttlSeconds = ARGV[5]
+        local newFields = cjson.decode(ARGV[6])
+        local crdtField = ARGV[7]
+        local crdtState = ARGV[8]
+
+        if tonumber(redis.call('HGET', key, versionField) or '0') ~= expectedVersion then
+            return 0
+        end
+
+        if redis.call('HEXISTS', key, cartIdField) == 0 then
+            redis.call('HSET', key, cartIdField, newCartId)
+        end
 
         local existing = redis.call('HKEYS', key)
         for _, field in ipairs(existing) do
-            if field ~= versionField then
+            if field ~= versionField and field ~= cartIdField then
                 redis.call('HDEL', key, field)
             end
         end
@@ -237,6 +366,8 @@ public sealed class CartStore(
         for sku, payload in pairs(newFields) do
             redis.call('HSET', key, sku, payload)
         end
+
+        redis.call('HSET', key, crdtField, crdtState)
 
         redis.call('HINCRBY', key, versionField, 1)
         redis.call('EXPIRE', key, ttlSeconds)

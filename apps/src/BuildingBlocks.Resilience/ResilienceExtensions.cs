@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Polly;
 using Polly.CircuitBreaker;
 using Polly.Retry;
@@ -21,7 +22,13 @@ public static class ResilienceExtensions
                 {
                     MaxRetryAttempts = 2,
                     Delay = TimeSpan.FromMilliseconds(100),
-                    BackoffType = DelayBackoffType.Exponential
+                    BackoffType = DelayBackoffType.Exponential,
+                    UseJitter = true,
+                    ShouldHandle = new PredicateBuilder()
+                        .Handle<NpgsqlException>(exception => exception.IsTransient)
+                        .Handle<TimeoutException>()
+                        .Handle<IOException>()
+                        .Handle<TimeoutRejectedException>()
                 })
                 .AddCircuitBreaker(new CircuitBreakerStrategyOptions
                 {
@@ -70,6 +77,10 @@ public static class ResilienceExtensions
 
     public static bool IsInfrastructureFault(Exception exception)
     {
-        return exception is BrokenCircuitException or TimeoutRejectedException;
+        return exception is BrokenCircuitException
+            or TimeoutRejectedException
+            or TimeoutException
+            or IOException
+            || exception is NpgsqlException { IsTransient: true };
     }
 }

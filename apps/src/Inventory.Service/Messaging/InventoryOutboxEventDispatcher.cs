@@ -18,59 +18,59 @@ public sealed class InventoryOutboxEventDispatcher(IInventoryEventPublisher publ
         switch (message.EventType)
         {
             case nameof(InventoryReservationReplied):
-            {
-                var reply = JsonSerializer.Deserialize<InventoryReservationReplied>(message.Payload, SerializerOptions)
-                    ?? throw new JsonException("The outbox payload did not contain an InventoryReservationReplied event.");
-                await publisher.PublishAsync(reply, cancellationToken);
-                return (reply.ReservationId, reply.Sku);
-            }
+                {
+                    var reply = JsonSerializer.Deserialize<InventoryReservationReplied>(message.Payload, SerializerOptions)
+                        ?? throw new JsonException("The outbox payload did not contain an InventoryReservationReplied event.");
+                    await publisher.PublishAsync(reply, cancellationToken);
+                    return (reply.ReservationId, reply.Sku);
+                }
 
             case nameof(InventoryReservationCommitReplied):
-            {
-                var reply = JsonSerializer.Deserialize<InventoryReservationCommitReplied>(message.Payload, SerializerOptions)
-                    ?? throw new JsonException("The outbox payload did not contain an InventoryReservationCommitReplied event.");
-                await publisher.PublishAsync(reply, cancellationToken);
-                return (reply.ReservationId, reply.Sku);
-            }
+                {
+                    var reply = JsonSerializer.Deserialize<InventoryReservationCommitReplied>(message.Payload, SerializerOptions)
+                        ?? throw new JsonException("The outbox payload did not contain an InventoryReservationCommitReplied event.");
+                    await publisher.PublishAsync(reply, cancellationToken);
+                    return (reply.ReservationId, reply.Sku);
+                }
 
             case nameof(InventoryReservationReleaseReplied):
-            {
-                var reply = JsonSerializer.Deserialize<InventoryReservationReleaseReplied>(message.Payload, SerializerOptions)
-                    ?? throw new JsonException("The outbox payload did not contain an InventoryReservationReleaseReplied event.");
-                await publisher.PublishAsync(reply, cancellationToken);
-                return (reply.ReservationId, reply.Sku);
-            }
+                {
+                    var reply = JsonSerializer.Deserialize<InventoryReservationReleaseReplied>(message.Payload, SerializerOptions)
+                        ?? throw new JsonException("The outbox payload did not contain an InventoryReservationReleaseReplied event.");
+                    await publisher.PublishAsync(reply, cancellationToken);
+                    return (reply.ReservationId, reply.Sku);
+                }
 
             case nameof(InventoryRestockReplied):
-            {
-                var reply = JsonSerializer.Deserialize<InventoryRestockReplied>(message.Payload, SerializerOptions)
-                    ?? throw new JsonException("The outbox payload did not contain an InventoryRestockReplied event.");
-                await publisher.PublishAsync(reply, cancellationToken);
-                return (reply.ReturnId, reply.Sku);
-            }
+                {
+                    var reply = JsonSerializer.Deserialize<InventoryRestockReplied>(message.Payload, SerializerOptions)
+                        ?? throw new JsonException("The outbox payload did not contain an InventoryRestockReplied event.");
+                    await publisher.PublishAsync(reply, cancellationToken);
+                    return (reply.ReturnId, reply.Sku);
+                }
 
             case nameof(WarehouseReplenishmentNeeded):
-            {
-                var signal = JsonSerializer.Deserialize<WarehouseReplenishmentNeeded>(message.Payload, SerializerOptions)
-                    ?? throw new JsonException("The outbox payload did not contain a WarehouseReplenishmentNeeded event.");
-                await publisher.PublishAsync(signal, cancellationToken);
-                // Not tied to a reservation - the tuple this dispatcher
-                // returns is only used for logging, and Guid.Empty says
-                // "no reservation" more honestly than reusing an unrelated id.
-                return (Guid.Empty, signal.Sku);
-            }
+                {
+                    var signal = JsonSerializer.Deserialize<WarehouseReplenishmentNeeded>(message.Payload, SerializerOptions)
+                        ?? throw new JsonException("The outbox payload did not contain a WarehouseReplenishmentNeeded event.");
+                    await publisher.PublishAsync(signal, cancellationToken);
+                    // Not tied to a reservation - the tuple this dispatcher
+                    // returns is only used for logging, and Guid.Empty says
+                    // "no reservation" more honestly than reusing an unrelated id.
+                    return (Guid.Empty, signal.Sku);
+                }
 
             case nameof(InventoryRestockRequested):
-            {
-                // PurchaseOrderReceivingSweeper's restock,
-                // produced here rather than in-process specifically so a
-                // Kafka failure after the purchase order is marked
-                // Received still leaves this outbox row for OutboxPublisher to retry.
-                var request = JsonSerializer.Deserialize<InventoryRestockRequested>(message.Payload, SerializerOptions)
-                    ?? throw new JsonException("The outbox payload did not contain an InventoryRestockRequested command.");
-                await publisher.PublishAsync(request, cancellationToken);
-                return (request.ReturnId, request.Sku);
-            }
+                {
+                    // PurchaseOrderReceivingSweeper's restock,
+                    // produced here rather than in-process specifically so a
+                    // Kafka failure after the purchase order is marked
+                    // Received still leaves this outbox row for OutboxPublisher to retry.
+                    var request = JsonSerializer.Deserialize<InventoryRestockRequested>(message.Payload, SerializerOptions)
+                        ?? throw new JsonException("The outbox payload did not contain an InventoryRestockRequested command.");
+                    await publisher.PublishAsync(request, cancellationToken);
+                    return (request.ReturnId, request.Sku);
+                }
 
             default:
                 throw new JsonException($"Unsupported outbox event type '{message.EventType}'.");

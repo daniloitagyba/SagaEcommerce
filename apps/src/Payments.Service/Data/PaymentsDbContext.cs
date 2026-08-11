@@ -26,6 +26,7 @@ public sealed class PaymentsDbContext(DbContextOptions<PaymentsDbContext> option
         payment.HasKey(item => item.Id);
         payment.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
         payment.Property(item => item.OrderId).HasColumnName("order_id").IsRequired();
+        payment.Property(item => item.IsPrimary).HasColumnName("is_primary").IsRequired();
         payment.Property(item => item.CustomerId).HasColumnName("customer_id").HasMaxLength(100).IsRequired();
         payment.Property(item => item.Amount).HasColumnName("amount").HasPrecision(18, 2).IsRequired();
         payment.Property(item => item.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
@@ -43,7 +44,10 @@ public sealed class PaymentsDbContext(DbContextOptions<PaymentsDbContext> option
         // past their window - so it is a hot-path index, not reporting.
         payment.HasIndex(item => new { item.State, item.AuthorizationExpiresAt })
             .HasDatabaseName("ix_payments_pending_authorizations");
-        payment.HasIndex(item => item.OrderId).HasDatabaseName("ix_payments_order_id");
+        payment.HasIndex(item => item.OrderId)
+            .IsUnique()
+            .HasDatabaseName("ux_payments_primary_order_id")
+            .HasFilter("is_primary");
         // The risk rules read a customer's recent history on
         // every decision, so this index is on the hot path, not a
         // reporting convenience.

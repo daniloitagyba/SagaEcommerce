@@ -1,6 +1,5 @@
 using BuildingBlocks;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.FeatureManagement;
 using Orders.Application.Ports;
 using Orders.Application.UseCases.CreateOrder;
 using Microsoft.Extensions.Options;
@@ -45,7 +44,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncWithoutIdempotencyKeyCreatesANewOrderOnEveryCall()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: true), BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1");
 
         var first = await handler.HandleAsync(command, CancellationToken.None);
@@ -61,7 +60,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncWithSameIdempotencyKeyReplaysTheFirstResultInsteadOfCreatingAgain()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: true), BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "retry-key-1");
 
         var first = await handler.HandleAsync(command, CancellationToken.None);
@@ -77,7 +76,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncWithDifferentIdempotencyKeysCreatesIndependentOrders()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: true), BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
 
         var first = await handler.HandleAsync(
             new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "key-a"),
@@ -91,19 +90,23 @@ public sealed class CreateOrderHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsyncIgnoresTheIdempotencyKeyWhenTheFeatureFlagIsDisabled()
+    public async Task HandleAsyncRejectsAnIdempotencyKeyReusedWithDifferentPayload()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: false), BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
-        var command = new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "retry-key-1");
+        var handler = new CreateOrderHandler(repository, BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
 
-        var first = await handler.HandleAsync(command, CancellationToken.None);
-        var second = await handler.HandleAsync(command, CancellationToken.None);
+        var first = await handler.HandleAsync(
+            new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "retry-key-1"),
+            CancellationToken.None);
+        var second = await handler.HandleAsync(
+            new CreateOrderCommand("customer-1", 11m, "BRL", "correlation-2", "instance-1", "retry-key-1"),
+            CancellationToken.None);
 
         Assert.False(first.WasReplayed);
         Assert.False(second.WasReplayed);
-        Assert.NotEqual(first.Order!.Id, second.Order!.Id);
-        Assert.Equal(2, repository.AddCallCount);
+        Assert.NotNull(second.IdempotencyConflict);
+        Assert.Null(second.Order);
+        Assert.Equal(1, repository.AddCallCount);
     }
 
     // ExpectedSubtotal - a line-item checkout this time, since
@@ -121,6 +124,25 @@ public sealed class CreateOrderHandlerTests
             Task.FromResult<CatalogProductSnapshot?>(new CatalogProductSnapshot(sku, $"Product {sku}", price, "BRL", sku, "books"));
     }
 
+    private sealed class CountingCatalogClient(decimal price) : ICatalogClient
+    {
+        public int CallCount { get; private set; }
+
+        public bool ThrowOnCall { get; set; }
+
+        public Task<CatalogProductSnapshot?> FindBySkuAsync(string sku, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            if (ThrowOnCall)
+            {
+                throw new HttpRequestException("Catalog must not be called for an idempotent replay.");
+            }
+
+            return Task.FromResult<CatalogProductSnapshot?>(
+                new CatalogProductSnapshot(sku, $"Product {sku}", price, "BRL", sku, "books"));
+        }
+    }
+
     private sealed class FixedCustomerRepository : ICustomerRepository
     {
         public Task<Customer> GetOrCreateAsync(string customerId, CancellationToken cancellationToken) =>
@@ -132,7 +154,7 @@ public sealed class CreateOrderHandlerTests
     {
         var repository = new FakeOrderRepository();
         var handler = new CreateOrderHandler(
-            repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: false), BuildLineItemPricingService(50m), NullLogger<CreateOrderHandler>.Instance);
+            repository, BuildLineItemPricingService(50m), NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand(
             "customer-1", 0m, null, "correlation-1", "instance-1",
             Items: [new CreateOrderItem("SKU-A", 2)], ExpectedSubtotal: 100m);
@@ -150,7 +172,7 @@ public sealed class CreateOrderHandlerTests
         var repository = new FakeOrderRepository();
         // Live catalog price moved to 60.00/unit; the cart last saw 50.00/unit.
         var handler = new CreateOrderHandler(
-            repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: false), BuildLineItemPricingService(60m), NullLogger<CreateOrderHandler>.Instance);
+            repository, BuildLineItemPricingService(60m), NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand(
             "customer-1", 0m, null, "correlation-1", "instance-1",
             Items: [new CreateOrderItem("SKU-A", 2)], ExpectedSubtotal: 100m);
@@ -170,7 +192,7 @@ public sealed class CreateOrderHandlerTests
     {
         var repository = new FakeOrderRepository();
         var handler = new CreateOrderHandler(
-            repository, new FakeIdempotencyStore(), new FakeFeatureManager(enabled: false), BuildLineItemPricingService(999m), NullLogger<CreateOrderHandler>.Instance);
+            repository, BuildLineItemPricingService(999m), NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand(
             "customer-1", 0m, null, "correlation-1", "instance-1",
             Items: [new CreateOrderItem("SKU-A", 1)], ExpectedSubtotal: null);
@@ -181,28 +203,72 @@ public sealed class CreateOrderHandlerTests
         Assert.NotNull(result.Order);
     }
 
-    private sealed class FakeOrderRepository : IOrderRepository
+    [Fact]
+    public async Task IdempotentReplayIsResolvedBeforeCatalogPricing()
+    {
+        var repository = new FakeOrderRepository();
+        var catalog = new CountingCatalogClient(50m);
+        var pricing = new OrderPricingService(
+            catalog,
+            new ThrowingCouponRepository(),
+            new FixedCustomerRepository(),
+            new NRulesPricingEngine(Options.Create(new PricingOptions { FlatShippingAmount = 0m })),
+            TimeProvider.System);
+        var handler = new CreateOrderHandler(repository, pricing, NullLogger<CreateOrderHandler>.Instance);
+        var command = new CreateOrderCommand(
+            "customer-1", 0m, null, "correlation-1", "instance-1", "line-retry-key",
+            Items: [new CreateOrderItem("SKU-A", 1)]);
+
+        var first = await handler.HandleAsync(command, CancellationToken.None);
+        catalog.ThrowOnCall = true;
+        var replay = await handler.HandleAsync(command, CancellationToken.None);
+
+        Assert.NotNull(first.Order);
+        Assert.True(replay.WasReplayed);
+        Assert.Equal(first.Order.Id, replay.Order!.Id);
+        Assert.Equal(1, catalog.CallCount);
+    }
+
+    private sealed class FakeOrderRepository : IOrderCreationRepository
     {
         private readonly Dictionary<Guid, Order> _orders = [];
+        private readonly Dictionary<(string CustomerId, string Key), OrderIdempotencyEntry> _idempotency = [];
 
         public int AddCallCount { get; private set; }
 
         public List<CouponReservation> CouponReservations { get; } = [];
 
-        public Task AddAsync(
+        public Task<OrderWriteResult> AddAsync(
             Order order,
             OutboxMessage outboxMessage,
             CouponReservation? couponReservation,
+            OrderIdempotencyClaim? idempotencyClaim,
             CancellationToken cancellationToken)
         {
+            if (idempotencyClaim is not null
+                && _idempotency.TryGetValue((idempotencyClaim.CustomerId, idempotencyClaim.IdempotencyKey), out var existing))
+            {
+                return Task.FromResult(new OrderWriteResult(
+                    string.Equals(existing.RequestHash, idempotencyClaim.RequestHash, StringComparison.Ordinal)
+                        ? OrderWriteOutcome.Replayed
+                        : OrderWriteOutcome.IdempotencyConflict,
+                    existing.OrderId,
+                    existing.RequestHash));
+            }
+
             AddCallCount++;
             _orders[order.Id] = order;
+            if (idempotencyClaim is not null)
+            {
+                _idempotency[(idempotencyClaim.CustomerId, idempotencyClaim.IdempotencyKey)] =
+                    new OrderIdempotencyEntry(order.Id, idempotencyClaim.RequestHash);
+            }
             if (couponReservation is not null)
             {
                 CouponReservations.Add(couponReservation);
             }
 
-            return Task.CompletedTask;
+            return Task.FromResult(new OrderWriteResult(OrderWriteOutcome.Created, order.Id));
         }
 
         public Task<Order?> FindByIdAsync(Guid id, CancellationToken cancellationToken)
@@ -210,34 +276,14 @@ public sealed class CreateOrderHandlerTests
             _orders.TryGetValue(id, out var order);
             return Task.FromResult(order);
         }
-    }
 
-    private sealed class FakeIdempotencyStore : IIdempotencyStore
-    {
-        private readonly Dictionary<string, CachedOrder> _entries = [];
-
-        public async Task<IdempotencyLookup> GetOrCreateAsync(
+        public Task<OrderIdempotencyEntry?> FindIdempotencyAsync(
+            string customerId,
             string idempotencyKey,
-            Func<CancellationToken, Task<CachedOrder>> factory,
             CancellationToken cancellationToken)
         {
-            if (_entries.TryGetValue(idempotencyKey, out var existing))
-            {
-                return new IdempotencyLookup(existing, WasReplayed: true);
-            }
-
-            var created = await factory(cancellationToken);
-            _entries[idempotencyKey] = created;
-            return new IdempotencyLookup(created, WasReplayed: false);
+            _idempotency.TryGetValue((customerId, idempotencyKey), out var entry);
+            return Task.FromResult(entry);
         }
-    }
-
-    private sealed class FakeFeatureManager(bool enabled) : IFeatureManager
-    {
-        public IAsyncEnumerable<string> GetFeatureNamesAsync() => AsyncEnumerable.Empty<string>();
-
-        public Task<bool> IsEnabledAsync(string feature) => Task.FromResult(enabled);
-
-        public Task<bool> IsEnabledAsync<TContext>(string feature, TContext context) => Task.FromResult(enabled);
     }
 }

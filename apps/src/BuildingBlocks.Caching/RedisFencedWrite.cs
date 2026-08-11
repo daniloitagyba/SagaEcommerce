@@ -3,7 +3,7 @@ using StackExchange.Redis;
 namespace BuildingBlocks;
 
 /// <summary>
-/// RedisOrderCache and RedisIdempotencyStore both take a
+/// RedisOrderCache takes a
 /// timed Redis lock before slow work and writing the result - the classic
 /// Redlock/Kleppmann hazard, since a holder paused past the lock's timeout
 /// can resume and clobber a second holder's newer write with stale data.

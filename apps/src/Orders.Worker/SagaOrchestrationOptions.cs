@@ -48,4 +48,10 @@ public sealed class SagaOrchestrationOptions
     public int TimeoutSeconds { get; init; } = 5;
 
     public int SweepIntervalMilliseconds { get; init; } = 1_000;
+
+    public int OutboxBatchSize { get; init; } = 50;
+
+    public int OutboxPollIntervalMilliseconds { get; init; } = 250;
+
+    public int OutboxMaximumRetryDelaySeconds { get; init; } = 60;
 }

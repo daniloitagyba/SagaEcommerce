@@ -6,8 +6,6 @@ using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Payments.Service.Data;
-using Payments.Service.Domain;
-using Payments.Service.Risk;
 
 namespace Payments.Service;
 
@@ -27,11 +25,9 @@ public sealed class InvalidPaymentDecisionRequestException(string message, Excep
 public sealed class PaymentDecisionRequestProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<PaymentDecisionRequestOptions> requestOptions,
-    IOptions<PaymentRiskOptions> riskOptions,
     ILogger<PaymentDecisionRequestProcessor> logger)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
-    private readonly PaymentRiskOptions _riskOptions = riskOptions.Value;
     private readonly PaymentDecisionRequestOptions _requestOptions = requestOptions.Value;
 
     public async Task<MessageProcessingResult> ProcessAsync(
@@ -85,27 +81,20 @@ public sealed class PaymentDecisionRequestProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        // The same scored risk rules the choreographed path runs, keeping the two saga paths genuinely comparable.
-        var riskEvaluator = serviceScope.ServiceProvider.GetRequiredService<PaymentRiskEvaluator>();
-        var assessment = await riskEvaluator.EvaluateAsync(
-            request.CustomerId,
-            request.Amount,
-            request.ShippingPostalPrefix,
+        var decisionCoordinator = serviceScope.ServiceProvider.GetRequiredService<PaymentDecisionCoordinator>();
+        var decision = await decisionCoordinator.GetOrCreateAsync(
+            new PaymentDecisionInput(
+                request.OrderId,
+                request.CustomerId,
+                request.Amount,
+                request.Currency,
+                request.PaymentMethod,
+                request.ShippingPostalPrefix,
+                correlationId),
             processedAt,
             cancellationToken);
-        var approved = assessment.Approved;
-
-        var payment = Payment.Authorize(
-            request.OrderId,
-            request.CustomerId,
-            request.Amount,
-            request.Currency,
-            request.PaymentMethod,
-            request.ShippingPostalPrefix,
-            approved,
-            processedAt,
-            _riskOptions.SettlementWindowFor(request.PaymentMethod),
-            correlationId);
+        var payment = decision.Payment;
+        var approved = payment.Approved;
         var reply = new PaymentDecisionReplied(request.OrderId, approved, correlationId, processedAt);
         var outboxMessage = OutboxMessage.Create(
             payment.Id,
@@ -116,16 +105,25 @@ public sealed class PaymentDecisionRequestProcessor(
             Activity.Current?.Id,
             Activity.Current?.TraceStateString);
 
-        dbContext.Payments.Add(payment);
         dbContext.OutboxMessages.Add(outboxMessage);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         activity?.SetTag("payment.approved", approved);
-        activity?.SetTag("payment.risk_score", assessment.Score);
+        activity?.SetTag("payment.decision_created", decision.Created);
+        activity?.SetTag("payment.risk_score", decision.Assessment?.Score);
         OrdersTelemetry.RecordProcessed("success");
         OrdersTelemetry.RecordPaymentDecided(approved);
-        PaymentsLog.DecidedWithRisk(logger, request.OrderId, payment.Id, approved, assessment.Score, assessment.ReasonSummary, correlationId);
+        if (decision.Assessment is { } assessment)
+        {
+            PaymentsLog.DecidedWithRisk(
+                logger, request.OrderId, payment.Id, approved,
+                assessment.Score, assessment.ReasonSummary, correlationId);
+        }
+        else
+        {
+            PaymentsLog.ReusedDecision(logger, request.OrderId, payment.Id, correlationId);
+        }
         return MessageProcessingResult.Processed;
     }
 

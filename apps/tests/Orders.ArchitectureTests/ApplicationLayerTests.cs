@@ -92,7 +92,6 @@ public class ApplicationLayerTests
     [Theory]
     [InlineData(typeof(IOrderRepository))]
     [InlineData(typeof(IOrderCache))]
-    [InlineData(typeof(IIdempotencyStore))]
     [InlineData(typeof(IOrderEventStoreRepository))]
     [InlineData(typeof(IOrderSummaryRepository))]
     public void PortImplementationsLiveInInfrastructure(Type portInterface)

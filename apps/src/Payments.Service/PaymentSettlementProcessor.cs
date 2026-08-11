@@ -27,10 +27,12 @@ public sealed class InvalidSettlementRequestException(string message, Exception?
 public sealed class PaymentSettlementProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<PaymentSettlementOptions> settlementOptions,
-    ILogger<PaymentSettlementProcessor> logger)
+    ILogger<PaymentSettlementProcessor> logger,
+    TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentSettlementOptions _options = settlementOptions.Value;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, string> consumeResult,
@@ -43,7 +45,9 @@ public sealed class PaymentSettlementProcessor(
             var topic when topic == _options.CancellationRequestedTopic => SettlementOperation.Cancel,
             _ => throw new InvalidSettlementRequestException($"'{consumeResult.Topic}' is not a settlement topic this processor subscribes to.")
         };
-        var (orderId, correlationId, reason, refundAmount) = Deserialize(consumeResult.Message.Value, operation);
+        var command = Deserialize(consumeResult.Message.Value, operation);
+        var orderId = command.OrderId;
+        var correlationId = command.CorrelationId;
 
         using var activity = OrdersTelemetry.StartActivity(
             $"payments.{operation.ToString().ToLowerInvariant()}",
@@ -64,9 +68,18 @@ public sealed class PaymentSettlementProcessor(
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
+        // Every state transition, including expiry, must serialize on the
+        // payment row. Kafka preserves order only inside one topic/partition;
+        // capture, refund and cancellation are different topics, and the
+        // expiry sweeper is not a Kafka consumer at all.
         var payment = await dbContext.Payments
-            .OrderByDescending(item => item.DecidedAt)
-            .FirstOrDefaultAsync(item => item.OrderId == orderId, cancellationToken);
+            .FromSqlInterpolated($"""
+                SELECT *
+                FROM payments
+                WHERE is_primary AND order_id = {orderId}
+                FOR UPDATE
+                """)
+            .SingleOrDefaultAsync(cancellationToken);
 
         if (payment is null)
         {
@@ -76,18 +89,48 @@ public sealed class PaymentSettlementProcessor(
             return MessageProcessingResult.Processed;
         }
 
-        var settledAt = DateTimeOffset.UtcNow;
+        if (operation == SettlementOperation.Refund)
+        {
+            if (!string.Equals(payment.Currency, command.Currency, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidSettlementRequestException(
+                    $"Refund currency '{command.Currency}' does not match payment currency '{payment.Currency}'.");
+            }
+
+            var inserted = await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO inbox_messages
+                    (consumer_name, event_id, topic, partition, "offset", correlation_id, processed_at)
+                VALUES
+                    ({_options.ConsumerGroup}, {command.OperationId!.Value}, {consumeResult.Topic},
+                     {consumeResult.Partition.Value}, {consumeResult.Offset.Value}, {correlationId}, {_timeProvider.GetUtcNow()})
+                ON CONFLICT (consumer_name, event_id) DO NOTHING
+                """,
+                cancellationToken);
+
+            if (inserted == 0)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                OrdersTelemetry.RecordProcessed("duplicate");
+                OrdersTelemetry.RecordInboxDuplicate(_options.ConsumerGroup);
+                PaymentSettlementLog.DuplicateRefund(logger, command.OperationId.Value, orderId);
+                return MessageProcessingResult.Duplicate;
+            }
+        }
+
+        var settledAt = _timeProvider.GetUtcNow();
         var changed = operation switch
         {
             SettlementOperation.Capture => payment.TryCapture(settledAt),
-            // Guarded cumulatively inside the domain, so a redelivered refund can't exceed what was ever charged.
-            SettlementOperation.Refund => payment.TryRefund(refundAmount, settledAt),
+            // ReturnId was claimed in the inbox above, in this same
+            // transaction, so a redelivery cannot apply this delta twice.
+            SettlementOperation.Refund => payment.TryRefund(command.RefundAmount, settledAt),
             // Decides void vs. refund from the payment's own
             // current state - see Payment.TryCancel. Replaces the old
             // method-agnostic "Void" operation entirely: nothing produces
             // that command any more, since a Pix payment is Captured the
             // instant it's approved and voiding it was never the right verb.
-            SettlementOperation.Cancel => payment.TryCancel(reason, settledAt),
+            SettlementOperation.Cancel => payment.TryCancel(command.Reason, settledAt),
             _ => throw new UnreachableException($"Unhandled {nameof(SettlementOperation)} '{operation}'.")
         };
 
@@ -184,7 +227,7 @@ public sealed class PaymentSettlementProcessor(
         return MessageProcessingResult.Processed;
     }
 
-    private static (Guid OrderId, string CorrelationId, string Reason, decimal RefundAmount) Deserialize(
+    private static SettlementCommand Deserialize(
         string payload,
         SettlementOperation operation)
     {
@@ -193,25 +236,42 @@ public sealed class PaymentSettlementProcessor(
             switch (operation)
             {
                 case SettlementOperation.Capture:
-                {
-                    var request = JsonSerializer.Deserialize<PaymentCaptureRequested>(payload, SerializerOptions)
-                        ?? throw new JsonException("Empty capture request.");
-                    return (request.OrderId, request.CorrelationId, "captured", 0m);
-                }
+                    {
+                        var request = JsonSerializer.Deserialize<PaymentCaptureRequested>(payload, SerializerOptions)
+                            ?? throw new JsonException("Empty capture request.");
+                        EnsureRequired(request.OrderId, request.CorrelationId);
+                        return new SettlementCommand(
+                            request.OrderId, request.CorrelationId, "captured", 0m, null, null);
+                    }
 
                 case SettlementOperation.Refund:
-                {
-                    var request = JsonSerializer.Deserialize<PaymentRefundRequested>(payload, SerializerOptions)
-                        ?? throw new JsonException("Empty refund request.");
-                    return (request.OrderId, request.CorrelationId, request.Reason, request.Amount);
-                }
+                    {
+                        var request = JsonSerializer.Deserialize<PaymentRefundRequested>(payload, SerializerOptions)
+                            ?? throw new JsonException("Empty refund request.");
+                        EnsureRequired(request.OrderId, request.CorrelationId);
+                        if (request.ReturnId == Guid.Empty || request.Amount <= 0m || string.IsNullOrWhiteSpace(request.Currency))
+                        {
+                            throw new InvalidSettlementRequestException(
+                                "Refund requests require a return identifier, positive amount and currency.");
+                        }
+
+                        return new SettlementCommand(
+                            request.OrderId,
+                            request.CorrelationId,
+                            request.Reason,
+                            request.Amount,
+                            request.ReturnId,
+                            request.Currency);
+                    }
 
                 case SettlementOperation.Cancel:
-                {
-                    var request = JsonSerializer.Deserialize<PaymentCancellationRequested>(payload, SerializerOptions)
-                        ?? throw new JsonException("Empty cancellation request.");
-                    return (request.OrderId, request.CorrelationId, request.Reason, 0m);
-                }
+                    {
+                        var request = JsonSerializer.Deserialize<PaymentCancellationRequested>(payload, SerializerOptions)
+                            ?? throw new JsonException("Empty cancellation request.");
+                        EnsureRequired(request.OrderId, request.CorrelationId);
+                        return new SettlementCommand(
+                            request.OrderId, request.CorrelationId, request.Reason, 0m, null, null);
+                    }
 
                 default:
                     throw new UnreachableException($"Unhandled {nameof(SettlementOperation)} '{operation}'.");
@@ -222,6 +282,23 @@ public sealed class PaymentSettlementProcessor(
             throw new InvalidSettlementRequestException("The Kafka message is not a valid settlement request.", exception);
         }
     }
+
+    private static void EnsureRequired(Guid orderId, string correlationId)
+    {
+        if (orderId == Guid.Empty || string.IsNullOrWhiteSpace(correlationId))
+        {
+            throw new InvalidSettlementRequestException(
+                "Settlement requests require an order identifier and correlation identifier.");
+        }
+    }
+
+    private sealed record SettlementCommand(
+        Guid OrderId,
+        string CorrelationId,
+        string Reason,
+        decimal RefundAmount,
+        Guid? OperationId,
+        string? Currency);
 
     private enum SettlementOperation
     {
@@ -253,4 +330,7 @@ public sealed partial class PaymentSettlementLog
 
     [LoggerMessage(EventId = 5105, Level = LogLevel.Warning, Message = "Settlement mismatch for order {OrderId}: {Operation} could not apply because payment {PaymentId} is already {State} - reply published so the saga can react, not just this log line")]
     public static partial void SettlementMismatch(ILogger logger, Guid orderId, Guid paymentId, string operation, string state, string correlationId);
+
+    [LoggerMessage(EventId = 5106, Level = LogLevel.Information, Message = "Skipped duplicate refund for return {ReturnId} and order {OrderId}")]
+    public static partial void DuplicateRefund(ILogger logger, Guid returnId, Guid orderId);
 }

@@ -39,9 +39,6 @@ public sealed class AdvanceFulfillmentHandlerTests
 
     private sealed class FakeOrderRepository(Order? order) : IOrderRepository
     {
-        public Task AddAsync(Order order, OutboxMessage outboxMessage, CouponReservation? couponReservation, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("Not used by AdvanceFulfillmentHandler.");
-
         public Task<Order?> FindByIdAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(order);
     }
 

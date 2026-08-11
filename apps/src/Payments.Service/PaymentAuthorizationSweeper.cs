@@ -92,7 +92,8 @@ public sealed class PaymentAuthorizationSweeper(
             .SqlQuery<Guid>($"""
                 SELECT id AS "Value"
                 FROM payments
-                WHERE state IN ({PaymentStates.Authorized}, {PaymentStates.AwaitingPayment})
+                WHERE is_primary
+                  AND state IN ({PaymentStates.Authorized}, {PaymentStates.AwaitingPayment})
                   AND authorization_expires_at IS NOT NULL
                   AND authorization_expires_at <= {now}
                 ORDER BY authorization_expires_at

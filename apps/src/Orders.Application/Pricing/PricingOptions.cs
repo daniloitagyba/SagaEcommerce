@@ -27,10 +27,18 @@ public sealed class PricingOptions
     /// <summary>Shipping cost by zone, keyed on the CEP's first two digits - a flat rate was fine before there was an address to read.</summary>
     public Dictionary<string, decimal> ShippingByPostalPrefix { get; init; } = new(StringComparer.Ordinal)
     {
-        ["01"] = 14.90m, ["02"] = 14.90m, ["03"] = 14.90m, ["04"] = 14.90m, ["05"] = 14.90m,
-        ["20"] = 19.90m, ["21"] = 19.90m, ["22"] = 19.90m,
-        ["30"] = 24.90m, ["40"] = 29.90m,
-        ["66"] = 49.90m, ["69"] = 59.90m
+        ["01"] = 14.90m,
+        ["02"] = 14.90m,
+        ["03"] = 14.90m,
+        ["04"] = 14.90m,
+        ["05"] = 14.90m,
+        ["20"] = 19.90m,
+        ["21"] = 19.90m,
+        ["22"] = 19.90m,
+        ["30"] = 24.90m,
+        ["40"] = 29.90m,
+        ["66"] = 49.90m,
+        ["69"] = 59.90m
     };
 
     /// <summary>Charged when the destination is outside every known zone.</summary>
@@ -39,7 +47,12 @@ public sealed class PricingOptions
     /// <summary>Tax rate by region, replacing the single global TaxRatePercentage.</summary>
     public Dictionary<string, decimal> TaxRateByRegion { get; init; } = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["SP"] = 18m, ["RJ"] = 20m, ["MG"] = 18m, ["BA"] = 19m, ["PA"] = 17m, ["AM"] = 20m
+        ["SP"] = 18m,
+        ["RJ"] = 20m,
+        ["MG"] = 18m,
+        ["BA"] = 19m,
+        ["PA"] = 17m,
+        ["AM"] = 20m
     };
 
     /// <summary>Orders at or above this subtotal ship free.</summary>

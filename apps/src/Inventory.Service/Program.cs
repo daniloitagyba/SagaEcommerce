@@ -125,6 +125,7 @@ builder.Services.AddSingleton<IAdminClient>(serviceProvider =>
     return new AdminClientBuilder(config).Build();
 });
 builder.Services.AddOrdersResilience();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IInventoryEventPublisher, KafkaInventoryEventPublisher>();
 builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
 builder.Services.AddScoped<WarehouseAllocationStore>();

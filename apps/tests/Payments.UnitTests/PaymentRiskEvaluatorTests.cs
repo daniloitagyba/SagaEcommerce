@@ -241,4 +241,22 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
         Assert.Contains(assessment.Signals, signal => signal.Code == "VELOCITY");
         Assert.Contains(assessment.Signals, signal => signal.Code == "NEW_ACCOUNT");
     }
+
+    [Fact]
+    public async Task BoundedHistoryAlwaysUsesTheMostRecentPayments()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await SeedAsync("bounded", 10m, now.AddDays(-90), postalPrefix: "01");
+        await SeedAsync("bounded", 10m, now.AddDays(-80), postalPrefix: "01");
+        await SeedAsync("bounded", 10m, now.AddDays(-70), postalPrefix: "01");
+        await SeedAsync("bounded", 40m, now.AddMinutes(-3), postalPrefix: "66");
+        await SeedAsync("bounded", 40m, now.AddMinutes(-2), postalPrefix: "66");
+        await SeedAsync("bounded", 40m, now.AddMinutes(-1), postalPrefix: "66");
+
+        var assessment = await Evaluator(new PaymentRiskOptions { HistoryMaxRows = 3 })
+            .EvaluateAsync("bounded", 40m, "66", now, CancellationToken.None);
+
+        Assert.Contains(assessment.Signals, signal => signal.Code == "VELOCITY");
+        Assert.DoesNotContain(assessment.Signals, signal => signal.Code == "ADDRESS_MISMATCH");
+    }
 }

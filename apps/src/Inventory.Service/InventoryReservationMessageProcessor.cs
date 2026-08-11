@@ -27,10 +27,12 @@ public sealed class InvalidReservationMessageException(string message, Exception
 public sealed partial class InventoryReservationMessageProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<InventoryKafkaOptions> kafkaOptions,
-    ILogger<InventoryReservationMessageProcessor> logger)
+    ILogger<InventoryReservationMessageProcessor> logger,
+    TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly InventoryKafkaOptions _kafkaOptions = kafkaOptions.Value;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, string> consumeResult,
@@ -68,8 +70,9 @@ public sealed partial class InventoryReservationMessageProcessor(
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await AcquireSkuLockAsync(dbContext, request.Sku, cancellationToken);
 
-        var processedAt = DateTimeOffset.UtcNow;
+        var processedAt = _timeProvider.GetUtcNow();
         var insertedRows = await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
             INSERT INTO inbox_messages (consumer_name, event_id, topic, partition, "offset", correlation_id, processed_at)
@@ -86,14 +89,9 @@ public sealed partial class InventoryReservationMessageProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        // Deliberately a plain read-then-write, no SELECT ... FOR UPDATE.
-        // Correctness for concurrent requests against the SAME Sku relies
-        // entirely on Kafka never handing this Sku's partition to more than
-        // one consumer instance at a time - see InventoryContracts.cs.
-        // The warehouse network decides, not a single row.
-        // The decision itself lives in WarehouseAllocationStore
-        // now, shared with the backorder release path below - see
-        // TryReserveAsync's own comment for why that sharing matters.
+        // The transaction-scoped SKU lock above spans every topic and every
+        // replica. Kafka ordering alone cannot do that because reserve,
+        // commit, release and restock are separate topics.
         var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
         var itemExists = await dbContext.InventoryItems.AnyAsync(i => i.Sku == request.Sku, cancellationToken);
 
@@ -202,7 +200,6 @@ public sealed partial class InventoryReservationMessageProcessor(
             activityName: "inventory.commit",
             settleAllocation: true,
             commitAllocation: true,
-            mutate: (item, quantity, now) => item.TryCommit(quantity, now),
             insufficientReason: "reservation not found or already settled",
             makeReply: (reservationId, orderId, sku, quantity, succeeded, reason, corrId, decidedAt) =>
                 (nameof(InventoryReservationCommitReplied),
@@ -231,7 +228,6 @@ public sealed partial class InventoryReservationMessageProcessor(
             activityName: "inventory.release",
             settleAllocation: true,
             commitAllocation: false,
-            mutate: (item, quantity, now) => item.TryRelease(quantity, now),
             insufficientReason: "reservation not found or already settled",
             makeReply: (reservationId, orderId, sku, quantity, succeeded, reason, corrId, decidedAt) =>
                 (nameof(InventoryReservationReleaseReplied),
@@ -271,7 +267,6 @@ public sealed partial class InventoryReservationMessageProcessor(
             activityName: "inventory.restock",
             settleAllocation: false,
             commitAllocation: false,
-            mutate: (item, quantity, now) => { item.Restock(quantity, now); return true; },
             insufficientReason: "sku not found",
             makeReply: (returnId, orderId, sku, quantity, succeeded, reason, corrId, decidedAt) =>
                 (nameof(InventoryRestockReplied),
@@ -281,12 +276,9 @@ public sealed partial class InventoryReservationMessageProcessor(
             cancellationToken);
     }
 
-    // Commit and Release are structurally identical to each other (and to
-    // Reserve, minus the "unknown sku" case, since by this point the sku is
-    // known to exist): inbox-dedup, mutate one InventoryItem, write one
-    // outbox reply. Shared here since the only real difference is which
-    // InventoryItem method to call and which reply type to build - the
-    // transactional shape itself isn't worth re-deriving twice.
+    // Commit, release, and restock share the same transactional inbox/outbox
+    // boundary. WarehouseAllocationStore owns the stock mutation and keeps
+    // InventoryItem synchronized as a compatibility projection.
     private async Task<MessageProcessingResult> ProcessSettlementAsync(
         ConsumeResult<string, string> consumeResult,
         Guid reservationId,
@@ -298,7 +290,6 @@ public sealed partial class InventoryReservationMessageProcessor(
         string activityName,
         bool settleAllocation,
         bool commitAllocation,
-        Func<InventoryItem, int, DateTimeOffset, bool> mutate,
         string insufficientReason,
         Func<Guid, Guid, string, int, bool, string?, string, DateTimeOffset, (string EventType, object Reply)> makeReply,
         Action<Guid, string, bool, string> logDecided,
@@ -329,8 +320,9 @@ public sealed partial class InventoryReservationMessageProcessor(
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await AcquireSkuLockAsync(dbContext, sku, cancellationToken);
 
-        var processedAt = DateTimeOffset.UtcNow;
+        var processedAt = _timeProvider.GetUtcNow();
         var inboxConsumerName = $"{_kafkaOptions.ConsumerGroup}-{inboxConsumerSuffix}";
         var insertedRows = await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
@@ -348,28 +340,18 @@ public sealed partial class InventoryReservationMessageProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        // Replay the recorded allocation before touching the
-        // aggregate view. A reservation made before per-warehouse tracking existed has no
-        // recorded plan, and TrySettleReservationAsync says so rather than
-        // failing - the single-warehouse path below still settles it, so
-        // orders in flight during the rollout are not stranded.
-        if (settleAllocation)
-        {
-            var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
-            await allocationStore.TrySettleReservationAsync(reservationId, commitAllocation, processedAt, cancellationToken);
-        }
-        else
-        {
-            var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
-            await allocationStore.TryRestockAsync(sku, quantity, processedAt, cancellationToken);
-        }
-
-        var item = await dbContext.InventoryItems.FirstOrDefaultAsync(i => i.Sku == sku, cancellationToken);
-        var succeeded = item is not null && mutate(item, quantity, processedAt);
+        // Replay only the recorded allocation. Guessing a warehouse for an
+        // unknown reservation could settle stock held by a different order;
+        // absence is therefore an explicit failed reply, never a fallback
+        // mutation of the compatibility projection.
+        var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
+        var succeeded = settleAllocation
+            ? await allocationStore.TrySettleReservationAsync(reservationId, commitAllocation, processedAt, cancellationToken)
+            : await allocationStore.TryRestockAsync(sku, quantity, processedAt, cancellationToken);
         var reason = succeeded ? null : insufficientReason;
 
         await UpdateReservationLedgerAsync(
-            scope.ServiceProvider, succeeded, settleAllocation, commitAllocation,
+            allocationStore, succeeded, settleAllocation, commitAllocation,
             reservationId, orderId, sku, quantity, processedAt, cancellationToken);
 
         var (eventType, reply) = makeReply(reservationId, orderId, sku, quantity, succeeded, reason, correlationId, processedAt);
@@ -391,7 +373,6 @@ public sealed partial class InventoryReservationMessageProcessor(
         // restock above used, so it sees its own write.
         if (!settleAllocation && succeeded)
         {
-            var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
             await ReleaseBackordersAsync(dbContext, allocationStore, sku, processedAt, cancellationToken);
         }
 
@@ -402,6 +383,19 @@ public sealed partial class InventoryReservationMessageProcessor(
         OrdersTelemetry.RecordProcessed("success");
         logDecided(reservationId, sku, succeeded, correlationId);
         return MessageProcessingResult.Processed;
+    }
+
+    private static async Task AcquireSkuLockAsync(
+        InventoryDbContext dbContext,
+        string sku,
+        CancellationToken cancellationToken)
+    {
+        // A dedicated seed keeps this lock namespace separate from any
+        // future advisory locks in the same database. Transaction-scoped:
+        // commit, rollback and process death all release it automatically.
+        _ = await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock(hashtextextended({sku}, 73000001))",
+            cancellationToken);
     }
 
     private static TRequest DeserializeAndValidate<TRequest>(

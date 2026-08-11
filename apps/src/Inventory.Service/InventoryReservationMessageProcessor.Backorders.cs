@@ -114,7 +114,7 @@ public sealed partial class InventoryReservationMessageProcessor
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
-        var processedAt = DateTimeOffset.UtcNow;
+        var processedAt = _timeProvider.GetUtcNow();
         var inboxConsumerName = $"{_kafkaOptions.ConsumerGroup}-backorder-cancel";
         var insertedRows = await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""

@@ -39,10 +39,11 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
         var item = InventoryItem.Create("SKU-TEST-001", 10, DateTimeOffset.UtcNow);
         item.TryReserve(4, DateTimeOffset.UtcNow);
         dbContext.InventoryItems.Add(item);
-        // Needed since the allocator refuses reservation outright with no
-        // warehouse network - the 6 here mirrors the item's own Available
-        // after the 4 already reserved, keeping aggregate and network in agreement.
-        dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-TEST-001", "WH-TEST", 6, reorderPoint: 0, DateTimeOffset.UtcNow));
+        // Keep the warehouse source of truth and its compatibility projection
+        // aligned: both start at Available=6/Reserved=4.
+        var warehouseStock = WarehouseStock.Create("SKU-TEST-001", "WH-TEST", 10, reorderPoint: 0, DateTimeOffset.UtcNow);
+        warehouseStock.TryReserve(4, DateTimeOffset.UtcNow);
+        dbContext.WarehouseStocks.Add(warehouseStock);
         await dbContext.SaveChangesAsync();
     }
 
@@ -57,6 +58,7 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
     {
         var processor = CreateProcessor();
         var reservationId = Guid.NewGuid();
+        await SeedAllocationAsync(reservationId, 4);
 
         var result = await processor.ProcessCommitAsync(CreateCommitConsumeResult(reservationId, "SKU-TEST-001", 4), CancellationToken.None);
 
@@ -79,6 +81,7 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
     {
         var processor = CreateProcessor();
         var reservationId = Guid.NewGuid();
+        await SeedAllocationAsync(reservationId, 4);
 
         var result = await processor.ProcessReleaseAsync(CreateReleaseConsumeResult(reservationId, "SKU-TEST-001", 4), CancellationToken.None);
 
@@ -125,6 +128,7 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
     {
         var processor = CreateProcessor();
         var reservationId = Guid.NewGuid();
+        await SeedAllocationAsync(reservationId, 4);
 
         var first = await processor.ProcessCommitAsync(CreateCommitConsumeResult(reservationId, "SKU-TEST-001", 4), CancellationToken.None);
         var second = await processor.ProcessCommitAsync(CreateCommitConsumeResult(reservationId, "SKU-TEST-001", 4), CancellationToken.None);
@@ -138,6 +142,73 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
 
         Assert.Equal(0, item.ReservedQuantity);
         Assert.Equal(1, await dbContext.OutboxMessages.CountAsync());
+    }
+
+    [Fact]
+    public async Task SettlementDoesNotPartiallyMutateWhenAnyAllocationLegIsInvalid()
+    {
+        var reservationId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+
+        await using (var seedScope = _serviceProvider.CreateAsyncScope())
+        {
+            var seedContext = seedScope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            var item = InventoryItem.Create("SKU-ATOMIC", 10, now);
+            item.TryReserve(3, now);
+            var first = WarehouseStock.Create("SKU-ATOMIC", "WH-A", 5, 0, now);
+            first.TryReserve(2, now);
+            var second = WarehouseStock.Create("SKU-ATOMIC", "WH-B", 5, 0, now);
+
+            await seedContext.AddRangeAsync(item, first, second);
+            await seedContext.ReservationAllocations.AddRangeAsync(
+                ReservationAllocation.Create(reservationId, "SKU-ATOMIC", "WH-A", 2, now),
+                ReservationAllocation.Create(reservationId, "SKU-ATOMIC", "WH-B", 1, now));
+            await seedContext.SaveChangesAsync();
+        }
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
+        var settled = await store.TrySettleReservationAsync(reservationId, commit: true, now, CancellationToken.None);
+
+        Assert.False(settled);
+        var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        Assert.Equal(2, (await dbContext.WarehouseStocks.SingleAsync(stock => stock.Sku == "SKU-ATOMIC" && stock.WarehouseCode == "WH-A")).ReservedQuantity);
+        Assert.Equal(3, (await dbContext.InventoryItems.SingleAsync(item => item.Sku == "SKU-ATOMIC")).ReservedQuantity);
+        Assert.Equal(2, await dbContext.ReservationAllocations.CountAsync(allocation => allocation.ReservationId == reservationId));
+    }
+
+    [Fact]
+    public async Task ReserveAndRestockOnDifferentTopicsSerializeBySku()
+    {
+        var processor = CreateProcessor();
+        var reservationId = Guid.NewGuid();
+
+        await Task.WhenAll(
+            processor.ProcessAsync(
+                CreateReserveConsumeResult(reservationId, "SKU-TEST-001", 2),
+                CancellationToken.None),
+            processor.ProcessRestockAsync(
+                CreateRestockConsumeResult("SKU-TEST-001", 3),
+                CancellationToken.None));
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var item = await dbContext.InventoryItems.SingleAsync(entity => entity.Sku == "SKU-TEST-001");
+        var stock = await dbContext.WarehouseStocks.SingleAsync(entity => entity.Sku == "SKU-TEST-001");
+
+        Assert.Equal(7, item.AvailableQuantity);
+        Assert.Equal(6, item.ReservedQuantity);
+        Assert.Equal(item.AvailableQuantity, stock.AvailableQuantity);
+        Assert.Equal(item.ReservedQuantity, stock.ReservedQuantity);
+    }
+
+    private async Task SeedAllocationAsync(Guid reservationId, int quantity)
+    {
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        dbContext.ReservationAllocations.Add(
+            ReservationAllocation.Create(reservationId, "SKU-TEST-001", "WH-TEST", quantity, DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync();
     }
 
     private InventoryReservationMessageProcessor CreateProcessor()
@@ -165,6 +236,14 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
     {
         var request = new InventoryReservationReleaseRequested(reservationId, Guid.NewGuid(), sku, quantity, "integration-correlation", DateTimeOffset.UtcNow);
         return CreateConsumeResult("inventory.reservation-release-requested.v1", sku, request);
+    }
+
+    private static ConsumeResult<string, string> CreateRestockConsumeResult(string sku, int quantity)
+    {
+        var request = new InventoryRestockRequested(
+            Guid.NewGuid(), Guid.NewGuid(), sku, quantity,
+            "integration-correlation", DateTimeOffset.UtcNow);
+        return CreateConsumeResult("inventory.restock-requested.v1", sku, request);
     }
 
     private static ConsumeResult<string, string> CreateConsumeResult<TRequest>(string topic, string sku, TRequest request)

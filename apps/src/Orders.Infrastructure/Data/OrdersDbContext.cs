@@ -23,6 +23,8 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
 
     public DbSet<InboxMessage> InboxMessages => Set<InboxMessage>();
 
+    public DbSet<OrderIdempotencyRecord> OrderIdempotencyRecords => Set<OrderIdempotencyRecord>();
+
     public DbSet<OrderSummary> OrderSummaries => Set<OrderSummary>();
 
     public DbSet<OrderEvent> OrderEvents => Set<OrderEvent>();
@@ -40,6 +42,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         ConfigureCoupon(modelBuilder);
         ConfigureOutbox(modelBuilder);
         ConfigureInbox(modelBuilder);
+        ConfigureOrderIdempotency(modelBuilder);
         ConfigureOrderSummary(modelBuilder);
         ConfigureOrderEvent(modelBuilder);
         ConfigureSagaOrchestrationState(modelBuilder);
@@ -243,6 +246,22 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
             .HasDatabaseName("ix_inbox_messages_source_position");
         inbox.HasIndex(item => item.ProcessedAt)
             .HasDatabaseName("ix_inbox_messages_processed_at");
+    }
+
+    private static void ConfigureOrderIdempotency(ModelBuilder modelBuilder)
+    {
+        var idempotency = modelBuilder.Entity<OrderIdempotencyRecord>();
+
+        idempotency.ToTable("order_idempotency");
+        idempotency.HasKey(item => new { item.CustomerId, item.IdempotencyKey });
+        idempotency.Property(item => item.CustomerId).HasColumnName("customer_id").HasMaxLength(100);
+        idempotency.Property(item => item.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(200);
+        idempotency.Property(item => item.RequestHash).HasColumnName("request_hash").HasMaxLength(64).IsRequired();
+        idempotency.Property(item => item.OrderId).HasColumnName("order_id").ValueGeneratedNever();
+        idempotency.Property(item => item.CreatedAt).HasColumnName("created_at").IsRequired();
+        idempotency.HasIndex(item => item.OrderId)
+            .IsUnique()
+            .HasDatabaseName("ux_order_idempotency_order_id");
     }
 
     private static void ConfigureOrderSummary(ModelBuilder modelBuilder)

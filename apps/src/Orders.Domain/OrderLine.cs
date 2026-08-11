@@ -59,7 +59,26 @@ public sealed class OrderLine
 
     internal static OrderLine Create(Guid orderId, OrderLineDraft draft)
     {
+        if (orderId == Guid.Empty)
+        {
+            throw new ArgumentException("Order id is required.", nameof(orderId));
+        }
+
+        if (string.IsNullOrWhiteSpace(draft.Sku) || string.IsNullOrWhiteSpace(draft.ProductName))
+        {
+            throw new ArgumentException("SKU and product name are required.", nameof(draft));
+        }
+
+        if (draft.Quantity <= 0 || draft.UnitPrice < 0m || draft.LineDiscount < 0m || draft.LineTax < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(draft), "Quantity must be positive and monetary values cannot be negative.");
+        }
+
         var lineSubtotal = draft.UnitPrice * draft.Quantity;
+        if (draft.LineDiscount > lineSubtotal)
+        {
+            throw new ArgumentOutOfRangeException(nameof(draft), "Line discount cannot exceed line subtotal.");
+        }
 
         return new OrderLine
         {

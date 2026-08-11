@@ -1,8 +1,6 @@
 using BuildingBlocks;
 using Npgsql;
 using NpgsqlTypes;
-using Polly;
-using Polly.Registry;
 
 namespace Orders.Worker;
 
@@ -13,10 +11,7 @@ namespace Orders.Worker;
 /// checkouts, no sale. Raw Npgsql, not EF, matching OrderStatusStore /
 /// SagaOrchestrationStore: EF owns the schema, not the worker's hot paths.
 /// </summary>
-public sealed class CouponRedemptionStore(
-    NpgsqlDataSource dataSource,
-    ResiliencePipelineProvider<string> pipelineProvider,
-    ILogger<CouponRedemptionStore> logger)
+public sealed class CouponRedemptionStore
 {
     // Guarded on state = 'Reserved', so a redelivered message or a second saga path is a no-op, not a double count.
     private const string ConfirmSql = """
@@ -44,61 +39,47 @@ public sealed class CouponRedemptionStore(
         WHERE coupons.code = released.code;
         """;
 
-    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
+    public Task<bool> TryConfirmAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string code,
+        Guid orderId,
+        DateTimeOffset settledAt,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, transaction, ConfirmSql, code, orderId, settledAt, false, cancellationToken);
 
-    public async Task<bool> TryConfirmAsync(string code, Guid orderId, CancellationToken cancellationToken)
-    {
-        var settled = await ExecuteAsync(ConfirmSql, code, orderId, CouponRedemptionState.Confirmed, cancellationToken);
-        if (settled)
-        {
-            CouponRedemptionLog.Confirmed(logger, code, orderId);
-        }
+    public Task<bool> TryReleaseAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string code,
+        Guid orderId,
+        DateTimeOffset settledAt,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, transaction, ReleaseSql, code, orderId, settledAt, true, cancellationToken);
 
-        return settled;
-    }
-
-    public async Task<bool> TryReleaseAsync(string code, Guid orderId, CancellationToken cancellationToken)
-    {
-        var settled = await ExecuteAsync(ReleaseSql, code, orderId, CouponRedemptionState.Released, cancellationToken);
-        if (settled)
-        {
-            CouponRedemptionLog.Released(logger, code, orderId);
-        }
-
-        return settled;
-    }
-
-    private async Task<bool> ExecuteAsync(
+    private static async Task<bool> ExecuteAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         string sql,
         string code,
         Guid orderId,
-        string targetState,
+        DateTimeOffset settledAt,
+        bool isRelease,
         CancellationToken cancellationToken)
     {
-        return await _pipeline.ExecuteAsync(async ct =>
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("code", NpgsqlDbType.Varchar, code);
+        command.Parameters.AddWithValue("order_id", NpgsqlDbType.Uuid, orderId);
+        command.Parameters.AddWithValue("reserved_state", NpgsqlDbType.Varchar, CouponRedemptionState.Reserved);
+        command.Parameters.AddWithValue("settled_at", NpgsqlDbType.TimestampTz, settledAt);
+        command.Parameters.AddWithValue("confirmed_state", NpgsqlDbType.Varchar, CouponRedemptionState.Confirmed);
+        if (isRelease)
         {
-            await using var command = dataSource.CreateCommand(sql);
-            command.Parameters.AddWithValue("code", NpgsqlDbType.Varchar, code);
-            command.Parameters.AddWithValue("order_id", NpgsqlDbType.Uuid, orderId);
-            command.Parameters.AddWithValue("reserved_state", NpgsqlDbType.Varchar, CouponRedemptionState.Reserved);
-            command.Parameters.AddWithValue("settled_at", NpgsqlDbType.TimestampTz, DateTimeOffset.UtcNow);
+            command.Parameters.AddWithValue("released_state", NpgsqlDbType.Varchar, CouponRedemptionState.Released);
+        }
 
-            command.Parameters.AddWithValue("confirmed_state", NpgsqlDbType.Varchar, CouponRedemptionState.Confirmed);
-            if (targetState == CouponRedemptionState.Released)
-            {
-                command.Parameters.AddWithValue("released_state", NpgsqlDbType.Varchar, CouponRedemptionState.Released);
-            }
-
-            return await command.ExecuteNonQueryAsync(ct) > 0;
-        }, cancellationToken);
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
-}
-
-public sealed partial class CouponRedemptionLog
-{
-    [LoggerMessage(EventId = 9100, Level = LogLevel.Information, Message = "Confirmed redemption of coupon {Code} for order {OrderId}")]
-    public static partial void Confirmed(ILogger logger, string code, Guid orderId);
-
-    [LoggerMessage(EventId = 9101, Level = LogLevel.Information, Message = "Released redemption of coupon {Code} for order {OrderId} - the slot is back in the pool")]
-    public static partial void Released(ILogger logger, string code, Guid orderId);
 }

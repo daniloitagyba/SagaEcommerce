@@ -84,9 +84,6 @@ public sealed class GetOrderHandlerTests
 
         public int FindByIdCallCount { get; private set; }
 
-        public Task AddAsync(Order order, OutboxMessage outboxMessage, CouponReservation? couponReservation, CancellationToken cancellationToken) =>
-            throw new NotSupportedException("GetOrderHandler never writes.");
-
         public Task<Order?> FindByIdAsync(Guid id, CancellationToken cancellationToken)
         {
             FindByIdCallCount++;

@@ -54,10 +54,7 @@ public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDis
         _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
         _producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = _redpanda.GetBootstrapAddress() }).Build();
 
-        var couponStore = new CouponRedemptionStore(_dataSource, pipelineProvider, NullLogger<CouponRedemptionStore>.Instance);
-        var settlementRequester = new PaymentSettlementRequester(_producer, Options.Create(new PaymentSettlementRequestOptions()), NullLogger<PaymentSettlementRequester>.Instance);
-        var customerTierStore = new CustomerTierStore(_dataSource, pipelineProvider, NullLogger<CustomerTierStore>.Instance);
-        _orderStatusStore = new OrderStatusStore(_dataSource, couponStore, settlementRequester, customerTierStore, pipelineProvider);
+        _orderStatusStore = CreateOrderStatusStore(pipelineProvider);
     }
 
     public async Task DisposeAsync()
@@ -68,6 +65,9 @@ public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDis
     }
 
     public void Dispose() => _producer.Dispose();
+
+    private OrderStatusStore CreateOrderStatusStore(ResiliencePipelineProvider<string> pipelineProvider) =>
+        new(_dataSource, new CouponRedemptionStore(), new PaymentSettlementRequester(), new CustomerTierStore(), pipelineProvider);
 
     [Fact]
     public async Task AShippedOrderMovesToFulfillmentHoldWhenSettlementComesBackExpiredInsteadOfCaptured()
@@ -120,12 +120,12 @@ public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDis
     private OrderSagaReplyConsumer CreateConsumer() =>
         new(
             Options.Create(new SagaOrchestrationOptions()),
-            _producer,
             new SagaOrchestrationStore(_dataSource, new ServiceCollection().AddOrdersResilience().BuildServiceProvider().GetRequiredService<ResiliencePipelineProvider<string>>()),
             _orderStatusStore,
             new NoOpCacheInvalidator(),
             new NoOpBestsellersStore(),
             new NoOpCatalogClient(),
+            TimeProvider.System,
             NullLogger<OrderSagaReplyConsumer>.Instance);
 
     private static ConsumeResult<string, string> SettlementReply(Guid orderId, string state)

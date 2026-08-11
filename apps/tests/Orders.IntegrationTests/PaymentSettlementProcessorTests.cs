@@ -180,6 +180,47 @@ public sealed class PaymentSettlementProcessorTests : IAsyncLifetime
         Assert.Empty(dbContext.OutboxMessages);
     }
 
+    [Fact]
+    public async Task RedeliveringTheSamePartialRefundDoesNotRefundTwice()
+    {
+        var orderId = Guid.NewGuid();
+        var returnId = Guid.NewGuid();
+        await SeedApprovedPaymentAsync(orderId, PaymentMethods.Pix, PaymentStates.Captured);
+        var processor = CreateProcessor();
+        var refund = RefundConsumeResult(orderId, returnId, 25m);
+
+        var first = await processor.ProcessAsync(refund, CancellationToken.None);
+        var replay = await processor.ProcessAsync(refund, CancellationToken.None);
+
+        Assert.Equal(MessageProcessingResult.Processed, first);
+        Assert.Equal(MessageProcessingResult.Duplicate, replay);
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
+        var payment = await dbContext.Payments.SingleAsync();
+        Assert.Equal(25m, payment.RefundedAmount);
+        Assert.Single(await dbContext.OutboxMessages.ToListAsync());
+        Assert.Single(await dbContext.Set<InboxRecord>().ToListAsync());
+    }
+
+    [Fact]
+    public async Task ConcurrentCaptureAndCancellationCannotOverwriteEachOther()
+    {
+        var orderId = Guid.NewGuid();
+        await SeedPaymentAsync(orderId, PaymentStates.Authorized);
+        var processor = CreateProcessor();
+
+        await Task.WhenAll(
+            processor.ProcessAsync(CaptureConsumeResult(orderId), CancellationToken.None),
+            processor.ProcessAsync(CancellationConsumeResult(orderId), CancellationToken.None));
+
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
+        var payment = await dbContext.Payments.SingleAsync();
+        Assert.Contains(payment.State, new[] { PaymentStates.Voided, PaymentStates.Refunded });
+        Assert.Equal(2, await dbContext.OutboxMessages.CountAsync());
+    }
+
     private async Task SeedApprovedPaymentAsync(Guid orderId, string method, string targetState)
     {
         var now = DateTimeOffset.UtcNow;
@@ -245,6 +286,33 @@ public sealed class PaymentSettlementProcessorTests : IAsyncLifetime
         return new ConsumeResult<string, string>
         {
             Topic = "payments.cancellation-requested.v1",
+            Partition = new Partition(0),
+            Offset = new Offset(0),
+            Message = new Message<string, string>
+            {
+                Key = orderId.ToString("N"),
+                Value = System.Text.Json.JsonSerializer.Serialize(request, SerializerOptions),
+                Headers = new Headers()
+            }
+        };
+    }
+
+    private static ConsumeResult<string, string> RefundConsumeResult(
+        Guid orderId,
+        Guid returnId,
+        decimal amount)
+    {
+        var request = new PaymentRefundRequested(
+            orderId,
+            returnId,
+            amount,
+            "BRL",
+            "returned item",
+            "settlement-test-correlation",
+            DateTimeOffset.UtcNow);
+        return new ConsumeResult<string, string>
+        {
+            Topic = "payments.refund-requested.v1",
             Partition = new Partition(0),
             Offset = new Offset(0),
             Message = new Message<string, string>

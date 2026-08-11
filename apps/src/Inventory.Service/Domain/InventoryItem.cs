@@ -86,4 +86,20 @@ public sealed class InventoryItem
         UpdatedAt = now;
         return true;
     }
+
+    /// <summary>
+    /// Updates the per-SKU read model from the warehouse rows, which are
+    /// the source of truth for stock ownership. Keeping this projection
+    /// update inside the same database transaction as the warehouse
+    /// mutation prevents the two representations from drifting.
+    /// </summary>
+    public void SynchronizeFromWarehouses(int availableQuantity, int reservedQuantity, DateTimeOffset now)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(availableQuantity);
+        ArgumentOutOfRangeException.ThrowIfNegative(reservedQuantity);
+
+        AvailableQuantity = availableQuantity;
+        ReservedQuantity = reservedQuantity;
+        UpdatedAt = now;
+    }
 }
