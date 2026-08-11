@@ -27,6 +27,13 @@ public static class ProxyEndpoints
             => ForwardAsync(factory.CreateClient("cart"), path, request, cancellationToken));
         endpoints.MapDelete("/api/cart/{**path}", (string path, HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
             => ForwardAsync(factory.CreateClient("cart"), path, request, cancellationToken));
+        // Cart.Service's whole CRDT merge subsystem (CartCrdtState,
+        // CartStore.MergeAsync, POST /me/merge) was unreachable from the
+        // browser without this - the BFF had GET/PUT/DELETE forwards but no
+        // POST, so a client reconciling offline changes on reconnect had no
+        // route to reach it through.
+        endpoints.MapPost("/api/cart/{**path}", (string path, HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
+            => ForwardAsync(factory.CreateClient("cart"), path, request, cancellationToken));
 
         endpoints.MapPost("/api/orders", (HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
             => ForwardOrderAsync(factory.CreateClient("orders"), request, cancellationToken));
