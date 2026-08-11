@@ -36,6 +36,11 @@ public static class OrdersTelemetry
     // the same order disagree - never expected to be nonzero for long, the
     // same alerting shape already used for the DLQ and outbox backlog.
     private static readonly Counter<long> AntiEntropyDivergenceCounter = Meter.CreateCounter<long>("anti_entropy.divergences");
+    // A settlement came back Expired - money that should have moved never
+    // did - but the order wasn't in a state FulfillmentHold could legally
+    // follow. Never expected to be nonzero for long, same shape as the
+    // anti-entropy counter above.
+    private static readonly Counter<long> SettlementReconciliationUnresolvedCounter = Meter.CreateCounter<long>("payments.settlement_reconciliation.unresolved");
 
     public static Activity? StartActivity(
         string name,
@@ -101,6 +106,12 @@ public static class OrdersTelemetry
     public static void RecordAntiEntropyDivergence(string checkName)
     {
         AntiEntropyDivergenceCounter.Add(1, new KeyValuePair<string, object?>("check", checkName));
+    }
+
+    /// <summary>Tagged by the transition result (NotApplicable/IllegalTransition), so a dashboard can tell "someone else already resolved it" apart from "this order can never legally reach FulfillmentHold from here" - both mean the settlement-expired signal was dropped, but one is a benign race and the other is not.</summary>
+    public static void RecordSettlementReconciliationUnresolved(string transitionResult)
+    {
+        SettlementReconciliationUnresolvedCounter.Add(1, new KeyValuePair<string, object?>("transition_result", transitionResult));
     }
 
     public static void RecordCacheMiss()

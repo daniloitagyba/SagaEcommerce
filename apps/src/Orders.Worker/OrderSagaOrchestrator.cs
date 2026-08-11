@@ -157,4 +157,7 @@ public sealed partial class SagaOrchestratorLog
 
     [LoggerMessage(EventId = 6015, Level = LogLevel.Information, Message = "Saga timeout for order {OrderId} released the reservation for sku {Sku}, correlation {CorrelationId}")]
     public static partial void TimeoutReleaseRequested(ILogger logger, Guid orderId, string sku, string correlationId);
+
+    [LoggerMessage(EventId = 6016, Level = LogLevel.Warning, Message = "Settlement reconciliation for order {OrderId} was dropped: FulfillmentHold transition returned {TransitionResult} instead of Transitioned - a settlement expired but nothing downstream was told, correlation {CorrelationId}")]
+    public static partial void SettlementReconciliationDropped(ILogger logger, Guid orderId, string transitionResult, string correlationId);
 }

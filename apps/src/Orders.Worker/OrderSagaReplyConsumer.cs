@@ -384,6 +384,18 @@ public sealed class OrderSagaReplyConsumer(
             await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
             SagaOrchestratorLog.SettlementReconciled(logger, reply.OrderId, reply.State, reply.CorrelationId);
         }
+        else
+        {
+            // The one outcome the doc comment above says must never pass
+            // silently - previously it did exactly that. NotApplicable can
+            // be a benign race (someone else already moved this order);
+            // IllegalTransition means the order can never legally reach
+            // FulfillmentHold from its current state. Either way, money
+            // that should have moved never did, and nothing downstream
+            // was ever told.
+            OrdersTelemetry.RecordSettlementReconciliationUnresolved(moved.ToString());
+            SagaOrchestratorLog.SettlementReconciliationDropped(logger, reply.OrderId, moved.ToString(), reply.CorrelationId);
+        }
     }
 
     private async Task PublishNextStepAsync<TRequest>(
