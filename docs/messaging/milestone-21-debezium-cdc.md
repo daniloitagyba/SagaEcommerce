@@ -54,7 +54,7 @@ The transactional outbox publisher built in earlier milestones is poll-based: ev
 ```bash
 docker compose up -d postgres            # picks up wal_level=logical (restarts Postgres)
 scripts/postgres-allow-replication.sh
-docker compose up -d kafka-init debezium
+docker compose up -d cdc-topics-init debezium  # cdc-topics-init creates the CDC topics; kafka-init comes up as its dependency
 scripts/debezium-register-connector.sh
 
 # Compare latency for a fresh order:

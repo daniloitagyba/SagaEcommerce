@@ -50,7 +50,7 @@ All 18 recording rules and 3 alert rules loaded with `health: ok` (recording) on
 ## Running the experiment
 
 ```bash
-kubectl get application local-distributed-lab -n argocd  # confirm GitOps state before starting
+kubectl get application saga-ecommerce -n argocd  # confirm GitOps state before starting
 scripts/slo-burn-rate-test.sh generate-load     # after deploying a known-broken build
 scripts/slo-burn-rate-test.sh confirm-resolved  # after reverting it
 ```

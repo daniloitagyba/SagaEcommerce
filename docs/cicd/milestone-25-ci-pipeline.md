@@ -7,8 +7,8 @@ Every prior milestone in this lab has CD (Argo CD reconciling the cluster from `
 ## Design
 
 - **`test` job**: restores, builds, and runs the full suite (24 unit + 7 integration) on GitHub-hosted `ubuntu-latest` runners, which have Docker available natively - the same Testcontainers-based integration tests that run on the lab server run unmodified here.
-- **`build-and-push` job** (matrix over the three services, `needs: test`, only on push to `main`): builds each image, pushes it to `ghcr.io/daniloitagyba/local-distributed-lab/<service>`, generates an SPDX SBOM (`anchore/sbom-action`), scans the built image for CRITICAL/HIGH vulnerabilities with Trivy (fails the job on a match), and signs the image **keylessly** with cosign - no signing key to generate, rotate, or leak; the workflow's own GitHub Actions OIDC identity *is* the signing identity, verified against Sigstore's public Fulcio CA and logged to the public Rekor transparency log.
-- **Kyverno `ClusterPolicy`** (`kubernetes/cluster-policies/verify-image-signatures.yaml`, applied imperatively - cluster infrastructure, not an Argo CD-managed application manifest, the same category as Linkerd and Sealed Secrets): requires any pod referencing `ghcr.io/daniloitagyba/local-distributed-lab/*` to carry a cosign signature from the **exact** identity `https://github.com/daniloitagyba/local-distributed-lab/.github/workflows/ci.yml@refs/heads/main` - not "signed by anyone," a signature from a fork, a different workflow, or a feature branch is rejected just as surely as no signature at all.
+- **`build-and-push` job** (matrix over the three services, `needs: test`, only on push to `main`): builds each image, pushes it to `ghcr.io/daniloitagyba/saga-ecommerce/<service>`, generates an SPDX SBOM (`anchore/sbom-action`), scans the built image for CRITICAL/HIGH vulnerabilities with Trivy (fails the job on a match), and signs the image **keylessly** with cosign - no signing key to generate, rotate, or leak; the workflow's own GitHub Actions OIDC identity *is* the signing identity, verified against Sigstore's public Fulcio CA and logged to the public Rekor transparency log.
+- **Kyverno `ClusterPolicy`** (`kubernetes/cluster-policies/verify-image-signatures.yaml`, applied imperatively - cluster infrastructure, not an Argo CD-managed application manifest, the same category as Linkerd and Sealed Secrets): requires any pod referencing `ghcr.io/daniloitagyba/saga-ecommerce/*` to carry a cosign signature from the **exact** identity `https://github.com/daniloitagyba/SagaEcommerce/.github/workflows/ci.yml@refs/heads/main` - not "signed by anyone," a signature from a fork, a different workflow, or a feature branch is rejected just as surely as no signature at all.
 
 ## What didn't work
 
@@ -66,7 +66,7 @@ Kyverno's four controllers (admission, background, cleanup, reports): ~150Mi mem
 
 ### Regression check
 
-`dotnet test`: 24 unit + 7 integration, all passing (including the now-hermetic `PaymentMessageProcessorTests`). `k3s-smoke-test.sh`: passes cleanly. A `payments-service` rollout restart was exercised specifically to confirm the new Kyverno policy has zero effect on the existing application pods - their image references don't match `ghcr.io/daniloitagyba/local-distributed-lab/*` at all, so `verifyImages` never applies to them.
+`dotnet test`: 24 unit + 7 integration, all passing (including the now-hermetic `PaymentMessageProcessorTests`). `k3s-smoke-test.sh`: passes cleanly. A `payments-service` rollout restart was exercised specifically to confirm the new Kyverno policy has zero effect on the existing application pods - their image references don't match `ghcr.io/daniloitagyba/saga-ecommerce/*` at all, so `verifyImages` never applies to them.
 
 ## Running the experiment
 
@@ -76,13 +76,13 @@ git push origin main
 gh run watch --exit-status
 
 # Inspect what it produced
-cosign verify ghcr.io/daniloitagyba/local-distributed-lab/orders-api:latest \
+cosign verify ghcr.io/daniloitagyba/saga-ecommerce/orders-api:latest \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity "https://github.com/daniloitagyba/local-distributed-lab/.github/workflows/ci.yml@refs/heads/main"
+  --certificate-identity "https://github.com/daniloitagyba/SagaEcommerce/.github/workflows/ci.yml@refs/heads/main"
 # (requires registry read access - see "what didn't work" above)
 
 # Prove the cluster-side gate, without needing a private-registry credential
 kubectl run should-work --image=ghcr.io/sigstore/cosign/cosign:v2.4.1 -- sleep 3600
 kubectl run should-fail --image=docker.io/library/alpine:latest -- sleep 3600
-kubectl get clusterpolicy verify-local-distributed-lab-image-signatures
+kubectl get clusterpolicy verify-saga-ecommerce-image-signatures
 ```

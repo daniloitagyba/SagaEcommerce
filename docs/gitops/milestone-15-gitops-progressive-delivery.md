@@ -59,8 +59,8 @@ Full cycle (canary created → fully promoted `Healthy`) took under two minutes,
 ## Running the experiment
 
 ```bash
-kubectl get application local-distributed-lab -n argocd
+kubectl get application saga-ecommerce -n argocd
 kubectl get rollout orders-api -n orders-lab
 kubectl get analysisrun -n orders-lab
-kubectl annotate application local-distributed-lab -n argocd argocd.argoproj.io/refresh=hard --overwrite  # force an immediate sync instead of waiting on the poll interval
+kubectl annotate application saga-ecommerce -n argocd argocd.argoproj.io/refresh=hard --overwrite  # force an immediate sync instead of waiting on the poll interval
 ```
