@@ -5,6 +5,7 @@ COPY Directory.Build.props global.json ./
 COPY apps/Directory.Packages.props apps/
 COPY apps/src/BuildingBlocks.Caching/BuildingBlocks.Caching.csproj apps/src/BuildingBlocks.Caching/
 COPY apps/src/BuildingBlocks.Contracts/BuildingBlocks.Contracts.csproj apps/src/BuildingBlocks.Contracts/
+COPY apps/src/BuildingBlocks.HttpClients/BuildingBlocks.HttpClients.csproj apps/src/BuildingBlocks.HttpClients/
 COPY apps/src/BuildingBlocks.Messaging/BuildingBlocks.Messaging.csproj apps/src/BuildingBlocks.Messaging/
 COPY apps/src/BuildingBlocks.Observability/BuildingBlocks.Observability.csproj apps/src/BuildingBlocks.Observability/
 COPY apps/src/BuildingBlocks.Persistence/BuildingBlocks.Persistence.csproj apps/src/BuildingBlocks.Persistence/
@@ -15,6 +16,7 @@ RUN dotnet restore apps/src/Cart.Service/Cart.Service.csproj
 
 COPY apps/src/BuildingBlocks.Caching/ apps/src/BuildingBlocks.Caching/
 COPY apps/src/BuildingBlocks.Contracts/ apps/src/BuildingBlocks.Contracts/
+COPY apps/src/BuildingBlocks.HttpClients/ apps/src/BuildingBlocks.HttpClients/
 COPY apps/src/BuildingBlocks.Messaging/ apps/src/BuildingBlocks.Messaging/
 COPY apps/src/BuildingBlocks.Observability/ apps/src/BuildingBlocks.Observability/
 COPY apps/src/BuildingBlocks.Persistence/ apps/src/BuildingBlocks.Persistence/
