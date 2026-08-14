@@ -92,10 +92,25 @@ if curl --fail --silent --header "$auth_header" "$keycloak_url/admin/realms/$rea
   printf 'Realm %s already exists.\n' "$realm_name"
 else
   curl_json --header "$auth_header" \
-    --data "{\"realm\":\"$realm_name\",\"enabled\":true,\"accessTokenLifespan\":900}" \
+    --data "{\"realm\":\"$realm_name\",\"enabled\":true,\"accessTokenLifespan\":900,\"registrationAllowed\":true}" \
     "$keycloak_url/admin/realms"
   printf 'Created realm %s.\n' "$realm_name"
 fi
+
+# Fetch-merge-PUT (not create-only), same idiom as the storefront client's
+# redirectUris below: converges registrationAllowed=true even for a realm
+# that already existed from an earlier run of this script, before self-
+# registration was added - without a self-service "Register" link, a
+# shopper's only way to get an account was an operator creating one by hand.
+curl --fail --silent --header "$auth_header" \
+  "$keycloak_url/admin/realms/$realm_name" |
+  jq '.registrationAllowed = true' \
+  > /tmp/orders-lab-realm.json
+curl --fail --silent --request PUT --header "$auth_header" --header "Content-Type: application/json" \
+  --data @/tmp/orders-lab-realm.json \
+  "$keycloak_url/admin/realms/$realm_name"
+rm -f /tmp/orders-lab-realm.json
+printf 'Ensured registrationAllowed=true on realm %s.\n' "$realm_name"
 
 # Milestone 83: orders:admin - cross-customer access (a support agent, the
 # warehouse's fulfilment tooling), distinct from a plain shopper's

@@ -29,7 +29,7 @@ growth_threshold_pct=${2:-25}
 start_epoch=$(date -u +%s)
 echo "== Running a sustained load (k6 soak profile, ~5m20s) against ${service} to exercise steady-state GC behavior =="
 set +e
-bash "$script_directory/k6-run.sh" soak
+bash "$script_directory/../load-test/k6-run.sh" soak
 k6_exit=$?
 set -e
 if [[ "$k6_exit" -ne 0 ]]; then

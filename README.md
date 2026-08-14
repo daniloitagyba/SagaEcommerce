@@ -36,7 +36,7 @@ cp .env.example .env
 docker compose up --detach --wait                          # infrastructure: Postgres, Kafka, Redis, MongoDB, Keycloak, observability stack
 docker compose --profile compose-apps up --detach --wait    # the seven services (orders-api runs 2 replicas) + nginx + one-shot migration/seed jobs
 
-../scripts/keycloak-configure-realm.sh                      # one-time: creates the auth realm/client the API expects
+../scripts/infra/keycloak-configure-realm.sh                      # one-time: creates the auth realm/client the API expects
 ```
 
 Then shop at `http://localhost:8089` - `Storefront.Service` serves the React storefront (`apps/storefront-web`) and its own API from that one origin.
@@ -44,7 +44,7 @@ Then shop at `http://localhost:8089` - `Storefront.Service` serves the React sto
 Then get a token and create an order:
 
 ```bash
-TOKEN=$(../scripts/keycloak-get-token.sh)
+TOKEN=$(../scripts/infra/keycloak-get-token.sh)
 
 # The server prices the line items against the live catalog and applies
 # whatever promotions match - the request never states a price.
@@ -85,11 +85,11 @@ A few pieces of infrastructure are opt-in, behind their own Compose profile, sin
 
 | Profile | Brings up | Used by |
 |---|---|---|
-| `postgres-ha` | MinIO (backup target) | `kubernetes/data-platform/postgres-ha-*.yaml`, `scripts/postgres-ha-provision.sh` |
+| `postgres-ha` | MinIO (backup target) | `kubernetes/data-platform/postgres-ha-*.yaml`, `scripts/infra/postgres-ha-provision.sh` |
 | `cdc` | Debezium + its Kafka topics | [Milestone 21](docs/messaging/milestone-21-debezium-cdc.md) |
 | `profiling` | Grafana Pyroscope | K3s only — [continuous profiling](docs/architecture/continuous-profiling.md) |
-| `kafka-quorum-demo` | 3-broker Kafka quorum | `scripts/kafka-quorum-durability-test.sh` |
-| `mongo-replicaset-demo` | 3-node MongoDB replica set | `scripts/mongo-replica-set-test.sh` |
+| `kafka-quorum-demo` | 3-broker Kafka quorum | `scripts/live-proofs/kafka-quorum-durability-test.sh` |
+| `mongo-replicaset-demo` | 3-node MongoDB replica set | `scripts/live-proofs/mongo-replica-set-test.sh` |
 
 e.g. `docker compose --profile cdc up --detach --wait`.
 
@@ -107,7 +107,7 @@ and the failure is swallowed with no console error and no redirect.
 To reach the stack from another device on the same LAN:
 
 ```bash
-scripts/generate-lab-tls-cert.sh <your-LAN-IP>   # self-signed cert, trusted for 127.0.0.1/localhost + <your-LAN-IP>
+scripts/infra/generate-lab-tls-cert.sh <your-LAN-IP>   # self-signed cert, trusted for 127.0.0.1/localhost + <your-LAN-IP>
 ```
 
 Then in `compose/.env`:

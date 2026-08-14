@@ -26,7 +26,7 @@ run_id=$(date -u +%Y%m%dT%H%M%SZ)
 result_directory="$results_root/$run_id-chaos-mesh-gameday"
 mkdir -p "$result_directory"
 
-access_token=$("$script_directory/keycloak-get-token.sh")
+access_token=$("$script_directory/../infra/keycloak-get-token.sh")
 auth_header="Authorization: Bearer $access_token"
 
 service_ip=$(kubectl get service orders-api --namespace "$namespace" --output jsonpath='{.spec.clusterIP}')

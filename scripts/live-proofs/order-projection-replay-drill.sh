@@ -24,7 +24,7 @@ order_count=${1:-20}
 
 cd "$compose_directory"
 
-access_token=$("$script_directory/keycloak-get-token.sh")
+access_token=$("$script_directory/../infra/keycloak-get-token.sh")
 orders_ip=$(kubectl get svc orders-api -n "$namespace" -o jsonpath='{.spec.clusterIP}')
 
 echo "== Creating ${order_count} fresh test orders =="

@@ -173,7 +173,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-access_token=$("$script_directory/keycloak-get-token.sh")
+access_token=$("$script_directory/../infra/keycloak-get-token.sh")
 
 printf 'Running k6 profile %s against %s\n' "$profile" "$base_url"
 set +e

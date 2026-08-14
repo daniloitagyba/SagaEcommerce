@@ -6,6 +6,8 @@
 **/TestResults/
 compose/.env
 compose/nginx/certs/
+scripts/infra/remote-start.sh
+scripts/infra/remote-stop.sh
 data/postgres/
 data/kafka/
 data/observability/

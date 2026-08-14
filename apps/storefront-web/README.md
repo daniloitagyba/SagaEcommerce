@@ -46,7 +46,7 @@ Vite inlines `VITE_*` variables at build time - see `.env.example`.
   same-origin.
 - `VITE_KEYCLOAK_URL` / `VITE_KEYCLOAK_REALM` / `VITE_KEYCLOAK_CLIENT_ID` -
   the realm and public (PKCE, no secret) client a shopper's browser logs
-  into. Must match `scripts/keycloak-configure-realm.sh`'s `realm_name` and
+  into. Must match `scripts/infra/keycloak-configure-realm.sh`'s `realm_name` and
   `storefront_client_id`. In the Docker Compose deployment these are baked
   in as build args on `storefront-service` in `compose/compose.yaml`, not
   read from this app's own `.env` (which only matters for `npm run dev`).

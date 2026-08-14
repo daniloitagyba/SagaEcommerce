@@ -20,7 +20,7 @@ All five dashboards use the same `http_server_request_duration_seconds*`
 (.NET runtime instrumentation) metric families, scoped per service via the
 `service_name` label every service's OTel resource attributes carry
 (`ObservabilityExtensions.cs`) - the same label
-`scripts/memory-leak-check.sh` and `observability/prometheus/rules/orders-api-slo.yml`
+`scripts/live-proofs/memory-leak-check.sh` and `observability/prometheus/rules/orders-api-slo.yml`
 already filter on.
 
 ## Verifying a dashboard actually shows data

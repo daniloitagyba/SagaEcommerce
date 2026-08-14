@@ -44,7 +44,7 @@ ON CONFLICT (code) DO UPDATE SET redemption_count = 0, max_total_redemptions = $
 " > /dev/null
 
 echo "== Firing ${concurrent_checkouts} concurrent checkouts at a coupon with ${redemption_limit} slots =="
-token=$("$script_directory/keycloak-get-token.sh")
+token=$("$script_directory/../infra/keycloak-get-token.sh")
 status_file=$(mktemp)
 trap 'rm -f "$status_file"' EXIT
 

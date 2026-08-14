@@ -38,7 +38,7 @@ run_id=$(date -u +%Y%m%dT%H%M%SZ)
 run_directory="$results_root/$run_id-hedged-read-benchmark"
 mkdir -p "$run_directory"
 
-access_token=$("$script_directory/keycloak-get-token.sh")
+access_token=$("$script_directory/../infra/keycloak-get-token.sh")
 
 k6_writable_directory=${K6_WRITABLE_DIRECTORY:-"/home/$(id -un)/snap/k6/common"}
 mkdir -p "$k6_writable_directory"

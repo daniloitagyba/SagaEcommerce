@@ -67,7 +67,7 @@ trap cleanup EXIT
 
 (
   set -o pipefail
-  "$script_directory/k6-run.sh" autoscale 2>&1 | tee "$load_log"
+  "$script_directory/../load-test/k6-run.sh" autoscale 2>&1 | tee "$load_log"
 ) &
 load_pid=$!
 

@@ -14,7 +14,7 @@
 # - not `saga-ecommerce/*:local`, which is what this lab's own K3s
 # overlay actually runs (kubernetes/overlays/local/kustomization.yaml,
 # imagePullPolicy: Never). That's deliberate: the local dev loop
-# (scripts/k3s-build-images.sh) builds and imports images straight into
+# (scripts/infra/k3s-build-images.sh) builds and imports images straight into
 # containerd for fast iteration, and signing every local rebuild would
 # defeat that. This policy verifies what a real deployment pointed at the
 # CI-published, cosign-signed GHCR images would be admitted to run - it
@@ -62,7 +62,7 @@ spec:
     # tag alone, saga-ecommerce or not, without a resolved digest. The
     # local dev loop's own images (kubernetes/overlays/local/, `:local`
     # tag, imagePullPolicy: Never, built straight into containerd by
-    # scripts/k3s-build-images.sh) are excluded on purpose, for the same
+    # scripts/infra/k3s-build-images.sh) are excluded on purpose, for the same
     # reason the header comment above gives for the first rule - signing
     # or digest-pinning every local rebuild would defeat fast iteration.
     - name: require-image-digest

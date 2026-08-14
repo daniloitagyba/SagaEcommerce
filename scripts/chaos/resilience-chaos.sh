@@ -35,7 +35,7 @@ run_id=$(date -u +%Y%m%dT%H%M%SZ)
 test_directory="$results_root/$run_id-chaos-$target-$scenario"
 mkdir -p "$test_directory"
 
-access_token=$("$script_directory/keycloak-get-token.sh")
+access_token=$("$script_directory/../infra/keycloak-get-token.sh")
 auth_header="Authorization: Bearer $access_token"
 
 endpointslice_name="${target}-compose"
@@ -88,8 +88,8 @@ route_endpointslice() {
 functional_smoke_check() {
   local log_file=$1
   set +o errexit
-  "$script_directory/k6-run.sh" smoke >"${log_file%.log}-warmup.log" 2>&1
-  "$script_directory/k6-run.sh" smoke >"$log_file" 2>&1
+  "$script_directory/../load-test/k6-run.sh" smoke >"${log_file%.log}-warmup.log" 2>&1
+  "$script_directory/../load-test/k6-run.sh" smoke >"$log_file" 2>&1
   set -o errexit
 
   grep --quiet 'K6_RESULT requests=.*failed_rate=0 checks_rate=1 flow_rate=1' "$log_file"
@@ -133,7 +133,7 @@ if [[ "$scenario" == "latency" ]]; then
 
   printf 'Running the chaos k6 profile with the latency toxic active\n'
   set +o errexit
-  "$script_directory/k6-run.sh" chaos 2>&1 | tee "$test_directory/chaos-load.log"
+  "$script_directory/../load-test/k6-run.sh" chaos 2>&1 | tee "$test_directory/chaos-load.log"
   chaos_exit_code=${PIPESTATUS[0]}
   set -o errexit
 

@@ -1,6 +1,6 @@
 name: coupon-redemption-concurrency
 
-# scripts/coupon-redemption-concurrency-test.sh proves Milestone 67's
+# scripts/live-proofs/coupon-redemption-concurrency-test.sh proves Milestone 67's
 # atomic-UPDATE coupon redemption limit holds under real concurrent
 # checkouts. It needs the full Compose stack (Postgres, Kafka, Keycloak,
 # orders-api) up and answering, which is too slow/heavy for every push -
@@ -43,10 +43,10 @@ jobs:
         run: docker compose --profile compose-apps up --detach --wait
 
       - name: configure the Keycloak realm
-        run: bash scripts/keycloak-configure-realm.sh
+        run: bash scripts/infra/keycloak-configure-realm.sh
 
       - name: run the concurrency test
-        run: bash scripts/coupon-redemption-concurrency-test.sh
+        run: bash scripts/live-proofs/coupon-redemption-concurrency-test.sh
 
       - name: dump service logs on failure
         if: failure()

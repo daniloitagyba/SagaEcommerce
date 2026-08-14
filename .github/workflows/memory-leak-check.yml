@@ -1,6 +1,6 @@
 name: memory-leak-check
 
-# scripts/memory-leak-check.sh drives a 5-minute k6 soak against a real K3s
+# scripts/live-proofs/memory-leak-check.sh drives a 5-minute k6 soak against a real K3s
 # deployment and reads gen2/LOH heap trend from Prometheus - it needs
 # kubectl, a live orders-worker Deployment, and Prometheus already scraping
 # it, none of which this repo has ever stood up inside GitHub-hosted CI
@@ -38,6 +38,6 @@ jobs:
 
       - name: run the heap-growth check
         run: |
-          bash scripts/memory-leak-check.sh \
+          bash scripts/live-proofs/memory-leak-check.sh \
             "${{ inputs.service }}" \
             "${{ inputs.growth-threshold-percent }}"

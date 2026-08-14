@@ -34,8 +34,8 @@ case "$mode" in
 
     printf 'Generating sustained load against the currently-deployed build (~2.5 minutes)\n'
     set +o errexit
-    "$script_directory/k6-run.sh" baseline >"$test_directory/load-1.log" 2>&1
-    "$script_directory/k6-run.sh" baseline >"$test_directory/load-2.log" 2>&1
+    "$script_directory/../load-test/k6-run.sh" baseline >"$test_directory/load-1.log" 2>&1
+    "$script_directory/../load-test/k6-run.sh" baseline >"$test_directory/load-2.log" 2>&1
     set -o errexit
 
     printf 'Polling for OrdersApiErrorBudgetBurnDemo to fire\n'

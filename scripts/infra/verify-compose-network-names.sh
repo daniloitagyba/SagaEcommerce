@@ -10,7 +10,7 @@
 # network names compose.yaml would actually produce.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 COMPOSE_FILE="compose/compose.yaml"
 PROJECT_NAME=$(grep -m1 '^name:' "$COMPOSE_FILE" | sed -E 's/^name:[[:space:]]*//')
@@ -41,10 +41,10 @@ done
 # Scan every script except this one (its own comments/messages mention
 # "--network" as prose, not as an actual invocation).
 SCAN_FILES=()
-for f in scripts/*.sh; do
+while IFS= read -r f; do
   [[ "$(basename "$f")" == "verify-compose-network-names.sh" ]] && continue
   SCAN_FILES+=("$f")
-done
+done < <(find scripts -name '*.sh' | sort)
 
 fail=0
 while IFS=: read -r file line_no rest; do

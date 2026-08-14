@@ -7,7 +7,7 @@
 # containers and volumes than the ones actually running, stranding the
 # existing data behind old labels rather than migrating it. A real rename
 # of this would need a deliberate stop-and-relabel procedure, not a text
-# substitution - see scripts/verify-compose-network-names.sh, the guard
+# substitution - see scripts/infra/verify-compose-network-names.sh, the guard
 # this exact class of drift got a script for last time.
 name: local-distributed-lab
 
@@ -119,7 +119,7 @@ services:
 
   # Milestone 47: an isolated 3-broker KRaft cluster used only to prove
   # out the acks=all / min.insync.replicas / unclean.leader.election
-  # quadrant (scripts/kafka-quorum-durability-test.sh) - NOT a change to
+  # quadrant (scripts/live-proofs/kafka-quorum-durability-test.sh) - NOT a change to
   # the single-broker `kafka` service above that the live orders-lab saga
   # pipeline actually depends on. Same reasoning as Milestone 27's
   # deliberately separate postgres-ha cluster: proving a replication
@@ -245,7 +245,7 @@ services:
     # docs/data/milestone-46-redis-durability.md for the numbers.
     #
     # Mode is still parameterized (not hardcoded) so
-    # scripts/cart-redis-durability-test.sh can flip it with
+    # scripts/live-proofs/cart-redis-durability-test.sh can flip it with
     # --force-recreate for comparison: a `redis-cli CONFIG SET` only
     # changes the running process's in-memory config - when Docker
     # restarts this same container after a kill, it re-execs this literal
@@ -295,7 +295,7 @@ services:
 
   # Milestone 49: an isolated 3-node MongoDB replica set used only to prove
   # out secondaryPreferred stale reads and the w:majority latency cost
-  # (scripts/mongo-replica-set-test.sh) - NOT a change to the standalone
+  # (scripts/live-proofs/mongo-replica-set-test.sh) - NOT a change to the standalone
   # `mongodb` service above that Catalog.Service actually depends on. Same
   # reasoning as Milestone 27's postgres-ha and Milestone 47's
   # kafka-quorum-demo: prove the pattern in isolation before proposing it
@@ -447,7 +447,7 @@ services:
   # Milestone 22's in-memory saga state: the point of this milestone is
   # proving OIDC/JWT validation and scope-based authorization actually work,
   # not building Keycloak HA. Realm/client/user provisioning is scripted
-  # (scripts/keycloak-configure-realm.sh) against the admin REST API, so a
+  # (scripts/infra/keycloak-configure-realm.sh) against the admin REST API, so a
   # restart's fresh dev storage is reproducible from a clean command, not a
   # manual setup step.
   keycloak:
@@ -509,7 +509,7 @@ services:
   # practical option for a home-lab single-node setup.
   minio:
     # Only consumed by the Postgres HA backup path (kubernetes/data-platform/
-    # postgres-ha-backup.yaml, scripts/postgres-ha-provision.sh) - not part
+    # postgres-ha-backup.yaml, scripts/infra/postgres-ha-provision.sh) - not part
     # of the quickstart flow, so it doesn't run by default.
     profiles: ["postgres-ha"]
     image: minio/minio:RELEASE.2025-04-08T15-41-24Z
@@ -538,7 +538,7 @@ services:
   # own internal state (config/offset/status storage) plus the CDC output
   # topic - separate from kafka-init (which always runs) so these only get
   # created when the CDC path is actually exercised via
-  # scripts/debezium-register-connector.sh.
+  # scripts/infra/debezium-register-connector.sh.
   cdc-topics-init:
     profiles: ["cdc"]
     image: apache/kafka:4.1.1
@@ -563,7 +563,7 @@ services:
 
   debezium:
     # Not part of the quickstart flow - stays down until CDC is deliberately
-    # exercised via scripts/debezium-register-connector.sh
+    # exercised via scripts/infra/debezium-register-connector.sh
     # (docs/messaging/milestone-21-debezium-cdc.md).
     profiles: ["cdc"]
     image: debezium/connect:2.7.3.Final
@@ -819,7 +819,7 @@ services:
       # Milestone 88 follow-up: this service's own credentials for the
       # anti-entropy sweep's two cross-service reads (GET /payments/by-order,
       # GET /inventory/backorders) - reuses orders-api-clients, the same
-      # confidential client scripts/keycloak-configure-realm.sh already
+      # confidential client scripts/infra/keycloak-configure-realm.sh already
       # provisions as this lab's trusted-backend-tooling identity.
       Keycloak__TokenUrl: http://keycloak:8080/realms/orders-lab/protocol/openid-connect/token
       Keycloak__ClientId: orders-api-clients
@@ -988,7 +988,7 @@ services:
         # var is a bind address (can be 0.0.0.0), which a browser can never
         # actually connect to - this needs a real, reachable destination.
         VITE_KEYCLOAK_URL: ${PUBLIC_KEYCLOAK_URL:-http://127.0.0.1:18081}
-        # Must match scripts/keycloak-configure-realm.sh's realm_name and
+        # Must match scripts/infra/keycloak-configure-realm.sh's realm_name and
         # storefront_client_id (the public, PKCE orders-storefront client -
         # not orders-api-clients, the confidential one) - spelled out here
         # rather than left to the Dockerfile's defaults so a rename of
@@ -1039,7 +1039,7 @@ services:
       # storefront's OIDC/PKCE login depends on) only exists in secure
       # contexts, and Chrome never grants that to a plain HTTP LAN IP, only
       # to https://, localhost, or 127.0.0.1. Run
-      # scripts/generate-lab-tls-cert.sh once (with your LAN IP as an
+      # scripts/infra/generate-lab-tls-cert.sh once (with your LAN IP as an
       # argument) before these can serve anything.
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${STOREFRONT_TLS_PORT:-8443}:8443"
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${KEYCLOAK_TLS_PORT:-18443}:18443"
@@ -1047,7 +1047,7 @@ services:
       # Whole directory, not a single file: nginx's own nginx.conf already
       # does "include /etc/nginx/conf.d/*.conf", so orders.conf,
       # storefront-tls.conf and keycloak-tls.conf each just add a server
-      # block. certs/ (generated by scripts/generate-lab-tls-cert.sh, not
+      # block. certs/ (generated by scripts/infra/generate-lab-tls-cert.sh, not
       # committed) rides along under the same mount; nginx ignores it since
       # it isn't a *.conf file. Not :ro: docker-entrypoint-tls.sh writes a
       # throwaway cert into certs/ on first boot if generate-lab-tls-cert.sh

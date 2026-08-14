@@ -5,7 +5,7 @@
 # the addon layer - application manifests (kubernetes/base,
 # kubernetes/overlays/local) are Argo CD's job (Milestone 15), not this
 # playbook's; running this against a fresh host still needs
-# scripts/k3s-deploy.sh and the Argo CD bootstrap Application afterward.
+# scripts/infra/k3s-deploy.sh and the Argo CD bootstrap Application afterward.
 - name: Provision the lab host and cluster add-on layer
   hosts: lab
   become: false

@@ -8,7 +8,7 @@
 # couple of seconds gets treated as if it's been running for minutes, and
 # gets swept as timed out, purely because the sweeper's own clock lied to
 # it. Applied ad hoc for the experiment, not left running - `kubectl
-# delete` after (scripts/clock-skew-saga-timeout-test.sh does this).
+# delete` after (scripts/live-proofs/clock-skew-saga-timeout-test.sh does this).
 apiVersion: chaos-mesh.org/v1alpha1
 kind: TimeChaos
 metadata:
