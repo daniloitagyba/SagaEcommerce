@@ -10,6 +10,7 @@ namespace Orders.Application.UseCases.CreateOrder;
 public sealed class CreateOrderHandler(
     IOrderCreationRepository repository,
     OrderPricingService pricingService,
+    TimeProvider timeProvider,
     ILogger<CreateOrderHandler> logger)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -82,7 +83,7 @@ public sealed class CreateOrderHandler(
         IReadOnlyDictionary<string, string[]> errors,
         CancellationToken cancellationToken)
     {
-        var createdAt = DateTimeOffset.UtcNow;
+        var createdAt = timeProvider.GetUtcNow();
 
         var order = checkout is null
             ? Order.Create(

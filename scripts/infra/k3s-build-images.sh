@@ -20,10 +20,11 @@ done
 cd "$compose_directory"
 docker compose --profile compose-apps build "${services[@]}"
 
-# Each service's compose-declared image tag drifts independently (whatever
-# milestone last touched that Dockerfile - e.g. milestone-41-inventory,
-# milestone-42-by-sku), so it's read back from `compose config` rather than
-# assumed, and retagged to the one fixed tag the K3s overlay expects.
+# Read back from `compose config` rather than assumed, and retagged to the
+# one fixed tag the K3s overlay expects - so this and compose.yaml's own
+# image: value can't drift apart even though they serve different purposes
+# (compose.yaml's tag names a local build, :dev; the K3s overlay needs one
+# fixed, predictable tag regardless of what Compose calls it).
 built_images=$(docker compose --profile compose-apps config --format json |
   jq -r '.services | to_entries[] | select(.value.image != null and (.value.image | startswith("saga-ecommerce/"))) | "\(.key) \(.value.image)"')
 

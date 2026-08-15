@@ -126,6 +126,45 @@ jobs:
           print("No hand-rolled inbox dedup SQL outside BuildingBlocks.Persistence.")
           '
 
+      - name: no ambient clock in *Handler/*Sweeper types
+        run: |
+          # TimeProvider is registered as a singleton in every service and
+          # already injected correctly in the components that most need it
+          # (CartStore's CRDT merge, OrderPricingService, SagaTimeoutSweeper,
+          # PaymentSettlementProcessor, ...). A direct DateTimeOffset.UtcNow/
+          # DateTime.UtcNow call site in a *Handler or *Sweeper class is the
+          # same bug ReturnOrderHandler had: a test that pins "now" via a
+          # fake clock silently stops controlling what the code under test
+          # actually compares against, because the code reads the real
+          # clock instead of the one the test constructed. Found live in
+          # ReturnOrderHandlerTests.cs, where a fixed Order.CreatedAt was
+          # meant to be "10 days ago" and was actually growing more distant
+          # from real UtcNow every day the test suite ran, permanently
+          # pinning the regret-window boundary to one side.
+          #
+          # RetentionSweeper is the one documented exception: it is
+          # deliberately deferred (BuildingBlocks-level retention
+          # infrastructure with a wider blast radius than the business-rule
+          # and deadline-sweeper call sites this check exists for) - see
+          # docs/architecture/audit-2026-08-15-build-runtime-and-time-handling-review.md's
+          # Phase 3.
+          python3 -c '
+          import glob, re, sys
+          ALLOWLIST = {"apps/src/BuildingBlocks.Persistence/RetentionSweeper.cs"}
+          files = [
+              f for f in glob.glob("apps/src/**/*Handler.cs", recursive=True)
+              + glob.glob("apps/src/**/*Sweeper.cs", recursive=True)
+              if "/obj/" not in f and "/bin/" not in f and f not in ALLOWLIST
+          ]
+          pattern = re.compile(r"DateTime(Offset)?\.UtcNow")
+          offenders = [f for f in files if pattern.search(open(f, encoding="utf-8", errors="ignore").read())]
+          if offenders:
+              print("Direct DateTime(Offset).UtcNow found in a *Handler/*Sweeper type - inject TimeProvider and call timeProvider.GetUtcNow() instead, or add a justified entry to ALLOWLIST in this check:")
+              print("\n".join(sorted(offenders)))
+              sys.exit(1)
+          print("No ambient clock usage in *Handler/*Sweeper types outside the documented allowlist.")
+          '
+
   test:
     name: build and test
     runs-on: ubuntu-latest
@@ -137,6 +176,9 @@ jobs:
 
       - name: verify compose/kubernetes config parity
         run: bash scripts/ci/verify-config-parity.sh
+
+      - name: verify Dockerfile COPY lines match each service's ProjectReference graph
+        run: bash scripts/ci/verify-dockerfile-project-references.sh
 
       - uses: actions/setup-dotnet@v4
         with:

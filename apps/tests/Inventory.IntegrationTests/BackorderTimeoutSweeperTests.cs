@@ -110,5 +110,6 @@ public sealed class BackorderTimeoutSweeperTests : IAsyncLifetime
         new(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new BackorderOptions { TimeoutMinutes = timeoutMinutes }),
+            TimeProvider.System,
             NullLogger<BackorderTimeoutSweeper>.Instance);
 }

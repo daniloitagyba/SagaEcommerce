@@ -19,6 +19,7 @@ namespace Inventory.Service;
 public sealed class PurchaseOrderReceivingSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<ReplenishmentOptions> options,
+    TimeProvider timeProvider,
     ILogger<PurchaseOrderReceivingSweeper> logger) : BackgroundService
 {
     /// <summary>Kept numerically distinct from BackorderTimeoutSweeper's and Payments' lock keys so a grep for any of them is unambiguous.</summary>
@@ -67,7 +68,7 @@ public sealed class PurchaseOrderReceivingSweeper(
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = timeProvider.GetUtcNow();
         var cutoff = now - TimeSpan.FromSeconds(_options.LeadTimeSeconds);
 
         var claimedIds = await dbContext.Database

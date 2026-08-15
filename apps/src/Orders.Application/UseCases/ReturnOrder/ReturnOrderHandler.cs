@@ -32,6 +32,7 @@ public sealed class ReturnOrderHandler(
     IOrderReturnRepository repository,
     IOrderCache orderCache,
     IOptions<ReturnOptions> returnOptions,
+    TimeProvider timeProvider,
     ILogger<ReturnOrderHandler> logger)
 {
     public async Task<ReturnOrderResult> HandleAsync(
@@ -65,7 +66,7 @@ public sealed class ReturnOrderHandler(
             string.IsNullOrWhiteSpace(reason) ? "customer return" : reason.Trim(),
             reasonCategory,
             TimeSpan.FromDays(returnOptions.Value.RegretWindowDays),
-            DateTimeOffset.UtcNow);
+            timeProvider.GetUtcNow());
 
         if (rejection != ReturnRejectionReason.None)
         {

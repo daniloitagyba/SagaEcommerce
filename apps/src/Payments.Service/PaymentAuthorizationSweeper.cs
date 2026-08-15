@@ -25,6 +25,7 @@ namespace Payments.Service;
 public sealed class PaymentAuthorizationSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<PaymentSettlementOptions> options,
+    TimeProvider timeProvider,
     ILogger<PaymentAuthorizationSweeper> logger) : BackgroundService
 {
     /// <summary>
@@ -83,7 +84,7 @@ public sealed class PaymentAuthorizationSweeper(
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = timeProvider.GetUtcNow();
 
         // SKIP LOCKED is what makes running this on every replica safe:
         // each one claims a disjoint batch instead of contending for the

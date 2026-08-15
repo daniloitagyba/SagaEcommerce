@@ -44,3 +44,41 @@ curl -X POST http://172.30.0.19:4040/querier.v1.QuerierService/LabelValues \
 ```
 
 To disable profiling for a service without rebuilding the image, set `PYROSCOPE_PROFILING_ENABLED=0` in its deployment - the native profiler binaries stay baked into the image but never attach.
+
+## Compose never set PYROSCOPE_PROFILING_ENABLED at all - and the attach variables didn't check for that
+
+The line above is precise about a deployment that already has profiling
+wired up and wants it off. It understates a different, narrower gap: the
+five CLR *attach* variables (`CORECLR_ENABLE_PROFILING`, `CORECLR_PROFILER`,
+`CORECLR_PROFILER_PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`) used to be baked
+unconditionally into every service's Dockerfile `ENV`, present in every
+environment including Compose - which has never set
+`PYROSCOPE_PROFILING_ENABLED` at all (its own comment on the `pyroscope`
+service says so directly: "no Compose service instruments against it").
+
+`CORECLR_ENABLE_PROFILING` is read by the CLR itself, before any of
+Pyroscope's own code runs - it is not the same gate as
+`PYROSCOPE_PROFILING_ENABLED`, which the *already-loaded* profiler reads
+afterward. So a Compose bring-up was starting every service with the native
+profiler engine loaded into the process and `LD_PRELOAD` injecting a shim,
+with no Pyroscope server configured to receive anything from it. This
+does not contradict the "Results" section above - that confirmation is
+against the K3s deployment, where `PYROSCOPE_PROFILING_ENABLED` genuinely
+is set, and is unaffected by this.
+
+**Not verified**: whether the profiler, finding no reachable server or no
+`PYROSCOPE_PROFILING_ENABLED`, detaches itself cleanly or idles with
+nonzero overhead. Every k6 profile and the tail-latency benchmark in this
+repo runs against Compose, so if the answer is "nonzero overhead," those
+measurements were taken with it.
+
+**Fixed by moving the decision, not by re-answering the question**: the
+five CLR attach variables now live in `kubernetes/base/*.yaml`, next to
+`PYROSCOPE_PROFILING_ENABLED`, instead of the Dockerfile `ENV`. A Compose
+bring-up sets none of them, so nothing attaches there regardless of the
+open question above - the `.so` files stay in the image either way,
+consistent with "disable without rebuilding" already meaning something in
+Kubernetes. This closes the class of gap even without resolving the
+specific overhead question, which needs a live Compose run
+(`docker compose --profile compose-apps exec <service> env | grep CORECLR`,
+then a k6 profile before/after) to answer for good.

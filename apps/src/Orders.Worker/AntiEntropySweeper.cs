@@ -35,6 +35,7 @@ public sealed class AntiEntropySweeper(
     IHttpClientFactory httpClientFactory,
     IOptions<AntiEntropyOptions> options,
     ILeaderElection leaderElection,
+    TimeProvider timeProvider,
     ILogger<AntiEntropySweeper> logger) : BackgroundService
 {
     private static readonly string[] PaymentAccountedStatuses =
@@ -251,7 +252,7 @@ public sealed class AntiEntropySweeper(
             LIMIT @batch_size
             """;
 
-        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(_options.ProjectionLagThresholdSeconds);
+        var cutoff = timeProvider.GetUtcNow() - TimeSpan.FromSeconds(_options.ProjectionLagThresholdSeconds);
 
         await using var command = dataSource.CreateCommand(sql);
         command.Parameters.AddWithValue("cutoff", NpgsqlDbType.TimestampTz, cutoff);

@@ -156,6 +156,7 @@ public sealed class ReplenishmentTests : IAsyncLifetime
         new(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new ReplenishmentOptions { LeadTimeSeconds = leadTimeSeconds }),
+            TimeProvider.System,
             NullLogger<PurchaseOrderReceivingSweeper>.Instance);
 
     private static ConsumeResult<string, string> CreateSignalConsumeResult(

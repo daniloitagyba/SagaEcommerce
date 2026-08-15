@@ -9,3 +9,28 @@ compose/.env
 data
 kubernetes
 observability
+
+# node_modules is git-ignored but .dockerignore does not read .gitignore -
+# a separate file, separate mechanism. Without this, Storefront.Service's
+# Dockerfile installs its own node_modules with `npm ci` and then the
+# `COPY apps/storefront-web/ ./` that follows overwrites it with whatever
+# is on the host - darwin-arm64 native binaries (esbuild/rollup/lightningcss)
+# on a developer's Mac, written into a Linux image. Same story for a stale
+# local dist/. Applies to all seven image builds, not just Storefront's,
+# since every service builds with the repo root as its context.
+**/node_modules
+apps/storefront-web/dist
+
+# None of these are ever COPY'd into any image - every Dockerfile names an
+# explicit apps/src/... path - but all of them were still being uploaded
+# into the build context for all seven builds. artifacts/ in particular is
+# git-ignored working notes that, on a real checkout, can hold operational
+# details (server address, credential status) with no reason to ever touch
+# a Docker daemon.
+artifacts
+docs
+output
+iac
+load-tests
+.github
+scripts

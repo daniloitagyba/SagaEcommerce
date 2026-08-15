@@ -44,7 +44,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncWithoutIdempotencyKeyCreatesANewOrderOnEveryCall()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, BuildPricingService(), TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1");
 
         var first = await handler.HandleAsync(command, CancellationToken.None);
@@ -60,7 +60,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncWithSameIdempotencyKeyReplaysTheFirstResultInsteadOfCreatingAgain()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, BuildPricingService(), TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "retry-key-1");
 
         var first = await handler.HandleAsync(command, CancellationToken.None);
@@ -76,7 +76,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncWithDifferentIdempotencyKeysCreatesIndependentOrders()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, BuildPricingService(), TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
 
         var first = await handler.HandleAsync(
             new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "key-a"),
@@ -93,7 +93,7 @@ public sealed class CreateOrderHandlerTests
     public async Task HandleAsyncRejectsAnIdempotencyKeyReusedWithDifferentPayload()
     {
         var repository = new FakeOrderRepository();
-        var handler = new CreateOrderHandler(repository, BuildPricingService(), NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, BuildPricingService(), TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
 
         var first = await handler.HandleAsync(
             new CreateOrderCommand("customer-1", 10m, "BRL", "correlation-1", "instance-1", "retry-key-1"),
@@ -154,7 +154,7 @@ public sealed class CreateOrderHandlerTests
     {
         var repository = new FakeOrderRepository();
         var handler = new CreateOrderHandler(
-            repository, BuildLineItemPricingService(50m), NullLogger<CreateOrderHandler>.Instance);
+            repository, BuildLineItemPricingService(50m), TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand(
             "customer-1", 0m, null, "correlation-1", "instance-1",
             Items: [new CreateOrderItem("SKU-A", 2)], ExpectedSubtotal: 100m);
@@ -172,7 +172,7 @@ public sealed class CreateOrderHandlerTests
         var repository = new FakeOrderRepository();
         // Live catalog price moved to 60.00/unit; the cart last saw 50.00/unit.
         var handler = new CreateOrderHandler(
-            repository, BuildLineItemPricingService(60m), NullLogger<CreateOrderHandler>.Instance);
+            repository, BuildLineItemPricingService(60m), TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand(
             "customer-1", 0m, null, "correlation-1", "instance-1",
             Items: [new CreateOrderItem("SKU-A", 2)], ExpectedSubtotal: 100m);
@@ -192,7 +192,7 @@ public sealed class CreateOrderHandlerTests
     {
         var repository = new FakeOrderRepository();
         var handler = new CreateOrderHandler(
-            repository, BuildLineItemPricingService(999m), NullLogger<CreateOrderHandler>.Instance);
+            repository, BuildLineItemPricingService(999m), TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand(
             "customer-1", 0m, null, "correlation-1", "instance-1",
             Items: [new CreateOrderItem("SKU-A", 1)], ExpectedSubtotal: null);
@@ -214,7 +214,7 @@ public sealed class CreateOrderHandlerTests
             new FixedCustomerRepository(),
             new NRulesPricingEngine(Options.Create(new PricingOptions { FlatShippingAmount = 0m })),
             TimeProvider.System);
-        var handler = new CreateOrderHandler(repository, pricing, NullLogger<CreateOrderHandler>.Instance);
+        var handler = new CreateOrderHandler(repository, pricing, TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand(
             "customer-1", 0m, null, "correlation-1", "instance-1", "line-retry-key",
             Items: [new CreateOrderItem("SKU-A", 1)]);

@@ -30,6 +30,7 @@ namespace Inventory.Service;
 public sealed class BackorderTimeoutSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<BackorderOptions> options,
+    TimeProvider timeProvider,
     ILogger<BackorderTimeoutSweeper> logger) : BackgroundService
 {
     /// <summary>Kept numerically distinct from Payments' SweepLockKey so a grep for either value is unambiguous about which service it belongs to.</summary>
@@ -79,7 +80,7 @@ public sealed class BackorderTimeoutSweeper(
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = timeProvider.GetUtcNow();
         var cutoff = now - TimeSpan.FromMinutes(_options.TimeoutMinutes);
 
         // A candidates pass only, not the authoritative read - each SKU's

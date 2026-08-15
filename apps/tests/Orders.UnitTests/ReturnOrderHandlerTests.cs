@@ -19,14 +19,19 @@ public sealed class ReturnOrderHandlerTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 10, 12, 0, 0, TimeSpan.Zero);
 
-    private static Order DeliveredOrderWithOneLine(string customerId)
+    private static Order DeliveredOrderWithOneLine(string customerId, DateTimeOffset? createdAt = null)
     {
         var order = Order.CreateWithLines(
-            customerId, "BRL", Now.AddDays(-10), couponCode: null,
+            customerId, "BRL", createdAt ?? Now.AddDays(-10), couponCode: null,
             [new OrderLineDraft("SKU-A", "Widget", "misc", 2, 50m, LineDiscount: 0m)],
             discountTotal: 0m, shippingTotal: 10m, taxTotal: 0m, paymentMethod: "Pix", shippingAddress: null);
         typeof(Order).GetProperty(nameof(Order.Status))!.SetValue(order, OrderStatuses.Delivered);
         return order;
+    }
+
+    private sealed class FakeTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class FakeOrderReturnRepository(Order? order) : IOrderReturnRepository
@@ -56,10 +61,12 @@ public sealed class ReturnOrderHandlerTests
         }
     }
 
-    private static ReturnOrderHandler Handler(Order? order, RecordingOrderCache cache, out FakeOrderReturnRepository repository)
+    private static ReturnOrderHandler Handler(
+        Order? order, RecordingOrderCache cache, out FakeOrderReturnRepository repository, TimeProvider? timeProvider = null)
     {
         repository = new FakeOrderReturnRepository(order);
-        return new ReturnOrderHandler(repository, cache, Options.Create(new ReturnOptions()), NullLogger<ReturnOrderHandler>.Instance);
+        return new ReturnOrderHandler(
+            repository, cache, Options.Create(new ReturnOptions()), timeProvider ?? TimeProvider.System, NullLogger<ReturnOrderHandler>.Instance);
     }
 
     [Fact]
@@ -143,4 +150,56 @@ public sealed class ReturnOrderHandlerTests
         Assert.False(repository.SaveCalled);
         Assert.Equal(0, cache.InvalidateCallCount);
     }
+
+    /// <summary>
+    /// Pins the exact bug HandleAsync used to have: it called
+    /// DateTimeOffset.UtcNow directly instead of the TimeProvider every
+    /// other component in this codebase is injected with, so a test fixing
+    /// "now" (like this class's own Now field) never actually controlled
+    /// what the handler compared the regret window against - the fixed
+    /// clock in ReturnOrderHandlerTests(Now) only ever bounded the *order's*
+    /// CreatedAt, not the request instant ShippingRefundPolicy.IsOwed
+    /// compares it to. A ReturnOptions().RegretWindowDays default of 7
+    /// means a request made a fixed 3 days after CreatedAt must fall
+    /// inside the window and refund shipping - only reachable now that the
+    /// handler's clock is the one this test controls.
+    /// </summary>
+    [Fact]
+    public async Task AFullyReturnedRegretRequestInsideTheWindowRefundsShipping()
+    {
+        var createdAt = Now.AddDays(-3);
+        var order = DeliveredOrderWithOneLine("customer-1", createdAt);
+        var cache = new RecordingOrderCache();
+        var handler = Handler(order, cache, out _, new FakeTimeProvider(Now));
+
+        var result = await handler.HandleAsync(
+            order.Id, [new ReturnItemRequest("SKU-A", 2)], "changed my mind", ReturnReasonCategory.Regret,
+            new CallerIdentity("customer-1", IsAdmin: false), "correlation-1", CancellationToken.None);
+
+        Assert.Equal(ReturnRejectionReason.None, result.Rejection);
+        Assert.True(result.OrderFullyReturned);
+        Assert.Equal(10m, result.RefundTotal - GoodsRefundOnly(order));
+    }
+
+    /// <summary>Same full return, same reason, one day past the 7-day default window - shipping is not owed, per ShippingRefundPolicy.IsOwed.</summary>
+    [Fact]
+    public async Task AFullyReturnedRegretRequestOutsideTheWindowDoesNotRefundShipping()
+    {
+        var createdAt = Now.AddDays(-8);
+        var order = DeliveredOrderWithOneLine("customer-1", createdAt);
+        var cache = new RecordingOrderCache();
+        var handler = Handler(order, cache, out _, new FakeTimeProvider(Now));
+
+        var result = await handler.HandleAsync(
+            order.Id, [new ReturnItemRequest("SKU-A", 2)], "changed my mind", ReturnReasonCategory.Regret,
+            new CallerIdentity("customer-1", IsAdmin: false), "correlation-1", CancellationToken.None);
+
+        Assert.Equal(ReturnRejectionReason.None, result.Rejection);
+        Assert.True(result.OrderFullyReturned);
+        Assert.Equal(0m, result.RefundTotal - GoodsRefundOnly(order));
+    }
+
+    /// <summary>The goods portion of a full return of DeliveredOrderWithOneLine's single line (LineDiscount and taxTotal are both 0 in that fixture, so this is the line's whole charged total), independent of whether shipping is owed - lets the two tests above assert the shipping difference without duplicating ReturnRefundTests' own coverage of the line-level arithmetic.</summary>
+    private static decimal GoodsRefundOnly(Order order) =>
+        order.Lines.Single().LineTotal;
 }

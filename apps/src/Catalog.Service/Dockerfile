@@ -46,12 +46,7 @@ USER $APP_UID
 ENV ASPNETCORE_URLS=http://+:8080 \
     OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 \
     OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
-    OTEL_METRIC_EXPORT_INTERVAL=10000 \
-    CORECLR_ENABLE_PROFILING=1 \
-    CORECLR_PROFILER={BD1A650D-AC5D-4896-B64F-D6FA25D6B26A} \
-    CORECLR_PROFILER_PATH=/opt/Pyroscope.Profiler.Native.so \
-    LD_PRELOAD=/opt/Pyroscope.Linux.ApiWrapper.x64.so \
-    LD_LIBRARY_PATH=/opt
+    OTEL_METRIC_EXPORT_INTERVAL=10000
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
     CMD curl --fail --silent http://127.0.0.1:8080/health/ready || exit 1
