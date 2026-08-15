@@ -15,11 +15,28 @@ namespace Inventory.Service;
 public sealed partial class InventoryReservationMessageProcessor
 {
     /// <summary>
-    /// Strict FIFO. Jumping ahead to a later, smaller
-    /// backorder because it happens to fit would be unfair to whoever has
-    /// been waiting the longest, so the loop stops at the first one that
-    /// still cannot be filled rather than skipping past it - the rest wait
-    /// for the next restock, same as they are waiting for this one.
+    /// FIFO order of attempt, not FIFO order of fill: every pending
+    /// backorder for this SKU gets a chance against the restock, oldest
+    /// first, and one that cannot be filled is skipped rather than blocking
+    /// every smaller order behind it.
+    ///
+    /// This used to <c>break</c> on the first unfillable one instead,
+    /// reasoned as strict-FIFO fairness ("jumping ahead to a later, smaller
+    /// backorder would be unfair to whoever has been waiting longest"). In
+    /// practice that argument does not survive contact with
+    /// BackorderTimeoutSweeper: a restock too small for the oldest backorder
+    /// left every fillable one behind it waiting too, and the sweeper then
+    /// cancels backorders that sit past BackorderOptions.TimeoutMinutes
+    /// regardless of *why* they never got stock - so the head-of-line order
+    /// was never protected from anything, it was starving its own
+    /// neighbours of stock that was physically available, and the sweeper
+    /// went on to cancel some of them anyway. No separate starvation guard
+    /// is needed for the head-of-line order itself either: the sweeper
+    /// already bounds how long any single backorder can wait before being
+    /// given up on, skipped or not, so a large order that keeps losing to
+    /// smaller ones is cancelled on exactly the same schedule it would have
+    /// been under strict FIFO - it just no longer takes the rest of the
+    /// queue down with it while it waits.
     /// </summary>
     private async Task ReleaseBackordersAsync(
         InventoryDbContext dbContext,
@@ -40,7 +57,7 @@ public sealed partial class InventoryReservationMessageProcessor
 
             if (!decision.Reserved)
             {
-                break;
+                continue;
             }
 
             dbContext.Backorders.Remove(backorder);

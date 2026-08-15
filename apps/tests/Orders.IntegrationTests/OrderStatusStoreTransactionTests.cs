@@ -123,6 +123,61 @@ public sealed class OrderStatusStoreTransactionTests : IAsyncLifetime, IDisposab
         Assert.Equal(CustomerTiers.Silver, customer.Tier);
     }
 
+    /// <summary>
+    /// Pins the fix for the loophole CustomerTierStore's own header used to
+    /// describe as closed by recording at confirmation alone: confirm,
+    /// then cancel, and assert standing is given back rather than kept
+    /// permanently. Regression coverage for
+    /// docs/architecture/audit-2026-08-15-domain-and-business-rules-review.md
+    /// finding 1.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmThenCancelReversesCustomerStanding()
+    {
+        const string customerId = "confirm-then-cancel-customer";
+        _dbContext.Customers.Add(Customer.Create(customerId, DateTimeOffset.UtcNow.AddDays(-30)));
+        var order = Order.Create(customerId, 1_250m, "BRL", DateTimeOffset.UtcNow);
+        _dbContext.Orders.Add(order);
+        await _dbContext.SaveChangesAsync();
+
+        Assert.True(await _store.TryConfirmAsync(order.Id, "standing-test", CancellationToken.None));
+
+        _dbContext.ChangeTracker.Clear();
+        var confirmedCustomer = await _dbContext.Customers.AsNoTracking().SingleAsync(item => item.Id == customerId);
+        Assert.Equal(1_250m, confirmedCustomer.LifetimeSpend);
+        Assert.Equal(1, confirmedCustomer.CompletedOrderCount);
+        Assert.Equal(CustomerTiers.Silver, confirmedCustomer.Tier);
+
+        Assert.True(await _store.TryCancelAsync(order.Id, "standing-test", CancellationToken.None));
+
+        _dbContext.ChangeTracker.Clear();
+        var cancelledCustomer = await _dbContext.Customers.AsNoTracking().SingleAsync(item => item.Id == customerId);
+        Assert.Equal(OrderStatuses.Cancelled, await CurrentStatusAsync(order.Id));
+        Assert.Equal(0m, cancelledCustomer.LifetimeSpend);
+        Assert.Equal(0, cancelledCustomer.CompletedOrderCount);
+        // Tier is deliberately not demoted - see Customer.ReverseCompletedOrder's own doc comment.
+        Assert.Equal(CustomerTiers.Silver, cancelledCustomer.Tier);
+    }
+
+    /// <summary>A cancellation from Created never recorded any standing in the first place, so reversing it must be a no-op, not a negative balance.</summary>
+    [Fact]
+    public async Task CancellingAnUnconfirmedOrderDoesNotTouchCustomerStanding()
+    {
+        const string customerId = "never-confirmed-customer";
+        _dbContext.Customers.Add(Customer.Create(customerId, DateTimeOffset.UtcNow.AddDays(-30)));
+        var order = Order.Create(customerId, 500m, "BRL", DateTimeOffset.UtcNow);
+        _dbContext.Orders.Add(order);
+        await _dbContext.SaveChangesAsync();
+
+        Assert.True(await _store.TryCancelAsync(order.Id, "standing-test", CancellationToken.None));
+
+        _dbContext.ChangeTracker.Clear();
+        var customer = await _dbContext.Customers.AsNoTracking().SingleAsync(item => item.Id == customerId);
+        Assert.Equal(OrderStatuses.Cancelled, await CurrentStatusAsync(order.Id));
+        Assert.Equal(0m, customer.LifetimeSpend);
+        Assert.Equal(0, customer.CompletedOrderCount);
+    }
+
     private async Task<Guid> SeedPickingCardOrderAsync()
     {
         var order = Order.Create("transaction-customer", 149.90m, "BRL", DateTimeOffset.UtcNow);

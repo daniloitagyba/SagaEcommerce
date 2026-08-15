@@ -55,22 +55,39 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
             return Assess(signals);
         }
 
-        // A single-column projection across the customer's whole history,
-        // Min()'d client-side - SQLite's EF provider (used as a lightweight
-        // stand-in for Postgres in this codebase's unit tests) can't
-        // translate MIN()/ORDER BY over a DateTimeOffset column to SQL at
-        // all, so this can't be pushed down the way the bounded query below
-        // is. Narrow (one date per row, not the four columns below) rather
-        // than genuinely bounded: NEW_ACCOUNT/FIRST_PURCHASE need the
-        // account's true first-ever payment date, which a lookback window
-        // can't answer, but the bandwidth cost of dates alone is nowhere
-        // near the full-row cost this fix targets.
-        var decidedDates = await dbContext.Payments
-            .AsNoTracking()
-            .Where(payment => payment.IsPrimary && payment.CustomerId == customerId)
-            .Select(payment => payment.DecidedAt)
-            .ToListAsync(cancellationToken);
-        DateTimeOffset? firstSeen = decidedDates.Count > 0 ? decidedDates.Min() : null;
+        // The account's true first-ever payment date - NEW_ACCOUNT/
+        // FIRST_PURCHASE need exactly that, which a bounded lookback window
+        // (like the one HistoryMaxRows applies below) cannot answer. Used
+        // to load every DecidedAt for the customer and Min() it client-side
+        // regardless of provider, an unbounded read that grew with the
+        // customer's entire order history on every single checkout. Same
+        // provider split as the bounded history query just below: on
+        // PostgreSQL, MIN(decided_at) now runs server-side against
+        // ix_payments_customer_history and returns one row; SQLite's EF
+        // provider still can't translate MIN()/ORDER BY over a
+        // DateTimeOffset column at all, so the lightweight test provider
+        // keeps the client-side fallback.
+        DateTimeOffset? firstSeen;
+        if (string.Equals(
+                dbContext.Database.ProviderName,
+                "Microsoft.EntityFrameworkCore.Sqlite",
+                StringComparison.Ordinal))
+        {
+            var decidedDates = await dbContext.Payments
+                .AsNoTracking()
+                .Where(payment => payment.IsPrimary && payment.CustomerId == customerId)
+                .Select(payment => payment.DecidedAt)
+                .ToListAsync(cancellationToken);
+            firstSeen = decidedDates.Count > 0 ? decidedDates.Min() : null;
+        }
+        else
+        {
+            firstSeen = await dbContext.Payments
+                .AsNoTracking()
+                .Where(payment => payment.IsPrimary && payment.CustomerId == customerId)
+                .Select(payment => (DateTimeOffset?)payment.DecidedAt)
+                .MinAsync(cancellationToken);
+        }
 
         if (firstSeen is null)
         {

@@ -74,6 +74,20 @@ public sealed class EfOrderReturnRepository(
                     if (rowsAffected > 0)
                     {
                         QueueStatusChangedEvent(order.Id, correlationId, orderReturn.RequestedAt);
+
+                        // Same guard as the event above, for the same
+                        // reason: only the call that actually won the
+                        // Delivered -> Returned race may reverse the tier
+                        // contribution, or a retried/duplicate request could
+                        // reverse it twice. A full return means the
+                        // customer is getting essentially the whole order
+                        // back, so the amount reversed is the order's full
+                        // recorded total - the same figure
+                        // RecordCompletedOrderForTierAsync credited at
+                        // Confirmed - not orderReturn.RefundTotal, which can
+                        // differ slightly (e.g. a return that owes no
+                        // shipping refund).
+                        await ReverseCompletedOrderForTierAsync(order.CustomerId, order.Amount, ct);
                     }
                 }
 
@@ -104,6 +118,27 @@ public sealed class EfOrderReturnRepository(
         {
             throw new InfrastructureUnavailableException("PostgreSQL is currently unavailable.", exception);
         }
+    }
+
+    /// <summary>
+    /// Mirrors EfOrderStatusRepository's method of the same name (itself a
+    /// mirror of Orders.Worker's CustomerTierStore.ReverseSql) - a full
+    /// return must not leave the customer permanently credited for spend
+    /// that was given back, the same reasoning that reverses it on a
+    /// cancellation reached from Confirmed or later. Deliberately does not
+    /// re-derive tier downward - see Orders.Domain.Customer.ReverseCompletedOrder's
+    /// own doc comment for why.
+    /// </summary>
+    private async Task ReverseCompletedOrderForTierAsync(string customerId, decimal amount, CancellationToken cancellationToken)
+    {
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE customers
+            SET lifetime_spend = GREATEST(lifetime_spend - {amount}, 0),
+                completed_order_count = GREATEST(completed_order_count - 1, 0)
+            WHERE id = {customerId}
+            """,
+            cancellationToken);
     }
 
     private void QueueStatusChangedEvent(Guid orderId, string correlationId, DateTimeOffset occurredAt)

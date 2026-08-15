@@ -33,11 +33,26 @@ public sealed class OrderStatusStore(
     // reintroduce the race the CAS exists to remove. RETURNING carries what
     // the follow-up actions need, so they fire for exactly the winner of
     // the compare-and-set and a loser cannot double-count.
+    //
+    // The `previous` CTE (FOR UPDATE, same lock and shape as
+    // EfOrderStatusRepository's identical TransitionSql) is what makes the
+    // row's status *before* this write available to ApplySideEffectsAsync -
+    // a plain UPDATE ... RETURNING only ever returns the post-write row,
+    // and status is the one column this statement changes, so a bare
+    // RETURNING could never tell "was Confirmed" from "was Created" apart.
+    // Still one round trip, still atomic: the allowed_from guard lives in
+    // the UPDATE's own WHERE, same as before, not the CTE's - a row whose
+    // status has since moved out of allowed_from re-evaluates to "no match"
+    // the moment the lock is granted, which is what stops a lost update.
     private const string UpdateSql = """
-        UPDATE orders
+        WITH previous AS (
+            SELECT status, coupon_code, payment_method, customer_id, amount_cents FROM orders WHERE id = @id FOR UPDATE
+        )
+        UPDATE orders o
         SET status = @status
-        WHERE id = @id AND status = ANY(@allowed_from)
-        RETURNING coupon_code, payment_method, customer_id, amount_cents;
+        FROM previous
+        WHERE o.id = @id AND previous.status = ANY(@allowed_from)
+        RETURNING previous.status, previous.coupon_code, previous.payment_method, previous.customer_id, previous.amount_cents;
         """;
 
     // Same table, same database, same transaction as the status CAS above -
@@ -163,6 +178,27 @@ public sealed class OrderStatusStore(
                 cancellationToken);
         }
 
+        // The mirror of the block above: a cancellation reaching here from
+        // Confirmed, Picking or FulfillmentHold means the order was
+        // Confirmed at some earlier point (the state graph guarantees it -
+        // those are the only three of Cancelled's legal predecessors
+        // reachable only through Confirmed; Created and Backordered are
+        // not - see EfOrderStatusRepository.QueueInventoryCompensationAsync's
+        // identical check for the same reasoning) and RecordCompletedOrderAsync
+        // already ran for it, crediting lifetime_spend permanently even
+        // though the order never completed.
+        if (targetStatus == OrderStatuses.Cancelled
+            && context.CustomerId is not null
+            && context.PreviousStatus is OrderStatuses.Confirmed or OrderStatuses.Picking or OrderStatuses.FulfillmentHold)
+        {
+            await customerTierStore.ReverseCompletedOrderAsync(
+                connection,
+                transaction,
+                context.CustomerId,
+                context.Amount,
+                cancellationToken);
+        }
+
         if (context.CouponCode is not null)
         {
             var settleCoupon = targetStatus switch
@@ -256,19 +292,21 @@ public sealed class OrderStatusStore(
 
         return new TransitionContext(
             true,
-            await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetString(0),
+            reader.GetString(0),
             await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetString(1),
             await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2),
-            reader.GetInt64(3) / 100m);
+            await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetString(3),
+            reader.GetInt64(4) / 100m);
     }
 
     private sealed record TransitionContext(
         bool Transitioned,
+        string? PreviousStatus,
         string? CouponCode,
         string? PaymentMethod,
         string? CustomerId,
         decimal Amount)
     {
-        public static readonly TransitionContext NotTransitioned = new(false, null, null, null, 0m);
+        public static readonly TransitionContext NotTransitioned = new(false, null, null, null, null, 0m);
     }
 }

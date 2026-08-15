@@ -126,6 +126,25 @@ public sealed class EfOrderStatusRepository(
                     }
                 }
 
+                // The mirror of Confirmed's tier recording above: a
+                // cancellation reaching here from Confirmed, Picking or
+                // FulfillmentHold means the order was Confirmed at some
+                // earlier point (the state graph guarantees it - those are
+                // the only three of Cancelled's legal predecessors that are
+                // reachable only through Confirmed; Created and Backordered
+                // are not) and RecordCompletedOrderForTierAsync already ran
+                // for it, crediting lifetime_spend permanently even though
+                // the order never completed. Without this, confirm-then-
+                // cancel was the cheapest route to a loyalty tier
+                // CustomerTierStore's own header describes recording-at-
+                // confirmation as having closed.
+                if (targetStatus == OrderStatuses.Cancelled
+                    && row.CustomerId is not null
+                    && previousStatus is OrderStatuses.Confirmed or OrderStatuses.Picking or OrderStatuses.FulfillmentHold)
+                {
+                    await ReverseCompletedOrderForTierAsync(row.CustomerId, row.Amount, ct);
+                }
+
                 // Same transaction as the status change - a capture command outliving a rolled-back "Shipped" would charge for goods that never left.
                 if (settlementAction == OrderSettlementAction.Capture && paymentMethod is not null && PaymentMethods.RequiresCapture(paymentMethod))
                 {
@@ -386,6 +405,26 @@ public sealed class EfOrderStatusRepository(
                     WHEN lifetime_spend + {amount} >= {CustomerTiers.SilverThreshold} THEN {CustomerTiers.Silver}
                     ELSE {CustomerTiers.Bronze}
                 END
+            WHERE id = {customerId}
+            """,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Mirrors Orders.Worker's CustomerTierStore.ReverseSql exactly,
+    /// including deliberately not re-deriving tier downward - see that
+    /// method's own doc comment for why. Symmetric with
+    /// RecordCompletedOrderForTierAsync's GREATEST(...,0) counterpart in
+    /// CouponRedemptionStore.ReleaseSql, floored the same way so a
+    /// cancellation can never push either column negative.
+    /// </summary>
+    private async Task ReverseCompletedOrderForTierAsync(string customerId, decimal amount, CancellationToken cancellationToken)
+    {
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE customers
+            SET lifetime_spend = GREATEST(lifetime_spend - {amount}, 0),
+                completed_order_count = GREATEST(completed_order_count - 1, 0)
             WHERE id = {customerId}
             """,
             cancellationToken);

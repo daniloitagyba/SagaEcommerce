@@ -122,6 +122,36 @@ public class PricingEngineTests
             breakdown.Discounts.Aggregate(new Money(0m, Brl), (running, d) => running + d.Amount));
     }
 
+    /// <summary>
+    /// Regression coverage for
+    /// docs/architecture/audit-2026-08-15-domain-and-business-rules-review.md's
+    /// finding 4: when the cap binds, the shopper-presented coupon
+    /// ("SAVE") must survive at full value and the automatic category
+    /// promotion ("CATEGORY-CLEARANCE") must absorb the truncation - not
+    /// the other way around, which is what CapDiscounts' old
+    /// alphabetical-by-code walk order would have picked here purely
+    /// because "CATEGORY-" sorts before "SAVE".
+    /// </summary>
+    [Fact]
+    public void WhenTheCapBindsTheShopperPresentedCouponSurvivesInFullAndTheAutomaticDiscountAbsorbsTheTruncation()
+    {
+        var options = new PricingOptions
+        {
+            CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["clearance"] = 80m },
+            FlatShippingAmount = 0m
+        };
+
+        var breakdown = BuildEngine(options).Price(Request(50m, Line("SKU-CLTH-001", "clearance", 1, 100m)));
+
+        Assert.Equal(new Money(100m, Brl), breakdown.DiscountTotal);
+
+        var coupon = Assert.Single(breakdown.Discounts, d => d.Code == "SAVE");
+        Assert.Equal(new Money(50m, Brl), coupon.Amount);
+
+        var category = Assert.Single(breakdown.Discounts, d => d.Code == "CATEGORY-CLEARANCE");
+        Assert.Equal(new Money(50m, Brl), category.Amount);
+    }
+
     [Fact]
     public void AppliesTaxToTheDiscountedSubtotalNotTheGrossOne()
     {

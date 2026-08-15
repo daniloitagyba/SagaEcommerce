@@ -129,6 +129,22 @@ public sealed class NRulesPricingEngine : IPricingEngine
         return _options.TaxRatePercentage;
     }
 
+    /// <summary>
+    /// Which discounts survive the subtotal cap is a policy decision, not
+    /// an accident of string sorting. This used to walk <paramref
+    /// name="discounts"/> in the same alphabetical-by-code order the
+    /// receipt displays them in, so whichever code happened to sort last
+    /// - a shopper-typed coupon as easily as an automatic promotion - was
+    /// the one truncated to zero when the cap bound. Not reachable with
+    /// today's deployed configuration (the maximum stack is 70%), but it
+    /// is the kind of thing that turns into "why did my coupon show as
+    /// R$0,00?" the first time a campaign is configured past 100%.
+    /// Truncates in <see cref="DiscountPriority"/> order instead (a
+    /// shopper-presented coupon is the discount they will actually notice
+    /// missing, so it pays out first) and re-sorts the survivors back to
+    /// alphabetical before returning, so the receipt's display order is
+    /// unaffected by this - only which discounts make the cut changes.
+    /// </summary>
     private static List<AppliedDiscount> CapDiscounts(
         List<AppliedDiscount> discounts,
         Money subtotal,
@@ -138,7 +154,11 @@ public sealed class NRulesPricingEngine : IPricingEngine
         var remaining = subtotal;
         var zero = new Money(0m, currency);
 
-        foreach (var discount in discounts)
+        var payoutOrder = discounts
+            .OrderBy(discount => DiscountPriority.RankOf(discount.Code))
+            .ThenBy(discount => discount.Code, StringComparer.Ordinal);
+
+        foreach (var discount in payoutOrder)
         {
             if (remaining <= zero)
             {
@@ -150,6 +170,25 @@ public sealed class NRulesPricingEngine : IPricingEngine
             remaining -= amount;
         }
 
-        return capped;
+        return [.. capped.OrderBy(discount => discount.Code, StringComparer.Ordinal)];
     }
+}
+
+/// <summary>
+/// Ranks a discount code for payout order when the subtotal cap forces a
+/// choice about which discounts get truncated - lower rank pays out
+/// first. Shopper-presented (a typed coupon code, no recognised automatic
+/// prefix) ranks above every automatic promotion this engine grants on
+/// its own, since a coupon the shopper actively redeemed is the one
+/// they will notice missing from the total; which of the automatic ones
+/// yields to which is left to alphabetical order (CapDiscounts' own
+/// tie-break) since there is no stated policy preferring one automatic
+/// promotion over another.
+/// </summary>
+internal static class DiscountPriority
+{
+    private static readonly string[] AutomaticPrefixes = ["CATEGORY-", "BULK-", "TIER-"];
+
+    public static int RankOf(string code) =>
+        Array.Exists(AutomaticPrefixes, prefix => code.StartsWith(prefix, StringComparison.Ordinal)) ? 1 : 0;
 }

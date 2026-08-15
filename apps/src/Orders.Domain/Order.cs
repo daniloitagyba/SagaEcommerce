@@ -1,5 +1,23 @@
 namespace Orders.Domain;
 
+/// <summary>
+/// Mirrors BuildingBlocks.OrderStatuses' Created and Delivered constants -
+/// the only two status values this aggregate itself ever compares against
+/// or writes. Orders.Domain cannot reference BuildingBlocks (its csproj
+/// takes only NodaMoney, deliberately, and the domain-purity fitness
+/// functions enforce it), so these are duplicated here rather than passed
+/// in, the same reasoning and the same pattern Orders.Worker's
+/// CustomerTierThresholds already uses to mirror
+/// Orders.Domain.CustomerTiers across its own assembly boundary - "with a
+/// test pinning the two together" applies here too, see
+/// OrderStatusNamesTests.
+/// </summary>
+internal static class OrderStatusNames
+{
+    public const string Created = "Created";
+    public const string Delivered = "Delivered";
+}
+
 public sealed class Order
 {
     private readonly List<OrderLine> _lines = [];
@@ -86,7 +104,7 @@ public sealed class Order
     {
         ArgumentNullException.ThrowIfNull(requestedItems);
 
-        if (Status != "Delivered")
+        if (Status != OrderStatusNames.Delivered)
         {
             // Nothing can come back that never arrived.
             return (null, ReturnRejectionReason.OrderNotDelivered, null);
@@ -166,7 +184,7 @@ public sealed class Order
             CustomerId = customerId,
             Amount = amount,
             Currency = currency,
-            Status = "Created",
+            Status = OrderStatusNames.Created,
             CreatedAt = createdAt,
             Subtotal = amount,
             DiscountTotal = 0m,
@@ -226,7 +244,7 @@ public sealed class Order
             Id = Guid.NewGuid(),
             CustomerId = customerId,
             Currency = currency,
-            Status = "Created",
+            Status = OrderStatusNames.Created,
             CreatedAt = createdAt,
             CouponCode = couponCode,
             PaymentMethod = paymentMethod,

@@ -204,8 +204,19 @@ public sealed class BackorderTests : IAsyncLifetime
         Assert.Equal(0, item.ReservedQuantity);
     }
 
+    /// <summary>
+    /// Regression coverage for
+    /// docs/architecture/audit-2026-08-15-domain-and-business-rules-review.md's
+    /// finding 2: a restock too small for the oldest backorder used to
+    /// leave every fillable backorder behind it waiting too (the loop
+    /// stopped at the first miss instead of trying the rest), and
+    /// BackorderTimeoutSweeper would eventually cancel all of them,
+    /// including ones the restock could actually have covered. Renamed
+    /// from RestockReleasesBackordersOldestFirstAndStopsAtTheFirstThatStillDoesNotFit,
+    /// which pinned exactly that behavior before the fix.
+    /// </summary>
     [Fact]
-    public async Task RestockReleasesBackordersOldestFirstAndStopsAtTheFirstThatStillDoesNotFit()
+    public async Task ARestockSkipsAnUnfillableBackorderInsteadOfBlockingEveryoneBehindIt()
     {
         var processor = CreateProcessor();
         var firstReservationId = Guid.NewGuid();
@@ -215,32 +226,30 @@ public sealed class BackorderTests : IAsyncLifetime
         await processor.ProcessAsync(CreateReserveConsumeResult(Guid.NewGuid(), "SKU-TEST-001", 3), CancellationToken.None);
 
         // First asks for 5, which the restock below still won't cover.
-        // Second asks for only 1 and arrived later - serving it first would
-        // be skipping the line just because it's smaller.
+        // Second asks for only 1 and arrived later - it can be filled from
+        // this exact restock even though it isn't first in line.
         await processor.ProcessAsync(CreateReserveConsumeResult(firstReservationId, "SKU-TEST-001", 5), CancellationToken.None);
         await Task.Delay(10); // RequestedAt must strictly order the two.
         await processor.ProcessAsync(CreateReserveConsumeResult(secondReservationId, "SKU-TEST-001", 1), CancellationToken.None);
 
-        // Only 1 comes back - covers the second alone, nowhere near the first's 5. The loop must stop at the first, not skip ahead.
+        // Only 1 comes back - nowhere near the first's 5, but exactly enough for the second. The loop must not give up on the second because the first missed.
         await processor.ProcessRestockAsync(CreateRestockConsumeResult(Guid.NewGuid(), "SKU-TEST-001", 1), CancellationToken.None);
 
         await using var scope = _serviceProvider.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
 
+        // Only the larger, still-unfillable backorder remains.
         var stillWaiting = await dbContext.Backorders.Select(backorder => backorder.ReservationId).ToListAsync();
-        Assert.Equal(
-            new[] { firstReservationId, secondReservationId }.OrderBy(id => id),
-            stillWaiting.OrderBy(id => id));
+        Assert.Equal([firstReservationId], stillWaiting);
 
         var replies = await AllRepliesAsync(dbContext);
-        // Only the two backorders matter here - the earlier "deplete the shelf" reservation legitimately succeeded too.
         Assert.DoesNotContain(replies, r => r.ReservationId == firstReservationId && r.Reserved);
-        Assert.DoesNotContain(replies, r => r.ReservationId == secondReservationId && r.Reserved);
+        Assert.Contains(replies, r => r.ReservationId == secondReservationId && r.Reserved);
 
-        // Untouched: neither backorder released, so the restocked unit sits in Available. Reserved is 3 from the initial "deplete" reservation.
+        // The restocked unit went to the second backorder, not left sitting in Available. Reserved: 3 (initial "deplete") + 1 (second backorder) = 4.
         var item = await dbContext.InventoryItems.SingleAsync(i => i.Sku == "SKU-TEST-001");
-        Assert.Equal(1, item.AvailableQuantity);
-        Assert.Equal(3, item.ReservedQuantity);
+        Assert.Equal(0, item.AvailableQuantity);
+        Assert.Equal(4, item.ReservedQuantity);
     }
 
     private InventoryReservationMessageProcessor CreateProcessor()

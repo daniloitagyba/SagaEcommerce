@@ -45,10 +45,20 @@ public sealed class Customer
     }
 
     /// <summary>
-    /// Reverses a completed order's contribution after a full refund. Tier
-    /// is deliberately <em>not</em> demoted here - taking a discount away
-    /// retroactively generates support tickets; real loyalty programmes
-    /// review downward on a schedule, not on the instant.
+    /// Reverses a completed order's contribution - called for a
+    /// cancellation reached after the order was Confirmed (see
+    /// OrderStatusStore/EfOrderStatusRepository's ApplySideEffectsAsync),
+    /// or a <em>full</em> return (EfOrderReturnRepository.SaveReturnAsync,
+    /// gated on the same <c>markOrderReturned</c> that also flips the order
+    /// to Returned). A <em>partial</em> return does not call this at all -
+    /// the customer kept most of the order, and this domain has no policy
+    /// yet for pro-rating standing down proportionally to what was given
+    /// back; get that decision explicit before wiring one, rather than
+    /// guessing a formula nobody asked for.
+    ///
+    /// Tier is deliberately <em>not</em> demoted here either way - taking a
+    /// discount away retroactively generates support tickets; real loyalty
+    /// programmes review downward on a schedule, not on the instant.
     /// </summary>
     public void ReverseCompletedOrder(decimal amount)
     {

@@ -4,9 +4,15 @@ using NpgsqlTypes;
 namespace Orders.Worker;
 
 /// <summary>
-/// Records a completed order and lets standing climb. Runs
+/// Records a completed order and lets standing climb, and reverses that
+/// contribution if the order is later cancelled or fully returned. Records
 /// on <em>confirmation</em>, not creation, or placing and cancelling would
-/// be the cheapest route to Gold. Raw Npgsql, matching this worker's other writes.
+/// have been the cheapest route to Gold on its own - but recording early
+/// was not, by itself, enough: confirm-then-cancel still credited spend
+/// permanently until ReverseCompletedOrderAsync closed that gap too (see
+/// OrderStatusStore.ApplySideEffectsAsync's own comment on the Cancelled
+/// branch for the state-graph reasoning). Raw Npgsql, matching this
+/// worker's other writes.
 /// </summary>
 public sealed class CustomerTierStore
 {
@@ -23,9 +29,48 @@ public sealed class CustomerTierStore
         WHERE id = @id;
         """;
 
-    public async Task RecordCompletedOrderAsync(
+    // Mirrors Orders.Domain.Customer.ReverseCompletedOrder: subtracts spend
+    // and floors at zero the same way CouponRedemptionStore's release does
+    // for redemption_count, but deliberately does NOT re-derive tier -
+    // taking a discount away retroactively generates support tickets; real
+    // loyalty programmes review downward on a schedule, not on the instant
+    // a refund posts. A customer keeps whatever standing a since-reversed
+    // order already earned them.
+    private const string ReverseSql = """
+        UPDATE customers
+        SET lifetime_spend = GREATEST(lifetime_spend - @amount, 0),
+            completed_order_count = GREATEST(completed_order_count - 1, 0)
+        WHERE id = @id;
+        """;
+
+    public Task RecordCompletedOrderAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
+        string customerId,
+        decimal amount,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, transaction, RecordSql, customerId, amount, cancellationToken);
+
+    /// <summary>
+    /// Reverses a completed order's contribution to standing - a
+    /// cancellation of an already-Confirmed order, or a full return, must
+    /// not leave the customer permanently credited for spend that was
+    /// given back. A <em>partial</em> return does not call this: the
+    /// customer kept most of the order, and there is no policy yet for
+    /// pro-rating standing down for a partial refund.
+    /// </summary>
+    public Task ReverseCompletedOrderAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string customerId,
+        decimal amount,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, transaction, ReverseSql, customerId, amount, cancellationToken);
+
+    private static async Task ExecuteAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string sql,
         string customerId,
         decimal amount,
         CancellationToken cancellationToken)
@@ -37,7 +82,7 @@ public sealed class CustomerTierStore
 
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = RecordSql;
+        command.CommandText = sql;
         command.Parameters.AddWithValue("id", NpgsqlDbType.Varchar, customerId);
         command.Parameters.AddWithValue("amount", NpgsqlDbType.Numeric, amount);
         command.Parameters.AddWithValue("gold_threshold", NpgsqlDbType.Numeric, CustomerTierThresholds.Gold);
