@@ -116,13 +116,10 @@ public sealed partial class InventoryReservationMessageProcessor
 
         var processedAt = _timeProvider.GetUtcNow();
         var inboxConsumerName = $"{_kafkaOptions.ConsumerGroup}-backorder-cancel";
-        var insertedRows = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            INSERT INTO inbox_messages (consumer_name, event_id, topic, partition, "offset", correlation_id, processed_at)
-            VALUES ({inboxConsumerName}, {request.OrderId}, {consumeResult.Topic}, {consumeResult.Partition.Value}, {consumeResult.Offset.Value}, {correlationId}, {processedAt})
-            ON CONFLICT (consumer_name, event_id) DO NOTHING
-            """,
-            cancellationToken);
+        var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
+            dbContext.Database, inboxConsumerName, request.OrderId,
+            consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
+            correlationId, processedAt, cancellationToken);
 
         if (insertedRows == 0)
         {

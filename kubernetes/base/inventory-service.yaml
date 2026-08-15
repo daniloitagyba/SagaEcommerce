@@ -54,13 +54,21 @@ spec:
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
+            # Missing here previously - AddKeycloakJwtBearer throws during
+            # service registration without it, before any health check runs.
+            # Must match compose.yaml's value.
+            - name: Authentication__Authority
+              value: http://keycloak:8080/realms/orders-lab
             - name: ConnectionStrings__Inventory
               valueFrom:
                 secretKeyRef:
                   name: orders-runtime
                   key: inventory-connection-string
             - name: Kafka__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: Kafka__ReservationRequestedTopic
               value: inventory.reservation-requested.v1
             - name: Kafka__ReservationRepliedTopic
@@ -79,6 +87,18 @@ spec:
               value: inventory-service
             - name: Kafka__ClientId
               value: inventory-service-k3s
+            # OutboxPublisher<InventoryDbContext> - see orders-api's own
+            # comment on these five.
+            - name: Outbox__BatchSize
+              value: "5"
+            - name: Outbox__PollIntervalMilliseconds
+              value: "500"
+            - name: Outbox__MaximumRetryDelaySeconds
+              value: "60"
+            - name: Outbox__ClaimWindowSeconds
+              value: "30"
+            - name: Outbox__PendingSampleIntervalSeconds
+              value: "10"
             - name: InstanceId
               valueFrom:
                 fieldRef:

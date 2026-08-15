@@ -71,10 +71,14 @@ public sealed class EfOrderRepository(
                                     && item.IdempotencyKey == idempotencyClaim.IdempotencyKey,
                                 ct);
                         await transaction.RollbackAsync(ct);
+                        var isReplay = string.Equals(existing.RequestHash, idempotencyClaim.RequestHash, StringComparison.Ordinal);
+                        if (isReplay)
+                        {
+                            OrdersTelemetry.RecordIdempotentReplay();
+                        }
+
                         writeResult = new OrderWriteResult(
-                            string.Equals(existing.RequestHash, idempotencyClaim.RequestHash, StringComparison.Ordinal)
-                                ? OrderWriteOutcome.Replayed
-                                : OrderWriteOutcome.IdempotencyConflict,
+                            isReplay ? OrderWriteOutcome.Replayed : OrderWriteOutcome.IdempotencyConflict,
                             existing.OrderId,
                             existing.RequestHash);
                         return;

@@ -127,8 +127,7 @@ builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, 
 {
     var options = serviceProvider.GetRequiredService<IOptions<CatalogClientOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(3);
-}).AddStandardResilienceHandler();
+}).AddBestEffortHttpResilience();
 
 // This service's own credentials - reuses
 // orders-api-clients (already provisioned as this lab's trusted-backend-tooling client)
@@ -143,8 +142,8 @@ builder.Services.AddTransient<BearerTokenHandler>();
 
 // The anti-entropy sweep's two cross-service reads.
 // Both now authenticate as the service identity
-// above - BearerTokenHandler attaches the token before AddStandardResilienceHandler's
-// retries run, so a retried request is still authenticated.
+// above - BearerTokenHandler attaches the token before the resilience
+// pipeline's retries run, so a retried request is still authenticated.
 builder.Services.AddOptions<AntiEntropyOptions>()
     .Bind(builder.Configuration.GetSection(AntiEntropyOptions.SectionName))
     .Validate(options => options.SweepIntervalSeconds > 0, "Anti-entropy sweep interval must be positive.")
@@ -156,14 +155,12 @@ builder.Services.AddHttpClient("anti-entropy-payments", (serviceProvider, client
 {
     var options = serviceProvider.GetRequiredService<IOptions<AntiEntropyOptions>>().Value;
     client.BaseAddress = new Uri(options.PaymentsBaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(5);
-}).AddHttpMessageHandler<BearerTokenHandler>().AddStandardResilienceHandler();
+}).AddHttpMessageHandler<BearerTokenHandler>().AddBestEffortHttpResilience();
 builder.Services.AddHttpClient("anti-entropy-inventory", (serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<AntiEntropyOptions>>().Value;
     client.BaseAddress = new Uri(options.InventoryBaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(5);
-}).AddHttpMessageHandler<BearerTokenHandler>().AddStandardResilienceHandler();
+}).AddHttpMessageHandler<BearerTokenHandler>().AddBestEffortHttpResilience();
 builder.Services.AddHostedService<AntiEntropySweeper>();
 
 builder.Services.AddSingleton<IProducer<string, string>>(serviceProvider =>
@@ -187,18 +184,16 @@ builder.Services.AddSingleton<IAdminClient>(serviceProvider =>
     var config = new AdminClientConfig { BootstrapServers = options.BootstrapServers };
     return new AdminClientBuilder(config).Build();
 });
-builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
-builder.Services.AddSingleton<IPaymentResultDeadLetterPublisher, PaymentResultDeadLetterPublisher>();
-builder.Services.AddSingleton<IOrderProjectionDeadLetterPublisher, OrderProjectionDeadLetterPublisher>();
-builder.Services.AddSingleton<ISagaOrchestrationDeadLetterPublisher, SagaOrchestrationDeadLetterPublisher>();
-builder.Services.AddSingleton<ISagaReplyDeadLetterPublisher, SagaReplyDeadLetterPublisher>();
-builder.Services.AddSingleton<IOrderEventStoreDeadLetterPublisher, OrderEventStoreDeadLetterPublisher>();
 builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<KafkaOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<OrderMessageProcessor>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<byte[]>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "orders.dead_letter.publish",
+        Convert.ToBase64String);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderCreatedConsumer");
     return new KafkaConsumerHost<byte[]>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -219,7 +214,11 @@ if (sagaMode is SagaMode.Choreography or SagaMode.Both)
         var options = serviceProvider.GetRequiredService<IOptions<PaymentResultKafkaOptions>>().Value;
         var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
         var processor = serviceProvider.GetRequiredService<PaymentResultProcessor>();
-        var deadLetterPublisher = serviceProvider.GetRequiredService<IPaymentResultDeadLetterPublisher>();
+        var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+            serviceProvider.GetRequiredService<IProducer<string, string>>(),
+            options.DeadLetterTopic,
+            "payments_result.dead_letter.publish",
+            value => value ?? string.Empty);
         var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.PaymentResultConsumer");
         return new KafkaConsumerHost<string>(
             options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -233,7 +232,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var options = serviceProvider.GetRequiredService<IOptions<OrderProjectionOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<OrderProjectionProcessor>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IOrderProjectionDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<byte[]>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "orders_projection.dead_letter.publish",
+        Convert.ToBase64String);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderProjectionConsumer");
     return new KafkaConsumerHost<byte[]>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -268,7 +271,13 @@ if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
         var options = serviceProvider.GetRequiredService<IOptions<SagaOrchestrationOptions>>().Value;
         var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
         var processor = serviceProvider.GetRequiredService<OrderSagaOrchestrator>();
-        var deadLetterPublisher = serviceProvider.GetRequiredService<ISagaOrchestrationDeadLetterPublisher>();
+        // Request-side (OrderCreatedTopic, Avro/byte[]) - see the reply-side
+        // consumer below for the string-valued counterpart.
+        var deadLetterPublisher = new KafkaDeadLetterPublisher<byte[]>(
+            serviceProvider.GetRequiredService<IProducer<string, string>>(),
+            options.DeadLetterTopic,
+            "orders_saga.dead_letter.publish",
+            Convert.ToBase64String);
         var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderSagaOrchestrator");
         return new KafkaConsumerHost<byte[]>(
             options.BootstrapServers, options.RequestConsumerGroup, options.ClientId,
@@ -280,7 +289,13 @@ if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
         var options = serviceProvider.GetRequiredService<IOptions<SagaOrchestrationOptions>>().Value;
         var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
         var processor = serviceProvider.GetRequiredService<OrderSagaReplyConsumer>();
-        var deadLetterPublisher = serviceProvider.GetRequiredService<ISagaReplyDeadLetterPublisher>();
+        // Reply-side (the five *Replied topics, JSON/string) - see the
+        // request-side consumer above for the byte[]-valued counterpart.
+        var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+            serviceProvider.GetRequiredService<IProducer<string, string>>(),
+            options.DeadLetterTopic,
+            "orders_saga_reply.dead_letter.publish",
+            value => value ?? string.Empty);
         var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderSagaReplyConsumer");
         return new KafkaConsumerHost<string>(
             options.BootstrapServers, options.ReplyConsumerGroup, $"{options.ClientId}-reply",
@@ -305,7 +320,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var options = serviceProvider.GetRequiredService<IOptions<OrderEventStoreOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<OrderEventStoreProjector>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IOrderEventStoreDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<byte[]>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "orders_event_store.dead_letter.publish",
+        Convert.ToBase64String);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderEventStoreProjector");
     return new KafkaConsumerHost<byte[]>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,

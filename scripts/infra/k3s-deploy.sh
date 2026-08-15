@@ -27,8 +27,14 @@ kubectl apply --filename "$project_directory/kubernetes/base/namespace.yaml"
 # `kubectl apply` on an already-Completed Job is a silent no-op. Without this,
 # a schema change added after a migration Job's name was last bumped would
 # never actually apply; deleting first forces a fresh run every deploy, which
-# is safe because EF Core migrations are themselves idempotent.
+# is safe because EF Core migrations are themselves idempotent (and the
+# Catalog seed is idempotent by its own no-op-if-already-seeded check).
+# Every one-shot Job in kubernetes/base belongs here, not just orders/payments -
+# catalog-seed-m40/inventory-migrations-m41/inventory-seed-m41 were missing
+# from this list entirely, so a schema or seed-data change to those two
+# services never actually applied on redeploy.
 kubectl delete job orders-migrations-m7 payments-migrations-m12 \
+  catalog-seed-m40 inventory-migrations-m41 inventory-seed-m41 \
   --namespace "$namespace" --ignore-not-found
 
 kubectl apply --kustomize "$overlay_directory"
@@ -51,10 +57,18 @@ kubectl get secret orders-runtime --namespace "$namespace" >/dev/null
 # `kubectl apply` is a no-op - the already-running Pod keeps serving the old
 # image. Forcing a rollout restart every deploy ensures rebuilt code is always
 # picked up, mirroring the Job-recreation fix above for the same class of bug.
+# Previously only orders-worker/payments-service were restarted here, even
+# though k3s-build-images.sh rebuilds :local images for all seven app
+# services - catalog-service/inventory-service/cart-service/storefront-service
+# silently kept serving whatever image they started with, no matter how many
+# times this script ran after a code change to any of the four.
 # orders-api is an Argo Rollout (Milestone 15) and is normally reconciled by
 # Argo CD rather than this script; "kubectl rollout restart" doesn't support
 # its kind, so it's restarted via its own restartAt field instead.
-kubectl rollout restart deployment/orders-worker deployment/payments-service \
+kubectl rollout restart \
+  deployment/orders-worker deployment/payments-service \
+  deployment/catalog-service deployment/inventory-service \
+  deployment/cart-service deployment/storefront-service \
   --namespace "$namespace"
 kubectl patch rollout/orders-api --namespace "$namespace" --type merge \
   --patch "{\"spec\":{\"restartAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
@@ -73,6 +87,21 @@ kubectl wait \
   --namespace "$namespace" \
   --for=condition=complete \
   job/payments-migrations-m12 \
+  --timeout=180s
+kubectl wait \
+  --namespace "$namespace" \
+  --for=condition=complete \
+  job/inventory-migrations-m41 \
+  --timeout=180s
+kubectl wait \
+  --namespace "$namespace" \
+  --for=condition=complete \
+  job/inventory-seed-m41 \
+  --timeout=180s
+kubectl wait \
+  --namespace "$namespace" \
+  --for=condition=complete \
+  job/catalog-seed-m40 \
   --timeout=180s
 # orders-api is an Argo Rollout (Milestone 15), not a Deployment - it has no
 # "rollout status" support and is normally reconciled by Argo CD, not this
@@ -93,9 +122,26 @@ kubectl rollout status \
   --namespace "$namespace" \
   deployment/payments-service \
   --timeout=180s
+kubectl rollout status \
+  --namespace "$namespace" \
+  deployment/catalog-service \
+  --timeout=180s
+kubectl rollout status \
+  --namespace "$namespace" \
+  deployment/inventory-service \
+  --timeout=180s
+kubectl rollout status \
+  --namespace "$namespace" \
+  deployment/cart-service \
+  --timeout=180s
+kubectl rollout status \
+  --namespace "$namespace" \
+  deployment/storefront-service \
+  --timeout=180s
 
 cd "$compose_directory"
-docker compose --profile compose-apps stop nginx orders-api-1 orders-api-2 orders-worker payments-service
+docker compose --profile compose-apps stop nginx orders-api-1 orders-api-2 orders-worker payments-service \
+  catalog-service inventory-service cart-service storefront-service
 
 kubectl get pods --namespace "$namespace" --output wide
 kubectl get services,endpointslices --namespace "$namespace"

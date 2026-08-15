@@ -11,8 +11,42 @@
 # this exact class of drift got a script for last time.
 name: local-distributed-lab
 
+# orders-worker and payments-service must agree on this value - Payments'
+# choreographed consumer autonomously decides on OrderCreated when
+# Saga:Mode is Choreography/Both, while orders-worker's orchestrator
+# explicitly requests a decision when it's Orchestration/Both. Mismatched
+# modes mean either nobody reserves inventory (Payments alone never
+# touches it) or Payments decides twice for one order. Nothing enforced
+# this before beyond a comment on each of the two lines telling a reader
+# to go check the other file by hand.
+x-saga-mode: &saga-mode Orchestration
+
+# The one place this address is written. Every consumer/producer in this
+# system binds its own options class to its own config section (Kafka,
+# PaymentResultKafka, OrderProjectionKafka, SagaOrchestration,
+# OrderEventStore, PaymentDecisionRequest, PaymentSettlement - one per
+# consumer group, so each can carry its own topics/consumer-group/DLQ
+# independently), which used to mean this literal string was retyped 15
+# times across this file alone. This is the exact bug class that has
+# recurred five times in this repo's history (Redis__ConnectionString,
+# four separate Kafka BootstrapServers sections, and
+# Authentication__Authority twice) - every recurrence fixed at the typo,
+# never at the fact that there were 15+ places to typo it in. Every
+# *__BootstrapServers line below now points at this one anchor instead.
+x-kafka-bootstrap: &kafka-bootstrap kafka:9092
+
+# Every app image below is tagged :dev, not a milestone name. These tags
+# used to be frozen at whatever milestone last touched each service
+# (cart-service sat on a debugging tag, :milestone-42-cart-redis-timeout-fix,
+# through the entire CRDT cart rework in Milestone 86) because Compose only
+# rebuilds a tag when told to, and the README's own quickstart never passed
+# --build. A user who re-pulled this repo and re-ran `docker compose up`
+# kept running old code with no error and no signal that anything was
+# stale. `:dev` names what these images are (a local build, never pushed
+# anywhere) instead of when they were last rebuilt - `docker compose
+# --profile compose-apps up --build` is what actually keeps it current now.
 x-api-common: &api-common
-  image: saga-ecommerce/orders-api:milestone-7
+  image: saga-ecommerce/orders-api:dev
   profiles: ["compose-apps"]
   restart: unless-stopped
   # Note: orders-api-1/orders-api-2 below each redefine their own
@@ -603,7 +637,7 @@ services:
 
   migrations:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/orders-api:milestone-7
+    image: saga-ecommerce/orders-api:dev
     build:
       context: ..
       dockerfile: apps/src/Orders.Api/Dockerfile
@@ -612,7 +646,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Orders: Host=postgres;Port=5432;Database=orders;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Kafka__BootstrapServers: kafka:9092
+      Kafka__BootstrapServers: *kafka-bootstrap
     depends_on:
       postgres:
         condition: service_healthy
@@ -635,7 +669,7 @@ services:
   # hand against its long-lived data volume.
   migrations-inventory:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/inventory-service:milestone-41-inventory
+    image: saga-ecommerce/inventory-service:dev
     build:
       context: ..
       dockerfile: apps/src/Inventory.Service/Dockerfile
@@ -644,7 +678,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Inventory: Host=postgres;Port=5432;Database=inventory;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Kafka__BootstrapServers: kafka:9092
+      Kafka__BootstrapServers: *kafka-bootstrap
       # AddKeycloakJwtBearer runs unconditionally during service
       # registration, before the --migrate early-return - without this,
       # migration fails with "Authentication:Authority is required" before
@@ -662,7 +696,7 @@ services:
 
   migrations-payments:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/payments-service:milestone-7
+    image: saga-ecommerce/payments-service:dev
     build:
       context: ..
       dockerfile: apps/src/Payments.Service/Dockerfile
@@ -671,7 +705,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Payments: Host=postgres;Port=5432;Database=payments;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Kafka__BootstrapServers: kafka:9092
+      Kafka__BootstrapServers: *kafka-bootstrap
       # Same requirement as migrations-inventory above.
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
     depends_on:
@@ -697,7 +731,7 @@ services:
   # once, a long time ago.
   seed-catalog:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/catalog-service:milestone-42-by-sku
+    image: saga-ecommerce/catalog-service:dev
     build:
       context: ..
       dockerfile: apps/src/Catalog.Service/Dockerfile
@@ -721,7 +755,7 @@ services:
 
   seed-inventory:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/inventory-service:milestone-41-inventory
+    image: saga-ecommerce/inventory-service:dev
     build:
       context: ..
       dockerfile: apps/src/Inventory.Service/Dockerfile
@@ -730,7 +764,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Inventory: Host=postgres;Port=5432;Database=inventory;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Kafka__BootstrapServers: kafka:9092
+      Kafka__BootstrapServers: *kafka-bootstrap
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
     depends_on:
       migrations-inventory:
@@ -747,7 +781,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Orders: Host=postgres;Port=5432;Database=orders;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Kafka__BootstrapServers: kafka:9092
+      Kafka__BootstrapServers: *kafka-bootstrap
       Kafka__OrderCreatedTopic: orders.created.v1
       Kafka__ClientId: orders-api
       SchemaRegistry__Url: http://schema-registry:8081
@@ -766,13 +800,23 @@ services:
       # non-obvious-default trap the Kafka/Redis overrides above cover.
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-1
+      # OutboxPublisher<OrdersDbContext> - previously relied entirely on
+      # OutboxOptions' own code defaults, with no operator-facing knob
+      # anywhere. Explicit here matching those defaults exactly, so a future
+      # default change in code can't silently change deployed behavior -
+      # the same reasoning Milestone 75 already applied to Saga__Mode.
+      Outbox__BatchSize: 5
+      Outbox__PollIntervalMilliseconds: 500
+      Outbox__MaximumRetryDelaySeconds: 60
+      Outbox__ClaimWindowSeconds: 30
+      Outbox__PendingSampleIntervalSeconds: 10
 
   orders-api-2:
     <<: *api-common
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Orders: Host=postgres;Port=5432;Database=orders;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Kafka__BootstrapServers: kafka:9092
+      Kafka__BootstrapServers: *kafka-bootstrap
       Kafka__OrderCreatedTopic: orders.created.v1
       Kafka__ClientId: orders-api
       SchemaRegistry__Url: http://schema-registry:8081
@@ -781,10 +825,16 @@ services:
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-2
+      # See orders-api-1's own comment on these five - must match.
+      Outbox__BatchSize: 5
+      Outbox__PollIntervalMilliseconds: 500
+      Outbox__MaximumRetryDelaySeconds: 60
+      Outbox__ClaimWindowSeconds: 30
+      Outbox__PendingSampleIntervalSeconds: 10
 
   orders-worker:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/orders-worker:milestone-7
+    image: saga-ecommerce/orders-worker:dev
     build:
       context: ..
       dockerfile: apps/src/Orders.Worker/Dockerfile
@@ -792,7 +842,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Orders: Host=postgres;Port=5432;Database=orders;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Kafka__BootstrapServers: kafka:9092
+      Kafka__BootstrapServers: *kafka-bootstrap
       Kafka__OrderCreatedTopic: orders.created.v1
       Kafka__DeadLetterTopic: orders.created.dlq.v1
       Kafka__ConsumerGroup: orders-worker
@@ -809,14 +859,14 @@ services:
       # this container itself, not the kafka service. Topics/consumer
       # groups/client IDs already default correctly and don't need
       # overriding here.
-      PaymentResultKafka__BootstrapServers: kafka:9092
-      OrderProjectionKafka__BootstrapServers: kafka:9092
-      SagaOrchestration__BootstrapServers: kafka:9092
-      OrderEventStore__BootstrapServers: kafka:9092
+      PaymentResultKafka__BootstrapServers: *kafka-bootstrap
+      OrderProjectionKafka__BootstrapServers: *kafka-bootstrap
+      SagaOrchestration__BootstrapServers: *kafka-bootstrap
+      OrderEventStore__BootstrapServers: *kafka-bootstrap
       # Orchestration is the normal application path because it reserves
       # inventory before deciding payment. Both is reserved for isolated
       # comparison runs and is not a deployment default.
-      Saga__Mode: Orchestration
+      Saga__Mode: *saga-mode
       # Milestone 88 follow-up: this service's own credentials for the
       # anti-entropy sweep's two cross-service reads (GET /payments/by-order,
       # GET /inventory/backorders) - reuses orders-api-clients, the same
@@ -834,6 +884,16 @@ services:
       # SingleNode is safe here specifically because this service only ever
       # runs one replica in Compose - see LeaderElectionMode's doc comment.
       LeaderElection__Mode: SingleNode
+      # AntiEntropySweeper - previously relied entirely on AntiEntropyOptions'
+      # own code defaults, with no operator-facing knob anywhere. Explicit
+      # here matching those defaults exactly. BaseUrls repeat what
+      # PaymentsBaseUrl/InventoryBaseUrl already default to (Compose-internal
+      # DNS), same as every other *BaseUrl override in this file.
+      AntiEntropy__SweepIntervalSeconds: 300
+      AntiEntropy__BatchSize: 200
+      AntiEntropy__PaymentsBaseUrl: http://payments-service:8080
+      AntiEntropy__InventoryBaseUrl: http://inventory-service:8080
+      AntiEntropy__ProjectionLagThresholdSeconds: 120
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -849,7 +909,7 @@ services:
 
   payments-service:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/payments-service:milestone-7
+    image: saga-ecommerce/payments-service:dev
     build:
       context: ..
       dockerfile: apps/src/Payments.Service/Dockerfile
@@ -857,7 +917,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Payments: Host=postgres;Port=5432;Database=payments;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Kafka__BootstrapServers: kafka:9092
+      Kafka__BootstrapServers: *kafka-bootstrap
       Kafka__OrderCreatedTopic: orders.created.v1
       Kafka__PaymentResultTopic: payments.result.v1
       Kafka__DeadLetterTopic: payments.decisions.dlq.v1
@@ -869,16 +929,22 @@ services:
       # options section rather than sharing Kafka above - same
       # localhost:9092-default gap as orders-worker's extra Kafka options
       # classes.
-      PaymentDecisionRequest__BootstrapServers: kafka:9092
+      PaymentDecisionRequest__BootstrapServers: *kafka-bootstrap
       # Milestone 68: PaymentSettlementOptions has its own section and the
       # same localhost:9092 default - the trap this compose file has now hit
       # four times.
-      PaymentSettlement__BootstrapServers: kafka:9092
+      PaymentSettlement__BootstrapServers: *kafka-bootstrap
       PaymentSettlement__ExpirySweepIntervalSeconds: "30"
-      # Must match orders-worker's Saga__Mode above.
-      Saga__Mode: Orchestration
+      Saga__Mode: *saga-mode
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
+      # OutboxPublisher<PaymentsDbContext> - see orders-api-1's own comment
+      # on these five.
+      Outbox__BatchSize: 5
+      Outbox__PollIntervalMilliseconds: 500
+      Outbox__MaximumRetryDelaySeconds: 60
+      Outbox__ClaimWindowSeconds: 30
+      Outbox__PendingSampleIntervalSeconds: 10
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -894,7 +960,7 @@ services:
 
   catalog-service:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/catalog-service:milestone-42-by-sku
+    image: saga-ecommerce/catalog-service:dev
     build:
       context: ..
       dockerfile: apps/src/Catalog.Service/Dockerfile
@@ -920,7 +986,7 @@ services:
 
   inventory-service:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/inventory-service:milestone-41-inventory
+    image: saga-ecommerce/inventory-service:dev
     build:
       context: ..
       dockerfile: apps/src/Inventory.Service/Dockerfile
@@ -928,7 +994,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Inventory: Host=postgres;Port=5432;Database=inventory;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      Kafka__BootstrapServers: kafka:9092
+      Kafka__BootstrapServers: *kafka-bootstrap
       Kafka__ReservationRequestedTopic: inventory.reservation-requested.v1
       Kafka__ReservationRepliedTopic: inventory.reservation-replied.v1
       Kafka__CommitRequestedTopic: inventory.reservation-commit-requested.v1
@@ -941,6 +1007,13 @@ services:
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       InstanceId: inventory-service-1
+      # OutboxPublisher<InventoryDbContext> - see orders-api-1's own comment
+      # on these five.
+      Outbox__BatchSize: 5
+      Outbox__PollIntervalMilliseconds: 500
+      Outbox__MaximumRetryDelaySeconds: 60
+      Outbox__ClaimWindowSeconds: 30
+      Outbox__PendingSampleIntervalSeconds: 10
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -954,7 +1027,7 @@ services:
 
   cart-service:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/cart-service:milestone-42-cart-redis-timeout-fix
+    image: saga-ecommerce/cart-service:dev
     build:
       context: ..
       dockerfile: apps/src/Cart.Service/Dockerfile
@@ -977,7 +1050,7 @@ services:
 
   storefront-service:
     profiles: ["compose-apps"]
-    image: saga-ecommerce/storefront-service:milestone-46-storefront-web
+    image: saga-ecommerce/storefront-service:dev
     build:
       context: ..
       dockerfile: apps/src/Storefront.Service/Dockerfile

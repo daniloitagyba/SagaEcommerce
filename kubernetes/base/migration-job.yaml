@@ -37,7 +37,10 @@ spec:
                   name: orders-runtime
                   key: orders-connection-string
             - name: Kafka__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://otel-collector:4317
             - name: OTEL_EXPORTER_OTLP_PROTOCOL

@@ -69,15 +69,23 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
-if (args.Contains("--seed", StringComparer.Ordinal))
+// Previously only ran under --seed, so a normal deployment (migration Jobs
+// run once at deploy time, the app pod never gets --seed) would serve
+// traffic against a Mongo collection with none of ProductRepository's/
+// CategoryRepository's indexes ever created - including the unique sku and
+// slug indexes CreateAsync relies on to reject duplicates.
+await using (var scope = app.Services.CreateAsyncScope())
 {
-    await using var scope = app.Services.CreateAsyncScope();
     var productRepository = scope.ServiceProvider.GetRequiredService<ProductRepository>();
     var categoryRepository = scope.ServiceProvider.GetRequiredService<CategoryRepository>();
     await productRepository.EnsureIndexesAsync(CancellationToken.None);
     await categoryRepository.EnsureIndexesAsync(CancellationToken.None);
-    await CatalogSeeder.SeedAsync(categoryRepository, productRepository, CancellationToken.None);
-    return;
+
+    if (args.Contains("--seed", StringComparer.Ordinal))
+    {
+        await CatalogSeeder.SeedAsync(categoryRepository, productRepository, CancellationToken.None);
+        return;
+    }
 }
 
 app.UseExceptionHandler();

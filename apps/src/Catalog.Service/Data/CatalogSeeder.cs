@@ -14,11 +14,12 @@ public static class CatalogSeeder
         ProductRepository productRepository,
         CancellationToken cancellationToken)
     {
+        // Previously keyed to the categories collection alone: a partial
+        // cleanup (categories survive, products don't) made --seed no-op
+        // forever, silently leaving the products collection empty. Each
+        // collection is now checked - and seeded - independently.
         var existingCategories = await categoryRepository.ListAsync(cancellationToken);
-        if (existingCategories.Count > 0)
-        {
-            return;
-        }
+        var existingSlugs = existingCategories.Select(category => category.Slug).ToHashSet(StringComparer.Ordinal);
 
         var categories = new[]
         {
@@ -29,7 +30,16 @@ public static class CatalogSeeder
         };
         foreach (var category in categories)
         {
-            await categoryRepository.InsertAsync(category, cancellationToken);
+            if (!existingSlugs.Contains(category.Slug))
+            {
+                await categoryRepository.InsertAsync(category, cancellationToken);
+            }
+        }
+
+        var existingProductCount = await productRepository.CountAsync(categorySlug: null, cancellationToken);
+        if (existingProductCount > 0)
+        {
+            return;
         }
 
         var now = DateTimeOffset.UtcNow;

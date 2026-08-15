@@ -6,7 +6,10 @@ metadata:
     app.kubernetes.io/name: orders-worker
     app.kubernetes.io/component: worker
 spec:
-  replicas: 1
+  # No replicas: here - orders-worker-scaledobject.yaml owns this field
+  # (minReplicaCount: 1), and kubernetes/argocd/application.yaml now tells
+  # Argo CD to ignore drift on it. Stating a value here would just be the
+  # thing Argo CD fights KEDA over on every sync.
   revisionHistoryLimit: 2
   strategy:
     type: RollingUpdate
@@ -59,7 +62,10 @@ spec:
                   name: orders-runtime
                   key: orders-connection-string
             - name: Kafka__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: Kafka__OrderCreatedTopic
               value: orders.created.v1
             - name: Kafka__DeadLetterTopic
@@ -69,19 +75,64 @@ spec:
             - name: Kafka__ClientId
               value: orders-worker-k3s
             - name: PaymentResultKafka__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: OrderProjectionKafka__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: SagaOrchestration__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: OrderEventStore__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: SchemaRegistry__Url
               value: http://schema-registry:8081
             - name: Redis__ConnectionString
               value: redis:6379
             - name: Catalog__BaseUrl
               value: http://catalog-service
+            # AntiEntropySweeper - previously relied entirely on
+            # AntiEntropyOptions' own code defaults, with no operator-facing
+            # knob anywhere. Explicit here matching those defaults exactly.
+            - name: AntiEntropy__SweepIntervalSeconds
+              value: "300"
+            - name: AntiEntropy__BatchSize
+              value: "200"
+            - name: AntiEntropy__PaymentsBaseUrl
+              value: http://payments-service
+            - name: AntiEntropy__InventoryBaseUrl
+              value: http://inventory-service
+            - name: AntiEntropy__ProjectionLagThresholdSeconds
+              value: "120"
+            # Missing entirely here previously - AntiEntropySweeper's two
+            # cross-service HTTP calls (GET /payments/by-order,
+            # GET /inventory/backorders) go through BearerTokenHandler,
+            # which needs KeycloakTokenProvider to actually fetch a token.
+            # KeycloakTokenProvider's own defaults (TokenUrl=localhost:18081,
+            # ClientSecret="") are the same self-referencing-pod trap
+            # Authentication__Authority already hit elsewhere in this
+            # manifest set - every anti-entropy sweep tick would have failed
+            # authentication silently. The secret this references
+            # (keycloak-client-secret) is already in orders-runtime; it was
+            # just never wired to this Deployment.
+            - name: Keycloak__TokenUrl
+              value: http://keycloak:8080/realms/orders-lab/protocol/openid-connect/token
+            - name: Keycloak__ClientId
+              value: orders-api-clients
+            - name: Keycloak__ClientSecret
+              valueFrom:
+                secretKeyRef:
+                  name: orders-runtime
+                  key: keycloak-client-secret
             - name: InstanceId
               valueFrom:
                 fieldRef:
@@ -103,9 +154,13 @@ spec:
             - name: LeaderElection__LeaseName
               value: orders-worker-saga-sweeper
             # Orchestration is the normal path because it includes inventory
-            # reservation. Must match payments-service's Saga__Mode.
+            # reservation. Sourced from saga-config so this and
+            # payments-service's Saga__Mode can't drift apart.
             - name: Saga__Mode
-              value: Orchestration
+              valueFrom:
+                configMapKeyRef:
+                  name: saga-config
+                  key: mode
           ports:
             - name: http
               containerPort: 8080

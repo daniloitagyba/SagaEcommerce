@@ -60,7 +60,25 @@ public sealed class ProductRepository
 
     public async Task<Product?> FindBySkuAsync(string sku, CancellationToken cancellationToken)
     {
-        return await _products.Find(product => product.Sku == sku).FirstOrDefaultAsync(cancellationToken);
+        var normalizedSku = sku.Trim().ToUpperInvariant();
+        return await _products.Find(product => product.Sku == normalizedSku).FirstOrDefaultAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Batches the lookup GetBestsellersAsync previously did with one
+    /// FindBySkuAsync call per ranked entry (up to 50 sequential Mongo
+    /// round-trips) - same $in pattern FindByIdsAsync already uses.
+    /// </summary>
+    public async Task<IReadOnlyList<Product>> FindBySkusAsync(IReadOnlyCollection<string> skus, CancellationToken cancellationToken)
+    {
+        if (skus.Count == 0)
+        {
+            return [];
+        }
+
+        var normalizedSkus = skus.Select(sku => sku.Trim().ToUpperInvariant()).ToArray();
+        var filter = Builders<Product>.Filter.In(product => product.Sku, normalizedSkus);
+        return await _products.Find(filter).ToListAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<Product>> FindByIdsAsync(IReadOnlyCollection<string> ids, CancellationToken cancellationToken)
@@ -76,7 +94,18 @@ public sealed class ProductRepository
 
     public Task InsertAsync(Product product, CancellationToken cancellationToken)
     {
+        product.EnsureValid();
         return _products.InsertOneAsync(product, cancellationToken: cancellationToken);
+    }
+
+    public async Task<bool> UpdateAsync(Product product, CancellationToken cancellationToken)
+    {
+        product.EnsureValid();
+        var result = await _products.ReplaceOneAsync(
+            existing => existing.Id == product.Id,
+            product,
+            cancellationToken: cancellationToken);
+        return result.MatchedCount > 0;
     }
 
     public async Task EnsureIndexesAsync(CancellationToken cancellationToken)

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -11,7 +12,7 @@ import Divider from '@mui/material/Divider';
 import CircularProgress from '@mui/material/CircularProgress';
 import Box from '@mui/material/Box';
 import { RequireAuth } from '../components/RequireAuth';
-import { useCart } from '../api/cart';
+import { CART_QUERY_KEY, useCart } from '../api/cart';
 import { useCheckout } from '../api/orders';
 import { isPriceMismatch, describeApiError } from '../api/client';
 import { formatMoney } from '../format';
@@ -21,6 +22,7 @@ function CheckoutForm() {
   const { data: cart, isLoading: cartLoading } = useCart();
   const checkout = useCheckout();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const [couponCode, setCouponCode] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Pix');
@@ -45,8 +47,15 @@ function CheckoutForm() {
         onSuccess: (order) => navigate(`/orders/${order.id}`, { state: { justPlaced: true } }),
         onError: (error) => {
           if (isPriceMismatch(error)) {
-            const { expectedSubtotal, actualSubtotal } = error.response!.data;
+            const { expectedSubtotal, actualSubtotal } = error.response.data;
             setPriceMismatch({ expected: expectedSubtotal, actual: actualSubtotal });
+            // StorefrontEndpoints' reprice-and-retry has typically already
+            // mutated the cart's stored prices by the time this 409 reaches
+            // the frontend - without this, the Order summary panel below
+            // kept rendering the pre-mismatch cart from the stale query
+            // cache, so the banner and the summary could show different
+            // numbers right up until "Accept & retry" resubmitted blind.
+            void queryClient.invalidateQueries({ queryKey: CART_QUERY_KEY });
           }
         },
       },
@@ -99,7 +108,7 @@ function CheckoutForm() {
           <Alert
             severity="warning"
             action={
-              <Button color="inherit" size="small" onClick={submit}>
+              <Button color="inherit" size="small" onClick={submit} loading={checkout.isPending} disabled={checkout.isPending}>
                 Accept &amp; retry
               </Button>
             }

@@ -11,7 +11,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Box from '@mui/material/Box';
 import Snackbar from '@mui/material/Snackbar';
 import { useProductSummary } from '../api/catalog';
-import { useUpdateCartItem } from '../api/cart';
+import { useCart, useUpdateCartItem } from '../api/cart';
 import { formatMoney } from '../format';
 import type { Availability } from '../api/types';
 
@@ -25,6 +25,7 @@ export function ProductDetailPage() {
   const { sku } = useParams<{ sku: string }>();
   const auth = useAuth();
   const { data, isLoading, isError } = useProductSummary(sku);
+  const cart = useCart();
   const updateCartItem = useUpdateCartItem();
   const [quantity, setQuantity] = useState(1);
   const [added, setAdded] = useState(false);
@@ -49,8 +50,13 @@ export function ProductDetailPage() {
       void auth.signinRedirect();
       return;
     }
+    // PUT /cart/carts/me/items/{sku} sets the line's quantity absolutely
+    // (CartEndpoints.cs: `existing.WithQuantity(request.Quantity)`) - sending
+    // the page-local quantity alone would overwrite whatever the shopper
+    // already had in their cart for this SKU instead of adding to it.
+    const existingQuantity = cart.data?.items.find((item) => item.sku === product.sku)?.quantity ?? 0;
     updateCartItem.mutate(
-      { sku: product.sku, quantity },
+      { sku: product.sku, quantity: existingQuantity + quantity },
       { onSuccess: () => setAdded(true) },
     );
   };

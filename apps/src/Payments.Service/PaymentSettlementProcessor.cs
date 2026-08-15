@@ -97,16 +97,10 @@ public sealed class PaymentSettlementProcessor(
                     $"Refund currency '{command.Currency}' does not match payment currency '{payment.Currency}'.");
             }
 
-            var inserted = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-                $"""
-                INSERT INTO inbox_messages
-                    (consumer_name, event_id, topic, partition, "offset", correlation_id, processed_at)
-                VALUES
-                    ({_options.ConsumerGroup}, {command.OperationId!.Value}, {consumeResult.Topic},
-                     {consumeResult.Partition.Value}, {consumeResult.Offset.Value}, {correlationId}, {_timeProvider.GetUtcNow()})
-                ON CONFLICT (consumer_name, event_id) DO NOTHING
-                """,
-                cancellationToken);
+            var inserted = await InboxStore.TryRecordWithinTransactionAsync(
+                dbContext.Database, _options.ConsumerGroup, command.OperationId!.Value,
+                consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
+                correlationId, _timeProvider.GetUtcNow(), cancellationToken);
 
             if (inserted == 0)
             {

@@ -17,6 +17,11 @@
   <ItemGroup>
     <ProjectReference Include="..\BuildingBlocks.Contracts\BuildingBlocks.Contracts.csproj" />
     <ProjectReference Include="..\BuildingBlocks.Observability\BuildingBlocks.Observability.csproj" />
+    <!-- InboxStore's standalone-connection variant (used outside any EF
+         transaction, unlike its ambient-transaction variant) shares the
+         same PostgresPipeline every other direct-Npgsql caller in this
+         codebase uses. -->
+    <ProjectReference Include="..\BuildingBlocks.Resilience\BuildingBlocks.Resilience.csproj" />
   </ItemGroup>
 
 </Project>

@@ -13,11 +13,34 @@ public sealed class MongoHealthCheck(IMongoDatabase database) : IHealthCheck
         try
         {
             await database.RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1), cancellationToken: cancellationToken);
-            return HealthCheckResult.Healthy("MongoDB is reachable.");
+
+            // A reachable Mongo (the ping above) says nothing about whether
+            // EnsureIndexesAsync ever actually ran against it - a deployment
+            // that skipped that step would still report healthy while every
+            // insert relied on a unique constraint that was never created.
+            if (!await HasIndexOnAsync(database, "products", "Sku", cancellationToken)
+                || !await HasIndexOnAsync(database, "categories", "Slug", cancellationToken))
+            {
+                return HealthCheckResult.Unhealthy("MongoDB is reachable but required indexes are missing.");
+            }
+
+            return HealthCheckResult.Healthy("MongoDB is reachable and required indexes exist.");
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             return HealthCheckResult.Unhealthy("MongoDB is unreachable.", exception);
         }
+    }
+
+    private static async Task<bool> HasIndexOnAsync(
+        IMongoDatabase database,
+        string collectionName,
+        string fieldName,
+        CancellationToken cancellationToken)
+    {
+        var collection = database.GetCollection<BsonDocument>(collectionName);
+        using var cursor = await collection.Indexes.ListAsync(cancellationToken);
+        var indexes = await cursor.ToListAsync(cancellationToken);
+        return indexes.Any(index => index["key"].AsBsonDocument.Contains(fieldName));
     }
 }

@@ -31,6 +31,11 @@ spec:
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
+            # Missing here previously - AddKeycloakJwtBearer throws during
+            # service registration without it, crashing this Job before it
+            # ever reaches the --migrate branch. Must match compose.yaml's value.
+            - name: Authentication__Authority
+              value: http://keycloak:8080/realms/orders-lab
             - name: ConnectionStrings__Inventory
               valueFrom:
                 secretKeyRef:

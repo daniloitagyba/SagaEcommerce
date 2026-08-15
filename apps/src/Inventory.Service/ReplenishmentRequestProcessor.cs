@@ -63,13 +63,10 @@ public sealed class ReplenishmentRequestProcessor(
 
         var processedAt = DateTimeOffset.UtcNow;
         var inboxConsumerName = $"{_kafkaOptions.ConsumerGroup}-replenishment";
-        var insertedRows = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            INSERT INTO inbox_messages (consumer_name, event_id, topic, partition, "offset", correlation_id, processed_at)
-            VALUES ({inboxConsumerName}, {signal.EventId}, {consumeResult.Topic}, {consumeResult.Partition.Value}, {consumeResult.Offset.Value}, {signal.CorrelationId}, {processedAt})
-            ON CONFLICT (consumer_name, event_id) DO NOTHING
-            """,
-            cancellationToken);
+        var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
+            dbContext.Database, inboxConsumerName, signal.EventId,
+            consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
+            signal.CorrelationId, processedAt, cancellationToken);
 
         if (insertedRows == 0)
         {

@@ -42,12 +42,15 @@ builder.Services.AddOptions<CatalogClientOptions>()
 
 builder.Services.AddSingleton<CartStore>();
 builder.Services.AddSingleton(TimeProvider.System);
+// Add-to-cart for a SKU not already in the cart needs this call to
+// succeed (CartEndpoints.PutItemAsync has no fallback for a new line
+// item), unlike the best-effort treatment other services give a Catalog
+// lookup that only enriches an existing read.
 builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CatalogClientOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(5);
-}).AddStandardResilienceHandler();
+}).AddCriticalHttpResilience();
 
 // A cart used to be readable and clearable by anyone who
 // could guess or enumerate its cartId - there was no owner to check

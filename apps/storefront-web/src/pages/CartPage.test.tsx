@@ -1,8 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { useAuth } from 'react-oidc-context';
-import { useCart, useRemoveCartItem, useUpdateCartItem } from '../api/cart';
+import { useCart, useClearCart, useRemoveCartItem, useUpdateCartItem } from '../api/cart';
 import { formatMoney } from '../format';
 import { CartPage } from './CartPage';
 import type { Cart } from '../api/types';
@@ -15,12 +15,14 @@ vi.mock('../api/cart', () => ({
   useCart: vi.fn(),
   useUpdateCartItem: vi.fn(),
   useRemoveCartItem: vi.fn(),
+  useClearCart: vi.fn(),
 }));
 
 const mockedUseAuth = vi.mocked(useAuth);
 const mockedUseCart = vi.mocked(useCart);
 const mockedUseUpdateCartItem = vi.mocked(useUpdateCartItem);
 const mockedUseRemoveCartItem = vi.mocked(useRemoveCartItem);
+const mockedUseClearCart = vi.mocked(useClearCart);
 
 const sampleCart: Cart = {
   items: [
@@ -54,6 +56,7 @@ describe('CartPage', () => {
     } as never);
     mockedUseUpdateCartItem.mockReturnValue({ mutate: vi.fn() } as never);
     mockedUseRemoveCartItem.mockReturnValue({ mutate: vi.fn() } as never);
+    mockedUseClearCart.mockReturnValue({ mutate: vi.fn(), isPending: false } as never);
   });
 
   it('shows an empty-cart message with a link back to the catalog', () => {
@@ -80,28 +83,63 @@ describe('CartPage', () => {
     expect(screen.getByText('Checkout page')).toBeInTheDocument();
   });
 
-  it('updates the quantity through useUpdateCartItem when the field changes', () => {
-    const mutate = vi.fn();
-    mockedUseCart.mockReturnValue({ data: sampleCart, isLoading: false } as never);
-    mockedUseUpdateCartItem.mockReturnValue({ mutate } as never);
+  describe('quantity field', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
 
-    renderCartPage();
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
-    fireEvent.change(screen.getByDisplayValue('2'), { target: { value: '5' } });
+    it('debounces edits into a single useUpdateCartItem call with the final value', () => {
+      const mutate = vi.fn();
+      mockedUseCart.mockReturnValue({ data: sampleCart, isLoading: false } as never);
+      mockedUseUpdateCartItem.mockReturnValue({ mutate } as never);
 
-    expect(mutate).toHaveBeenCalledWith({ sku: 'SKU1', quantity: 5 });
+      renderCartPage();
+
+      // Typing "10" one keystroke at a time must not fire a mutation per
+      // keystroke - only the value left after the shopper pauses should
+      // ever reach the backend.
+      fireEvent.change(screen.getByDisplayValue('2'), { target: { value: '1' } });
+      fireEvent.change(screen.getByDisplayValue('1'), { target: { value: '10' } });
+      expect(mutate).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(mutate).toHaveBeenCalledTimes(1);
+      expect(mutate).toHaveBeenCalledWith({ sku: 'SKU1', quantity: 10 });
+    });
+
+    it('never sends a quantity below 1', () => {
+      const mutate = vi.fn();
+      mockedUseCart.mockReturnValue({ data: sampleCart, isLoading: false } as never);
+      mockedUseUpdateCartItem.mockReturnValue({ mutate } as never);
+
+      renderCartPage();
+
+      fireEvent.change(screen.getByDisplayValue('2'), { target: { value: '0' } });
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(mutate).toHaveBeenCalledWith({ sku: 'SKU1', quantity: 1 });
+    });
   });
 
-  it('never sends a quantity below 1', () => {
+  it('clears the cart through useClearCart', () => {
     const mutate = vi.fn();
     mockedUseCart.mockReturnValue({ data: sampleCart, isLoading: false } as never);
-    mockedUseUpdateCartItem.mockReturnValue({ mutate } as never);
+    mockedUseClearCart.mockReturnValue({ mutate, isPending: false } as never);
 
     renderCartPage();
 
-    fireEvent.change(screen.getByDisplayValue('2'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear cart' }));
 
-    expect(mutate).toHaveBeenCalledWith({ sku: 'SKU1', quantity: 1 });
+    expect(mutate).toHaveBeenCalled();
   });
 
   it('removes an item through useRemoveCartItem', () => {

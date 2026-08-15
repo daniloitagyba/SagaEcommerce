@@ -6,7 +6,10 @@ metadata:
     app.kubernetes.io/name: orders-api
     app.kubernetes.io/component: api
 spec:
-  replicas: 3
+  # No replicas: here - orders-api-hpa.yaml owns this field (minReplicas:
+  # 3), and kubernetes/argocd/application.yaml now tells Argo CD to ignore
+  # drift on it. Stating a value here would just be the thing Argo CD
+  # fights the HPA over on every sync.
   revisionHistoryLimit: 2
   strategy:
     canary:
@@ -62,7 +65,10 @@ spec:
                   name: orders-runtime
                   key: orders-connection-string
             - name: Kafka__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: Kafka__OrderCreatedTopic
               value: orders.created.v1
             - name: Kafka__ClientId
@@ -103,6 +109,22 @@ spec:
               value: http://pyroscope:4040
             - name: PYROSCOPE_APPLICATION_NAME
               value: orders-api
+            # OutboxPublisher<OrdersDbContext> - previously relied entirely
+            # on OutboxOptions' own code defaults, with no operator-facing
+            # knob anywhere. Explicit here matching those defaults exactly,
+            # so a future default change in code can't silently change
+            # deployed behavior - the same reasoning already applied to
+            # Saga__Mode.
+            - name: Outbox__BatchSize
+              value: "5"
+            - name: Outbox__PollIntervalMilliseconds
+              value: "500"
+            - name: Outbox__MaximumRetryDelaySeconds
+              value: "60"
+            - name: Outbox__ClaimWindowSeconds
+              value: "30"
+            - name: Outbox__PendingSampleIntervalSeconds
+              value: "10"
             - name: InstanceId
               valueFrom:
                 fieldRef:

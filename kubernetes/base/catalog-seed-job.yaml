@@ -41,10 +41,28 @@ spec:
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
+            # Missing here previously - AddKeycloakJwtBearer throws during
+            # service registration without it, crashing this Job before it
+            # ever reaches the --seed branch. Must match compose.yaml's value.
+            - name: Authentication__Authority
+              value: http://keycloak:8080/realms/orders-lab
             - name: Mongo__ConnectionString
               value: mongodb://mongodb:27017
             - name: Mongo__DatabaseName
               value: catalog
+            # Missing here previously - AddOrdersRedis's ConnectionMultiplexer
+            # is a root singleton built with a factory that calls
+            # ConnectionMultiplexer.Connect(...) synchronously, and this
+            # service's ValidateOnBuild:true (Program.cs) constructs every
+            # root singleton at app.Build() time. Absent this, RedisOptions
+            # falls back to its own "localhost:6379" default, and Connect()
+            # against that address inside this Job's own pod throws
+            # immediately - crashing before --seed ever runs, the same
+            # crash-before-the-branch-it-was-meant-to-reach bug class as
+            # Authentication__Authority above, just for a dependency
+            # CatalogSeeder itself never touches (BestsellersReader does).
+            - name: Redis__ConnectionString
+              value: redis:6379
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://otel-collector:4317
             - name: OTEL_EXPORTER_OTLP_PROTOCOL

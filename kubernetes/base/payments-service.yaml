@@ -35,13 +35,21 @@ spec:
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
+            # Missing here previously - AddKeycloakJwtBearer throws during
+            # service registration without it, before any health check runs.
+            # Must match compose.yaml's value.
+            - name: Authentication__Authority
+              value: http://keycloak:8080/realms/orders-lab
             - name: ConnectionStrings__Payments
               valueFrom:
                 secretKeyRef:
                   name: orders-runtime
                   key: payments-connection-string
             - name: Kafka__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: Kafka__OrderCreatedTopic
               value: orders.created.v1
             - name: Kafka__PaymentResultTopic
@@ -53,19 +61,41 @@ spec:
             - name: Kafka__ClientId
               value: payments-service-k3s
             - name: PaymentDecisionRequest__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             # Milestone 68/75: PaymentSettlementOptions binds its own
             # section with the same localhost:9092 default every other
             # Kafka options class here has - missing from this manifest
             # entirely until now, which would leave capture/void/refund
             # consumption silently trying to reach the pod itself.
             - name: PaymentSettlement__BootstrapServers
-              value: kafka:9092
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
             - name: SchemaRegistry__Url
               value: http://schema-registry:8081
-            # Must match orders-worker's Saga__Mode.
+            # Sourced from saga-config so this and orders-worker's
+            # Saga__Mode can't drift apart.
             - name: Saga__Mode
-              value: Orchestration
+              valueFrom:
+                configMapKeyRef:
+                  name: saga-config
+                  key: mode
+            # OutboxPublisher<PaymentsDbContext> - see orders-api's own
+            # comment on these five.
+            - name: Outbox__BatchSize
+              value: "5"
+            - name: Outbox__PollIntervalMilliseconds
+              value: "500"
+            - name: Outbox__MaximumRetryDelaySeconds
+              value: "60"
+            - name: Outbox__ClaimWindowSeconds
+              value: "30"
+            - name: Outbox__PendingSampleIntervalSeconds
+              value: "10"
             - name: InstanceId
               valueFrom:
                 fieldRef:

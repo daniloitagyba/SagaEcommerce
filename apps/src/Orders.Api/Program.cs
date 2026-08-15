@@ -103,8 +103,7 @@ builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, 
 {
     var options = serviceProvider.GetRequiredService<IOptions<CatalogClientOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(3);
-}).AddStandardResilienceHandler();
+}).AddCriticalHttpResilience();
 
 builder.Services.AddOrdersApplication();
 builder.Services.AddOrdersInfrastructure(builder.Configuration, connectionString, instanceId);

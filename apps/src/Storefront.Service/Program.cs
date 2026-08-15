@@ -48,28 +48,29 @@ builder.Services.AddOptions<ProductSummaryOptions>()
     .Bind(builder.Configuration.GetSection(ProductSummaryOptions.SectionName))
     .Validate(options => options.HedgeDelayMilliseconds >= 0, "Hedge delay cannot be negative.")
     .ValidateOnStart();
+// catalog/cart/inventory back browse-time display (product listings,
+// cart contents, stock) - a failure there is recoverable by the shopper
+// retrying, unlike orders below.
 builder.Services.AddHttpClient("catalog", (serviceProvider, client) =>
 {
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<CatalogProxyOptions>>().Value.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(5);
-}).AddStandardResilienceHandler();
+}).AddBestEffortHttpResilience();
 
 builder.Services.AddHttpClient("cart", (serviceProvider, client) =>
 {
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<CartProxyOptions>>().Value.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(5);
-}).AddStandardResilienceHandler();
+}).AddBestEffortHttpResilience();
 
+// Checkout's own forward - the one client on this BFF's genuinely
+// critical path.
 builder.Services.AddHttpClient("orders", (serviceProvider, client) =>
 {
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<OrdersProxyOptions>>().Value.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(5);
-}).AddStandardResilienceHandler();
+}).AddCriticalHttpResilience();
 
 builder.Services.AddHttpClient("inventory", (serviceProvider, client) =>
 {
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<InventoryProxyOptions>>().Value.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(5);
 })
 // The tail-latency benchmark routes this client through a
 // Toxiproxy latency toxic with a toxicity probability - Toxiproxy applies
@@ -79,7 +80,7 @@ builder.Services.AddHttpClient("inventory", (serviceProvider, client) =>
 // are slow." Forcing a fresh connection per request makes the toxicity
 // roll happen per request, matching the fault this benchmark models.
 .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMilliseconds(1) })
-.AddStandardResilienceHandler();
+.AddBestEffortHttpResilience();
 
 builder.Services.AddHealthChecks();
 

@@ -48,6 +48,11 @@ spec:
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
+            # Missing here previously - AddKeycloakJwtBearer throws during
+            # service registration without it, before any health check runs.
+            # Must match compose.yaml's value.
+            - name: Authentication__Authority
+              value: http://keycloak:8080/realms/orders-lab
             - name: Mongo__ConnectionString
               value: mongodb://mongodb:27017
             - name: Mongo__DatabaseName

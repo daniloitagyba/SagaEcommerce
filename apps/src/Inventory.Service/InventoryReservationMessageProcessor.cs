@@ -73,13 +73,10 @@ public sealed partial class InventoryReservationMessageProcessor(
         await SkuAdvisoryLock.AcquireAsync(dbContext, request.Sku, cancellationToken);
 
         var processedAt = _timeProvider.GetUtcNow();
-        var insertedRows = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            INSERT INTO inbox_messages (consumer_name, event_id, topic, partition, "offset", correlation_id, processed_at)
-            VALUES ({_kafkaOptions.ConsumerGroup}, {request.ReservationId}, {consumeResult.Topic}, {consumeResult.Partition.Value}, {consumeResult.Offset.Value}, {correlationId}, {processedAt})
-            ON CONFLICT (consumer_name, event_id) DO NOTHING
-            """,
-            cancellationToken);
+        var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
+            dbContext.Database, _kafkaOptions.ConsumerGroup, request.ReservationId,
+            consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
+            correlationId, processedAt, cancellationToken);
 
         if (insertedRows == 0)
         {
@@ -324,13 +321,10 @@ public sealed partial class InventoryReservationMessageProcessor(
 
         var processedAt = _timeProvider.GetUtcNow();
         var inboxConsumerName = $"{_kafkaOptions.ConsumerGroup}-{inboxConsumerSuffix}";
-        var insertedRows = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            INSERT INTO inbox_messages (consumer_name, event_id, topic, partition, "offset", correlation_id, processed_at)
-            VALUES ({inboxConsumerName}, {reservationId}, {consumeResult.Topic}, {consumeResult.Partition.Value}, {consumeResult.Offset.Value}, {correlationId}, {processedAt})
-            ON CONFLICT (consumer_name, event_id) DO NOTHING
-            """,
-            cancellationToken);
+        var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
+            dbContext.Database, inboxConsumerName, reservationId,
+            consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
+            correlationId, processedAt, cancellationToken);
 
         if (insertedRows == 0)
         {

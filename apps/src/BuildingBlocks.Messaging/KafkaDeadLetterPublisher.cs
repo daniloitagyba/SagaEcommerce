@@ -9,9 +9,17 @@ namespace BuildingBlocks;
 // Shared shape behind every service's dead-letter publisher: build the
 // envelope, copy correlation/trace/redrive-count headers, and produce to
 // the dead-letter topic. TValue and encodePayload are the only things that
-// differ per topic (byte[]/Avro base64-encodes, JSON-text passes through) -
-// everything else stays a thin, service-owned subclass.
-public abstract class KafkaDeadLetterPublisherBase<TValue>(
+// differ per topic (byte[]/Avro base64-encodes, JSON-text passes through).
+//
+// Concrete and directly constructible - not a base class with one thin
+// subclass+interface per consumer (10 of them, across Orders.Worker/
+// Payments.Service/Inventory.Service, before this). KafkaConsumerHost
+// takes publishDeadLetterAsync as a delegate, not an interface, so those
+// subclasses' interfaces bought nothing beyond giving each service's DI
+// container something distinct to resolve - build an instance directly at
+// the same KafkaConsumerHost registration site that already has the topic
+// and activity name in scope instead.
+public sealed class KafkaDeadLetterPublisher<TValue>(
     IProducer<string, string> producer,
     string deadLetterTopic,
     string activityName,
@@ -20,7 +28,7 @@ public abstract class KafkaDeadLetterPublisherBase<TValue>(
     private const int MaximumFailureMessageLength = 2_000;
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
-    protected async Task PublishCoreAsync(
+    public async Task PublishAsync(
         ConsumeResult<string, TValue> consumeResult,
         Exception exception,
         int attemptCount,

@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
+import type { AxiosResponse } from 'axios';
 import { getAccessToken, setAccessToken, triggerSigninRedirect } from '../auth/tokenStore';
-import type { ProblemDetails } from './types';
+import type { PriceMismatchProblem, ProblemDetails } from './types';
 
 // Base "/api" - same-origin in production (Storefront.Service serves this
 // app's own build and its API from one origin), proxied by Vite in dev
@@ -34,12 +35,18 @@ apiClient.interceptors.response.use(
   },
 );
 
-/** True for the one 409 shape this app treats as a distinct, recoverable outcome rather than a generic failure. */
+/**
+ * True for the one 409 shape this app treats as a distinct, recoverable
+ * outcome rather than a generic failure. The `response` field is included
+ * in the predicate type (not just the error) so a caller can read
+ * `error.response.data` straight off the narrowed type - no non-null
+ * assertion propped up by this function's own runtime check a few lines away.
+ */
 export function isPriceMismatch(
   error: unknown,
-): error is AxiosError<ProblemDetails & { expectedSubtotal: number; actualSubtotal: number }> {
+): error is AxiosError<PriceMismatchProblem> & { response: AxiosResponse<PriceMismatchProblem> } {
   return (
-    axios.isAxiosError(error) &&
+    axios.isAxiosError<PriceMismatchProblem>(error) &&
     error.response?.status === 409 &&
     error.response.data?.title === 'Price Changed'
   );

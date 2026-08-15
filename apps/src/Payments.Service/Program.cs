@@ -132,10 +132,7 @@ builder.Services.AddOrdersSchemaRegistry(builder.Configuration);
 builder.Services.AddSingleton<IPaymentEventPublisher, KafkaPaymentEventPublisher>();
 builder.Services.AddSingleton<IPaymentDecisionReplyPublisher, KafkaPaymentDecisionReplyPublisher>();
 builder.Services.AddSingleton<IPaymentSettlementPublisher, KafkaPaymentSettlementPublisher>();
-builder.Services.AddSingleton<IPaymentSettlementDeadLetterPublisher, PaymentSettlementDeadLetterPublisher>();
 builder.Services.AddSingleton<PaymentSettlementProcessor>();
-builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
-builder.Services.AddSingleton<IPaymentDecisionDeadLetterPublisher, PaymentDecisionDeadLetterPublisher>();
 builder.Services.AddScoped<PaymentRiskEvaluator>();
 builder.Services.AddScoped<PaymentDecisionCoordinator>();
 builder.Services.AddSingleton<PaymentMessageProcessor>();
@@ -156,7 +153,11 @@ if (sagaMode is SagaMode.Choreography or SagaMode.Both)
         var options = serviceProvider.GetRequiredService<IOptions<PaymentsKafkaOptions>>().Value;
         var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
         var processor = serviceProvider.GetRequiredService<PaymentMessageProcessor>();
-        var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+        var deadLetterPublisher = new KafkaDeadLetterPublisher<byte[]>(
+            serviceProvider.GetRequiredService<IProducer<string, string>>(),
+            options.DeadLetterTopic,
+            "payments.dead_letter.publish",
+            Convert.ToBase64String);
         var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Payments.Service.OrderCreatedConsumer");
         return new KafkaConsumerHost<byte[]>(
             options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -172,7 +173,11 @@ if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
         var options = serviceProvider.GetRequiredService<IOptions<PaymentDecisionRequestOptions>>().Value;
         var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
         var processor = serviceProvider.GetRequiredService<PaymentDecisionRequestProcessor>();
-        var deadLetterPublisher = serviceProvider.GetRequiredService<IPaymentDecisionDeadLetterPublisher>();
+        var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+            serviceProvider.GetRequiredService<IProducer<string, string>>(),
+            options.DeadLetterTopic,
+            "payments.decision_request.dead_letter.publish",
+            payload => payload);
         var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Payments.Service.PaymentDecisionRequestConsumer");
         return new KafkaConsumerHost<string>(
             options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -189,7 +194,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var options = serviceProvider.GetRequiredService<IOptions<PaymentSettlementOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<PaymentSettlementProcessor>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IPaymentSettlementDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "payments.settlement.dead_letter.publish",
+        payload => payload);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Payments.Service.PaymentSettlementConsumer");
     return new KafkaConsumerHost<string>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,

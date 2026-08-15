@@ -14,6 +14,16 @@ public sealed record CreateProductRequest(
     Dictionary<string, string>? Attributes,
     List<string>? Images);
 
+public sealed record UpdateProductRequest(
+    string Name,
+    string Description,
+    string CategorySlug,
+    decimal Price,
+    string Currency,
+    string Sku,
+    Dictionary<string, string>? Attributes,
+    List<string>? Images);
+
 public static class ProductEndpoints
 {
     public static IEndpointRouteBuilder MapProductEndpoints(this IEndpointRouteBuilder endpoints)
@@ -27,6 +37,7 @@ public static class ProductEndpoints
         group.MapGet("/{id}", GetByIdAsync);
         // Writes are catalog:admin-gated; every GET above stays open - browsing the catalog is not a privileged action.
         group.MapPost("", CreateAsync).RequireAuthorization("catalog:admin");
+        group.MapPut("/{id}", UpdateAsync).RequireAuthorization("catalog:admin");
 
         return endpoints;
     }
@@ -97,15 +108,18 @@ public static class ProductEndpoints
         var effectiveLimit = NormalizeBestsellersLimit(limit);
         var ranked = await bestsellersReader.GetTopAsync(category, effectiveLimit, cancellationToken);
 
+        var products = await repository.FindBySkusAsync(ranked.Select(entry => entry.Sku).ToArray(), cancellationToken);
+        var productsBySku = products.ToDictionary(product => product.Sku, StringComparer.OrdinalIgnoreCase);
+
         // Rank order comes from Redis, not from any query MongoDB can
-        // express - fetch each product individually (the list is at most
-        // 50 long) and reassemble in the Redis-given order rather than
-        // letting a batch Mongo query silently reorder them.
+        // express - the $in batch above replaced what used to be one
+        // FindBySkuAsync round-trip per ranked entry (up to 50 sequential
+        // queries); reassemble in the Redis-given order here rather than
+        // trusting whatever order Mongo returned the batch in.
         var items = new List<object>(ranked.Count);
         foreach (var entry in ranked)
         {
-            var product = await repository.FindBySkuAsync(entry.Sku, cancellationToken);
-            if (product is not null)
+            if (productsBySku.TryGetValue(entry.Sku, out var product))
             {
                 items.Add(new { product, unitsSold = entry.UnitsSold });
             }
@@ -139,6 +153,7 @@ public static class ProductEndpoints
     private static async Task<IResult> CreateAsync(
         CreateProductRequest request,
         ProductRepository repository,
+        CategoryRepository categoryRepository,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -148,16 +163,33 @@ public static class ProductEndpoints
             return Results.ValidationProblem(validationErrors);
         }
 
-        var product = Product.Create(
-            request.Name,
-            request.Description,
-            request.CategorySlug,
-            request.Price,
-            request.Currency,
-            request.Sku,
-            request.Attributes,
-            request.Images,
-            timeProvider.GetUtcNow());
+        var categoryExists = await categoryRepository.FindBySlugAsync(request.CategorySlug.Trim(), cancellationToken) is not null;
+        if (!categoryExists)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["categorySlug"] = [$"No category with slug '{request.CategorySlug}' exists."]
+            });
+        }
+
+        Product product;
+        try
+        {
+            product = Product.Create(
+                request.Name,
+                request.Description,
+                request.CategorySlug,
+                request.Price,
+                request.Currency,
+                request.Sku,
+                request.Attributes,
+                request.Images,
+                timeProvider.GetUtcNow());
+        }
+        catch (ArgumentException exception)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = [exception.Message] });
+        }
 
         try
         {
@@ -169,5 +201,74 @@ public static class ProductEndpoints
         }
 
         return Results.Created($"/products/{product.Id}", product);
+    }
+
+    /// <summary>Same shape as ValidateCreateProductRequest - kept separate because Catalog.UnitTests exercises each independently and the two requests may diverge later (e.g. an update that can't change Sku).</summary>
+    internal static IReadOnlyDictionary<string, string[]>? ValidateUpdateProductRequest(UpdateProductRequest request) =>
+        string.IsNullOrWhiteSpace(request.Name)
+            || string.IsNullOrWhiteSpace(request.CategorySlug)
+            || string.IsNullOrWhiteSpace(request.Sku)
+            || request.Price <= 0
+            ? new Dictionary<string, string[]> { ["request"] = ["name, categorySlug, sku are required and price must be positive."] }
+            : null;
+
+    private static async Task<IResult> UpdateAsync(
+        string id,
+        UpdateProductRequest request,
+        ProductRepository repository,
+        CategoryRepository categoryRepository,
+        CancellationToken cancellationToken)
+    {
+        var existing = await repository.FindByIdAsync(id, cancellationToken);
+        if (existing is null)
+        {
+            return Results.NotFound();
+        }
+
+        var validationErrors = ValidateUpdateProductRequest(request);
+        if (validationErrors is not null)
+        {
+            return Results.ValidationProblem(validationErrors);
+        }
+
+        var categoryExists = await categoryRepository.FindBySlugAsync(request.CategorySlug.Trim(), cancellationToken) is not null;
+        if (!categoryExists)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["categorySlug"] = [$"No category with slug '{request.CategorySlug}' exists."]
+            });
+        }
+
+        existing.Name = request.Name;
+        existing.Description = request.Description;
+        existing.CategorySlug = request.CategorySlug;
+        existing.Price = request.Price;
+        existing.Currency = request.Currency;
+        existing.Sku = request.Sku;
+        existing.Attributes = request.Attributes is null
+            ? []
+            : new Dictionary<string, string>(request.Attributes, StringComparer.Ordinal);
+        existing.Images = request.Images is null ? [] : [.. request.Images];
+
+        try
+        {
+            existing.EnsureValid();
+        }
+        catch (ArgumentException exception)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = [exception.Message] });
+        }
+
+        try
+        {
+            await repository.UpdateAsync(existing, cancellationToken);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return Results.Conflict(new { message = $"A product with sku '{request.Sku}' already exists." });
+        }
+
+        return Results.Ok(existing);
     }
 }

@@ -127,7 +127,6 @@ builder.Services.AddSingleton<IAdminClient>(serviceProvider =>
 builder.Services.AddOrdersResilience();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IInventoryEventPublisher, KafkaInventoryEventPublisher>();
-builder.Services.AddSingleton<IDeadLetterPublisher, KafkaDeadLetterPublisher>();
 builder.Services.AddScoped<WarehouseAllocationStore>();
 builder.Services.AddSingleton<InventoryReservationMessageProcessor>();
 builder.Services.AddScoped<IOutboxEventDispatcher, InventoryOutboxEventDispatcher>();
@@ -140,7 +139,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "inventory.dead_letter.publish",
+        value => value ?? string.Empty);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.ReservationRequestedConsumer");
     return new KafkaConsumerHost<string>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -152,7 +155,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "inventory.dead_letter.publish",
+        value => value ?? string.Empty);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.ReservationCommitRequestedConsumer");
     return new KafkaConsumerHost<string>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -164,7 +171,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "inventory.dead_letter.publish",
+        value => value ?? string.Empty);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.ReservationReleaseRequestedConsumer");
     return new KafkaConsumerHost<string>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -176,7 +187,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "inventory.dead_letter.publish",
+        value => value ?? string.Empty);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.RestockRequestedConsumer");
     return new KafkaConsumerHost<string>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -188,7 +203,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<InventoryReservationMessageProcessor>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "inventory.dead_letter.publish",
+        value => value ?? string.Empty);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.BackorderCancellationRequestedConsumer");
     return new KafkaConsumerHost<string>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
@@ -200,7 +219,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var options = serviceProvider.GetRequiredService<IOptions<InventoryKafkaOptions>>().Value;
     var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
     var processor = serviceProvider.GetRequiredService<ReplenishmentRequestProcessor>();
-    var deadLetterPublisher = serviceProvider.GetRequiredService<IDeadLetterPublisher>();
+    var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
+        serviceProvider.GetRequiredService<IProducer<string, string>>(),
+        options.DeadLetterTopic,
+        "inventory.dead_letter.publish",
+        value => value ?? string.Empty);
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Inventory.Service.ReplenishmentNeededConsumer");
     return new KafkaConsumerHost<string>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,

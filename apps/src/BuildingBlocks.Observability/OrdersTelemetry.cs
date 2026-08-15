@@ -25,7 +25,6 @@ public static class OrdersTelemetry
     private static readonly Counter<long> CacheMissCounter = Meter.CreateCounter<long>("orders.cache.misses");
     private static readonly Counter<long> CacheBypassCounter = Meter.CreateCounter<long>("orders.cache.bypassed");
     private static readonly Counter<long> IdempotentReplayCounter = Meter.CreateCounter<long>("orders.idempotency.replayed");
-    private static readonly Counter<long> IdempotencyBypassCounter = Meter.CreateCounter<long>("orders.idempotency.bypassed");
     private static readonly Counter<long> FencedWriteRejectedCounter = Meter.CreateCounter<long>("orders.redis.fenced_write_rejected");
     private static readonly Counter<long> RateLimitedCounter = Meter.CreateCounter<long>("orders.rate_limited");
     private static readonly Counter<long> DistributedRateLimitedCounter = Meter.CreateCounter<long>("orders.rate_limited.distributed");
@@ -143,11 +142,6 @@ public static class OrdersTelemetry
     public static void RecordIdempotentReplay()
     {
         IdempotentReplayCounter.Add(1);
-    }
-
-    public static void RecordIdempotencyBypass()
-    {
-        IdempotencyBypassCounter.Add(1);
     }
 
     /// <summary>

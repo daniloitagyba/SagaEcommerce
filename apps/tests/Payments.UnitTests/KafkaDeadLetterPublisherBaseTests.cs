@@ -2,22 +2,21 @@ using System.Text;
 using System.Text.Json;
 using BuildingBlocks;
 using Confluent.Kafka;
-using Microsoft.Extensions.Options;
-using Payments.Service;
 
 namespace Payments.UnitTests;
 
 /// <summary>
-/// KafkaDeadLetterPublisherBase&lt;TValue&gt; - shared by every dead-letter
-/// publisher in the codebase (Payments/Orders.Worker/Inventory alike) -
-/// had no coverage anywhere despite being the one place that decides what
-/// actually reaches a dead-letter topic when processing fails. Tested via
-/// KafkaDeadLetterPublisher, Payments.Service's own concrete subclass
-/// (byte[]-valued, base64-encoded - exercises the encodePayload path
-/// too, not just the string-passthrough one PaymentDecisionDeadLetterPublisher
-/// would), against a fake IProducer&lt;string, string&gt; that just records
-/// what it was asked to produce - no broker involved, the envelope-building
-/// logic has no dependency on one.
+/// KafkaDeadLetterPublisher&lt;TValue&gt; - shared by every dead-letter
+/// publisher call site in the codebase (Payments/Orders.Worker/Inventory
+/// alike, each constructing it directly at its own KafkaConsumerHost
+/// registration - see Payments.Service/Program.cs) - had no coverage
+/// anywhere despite being the one place that decides what actually
+/// reaches a dead-letter topic when processing fails. Tested here
+/// byte[]-valued with base64 encoding (exercises the encodePayload path,
+/// not just a string passthrough), against a fake
+/// IProducer&lt;string, string&gt; that just records what it was asked to
+/// produce - no broker involved, the envelope-building logic has no
+/// dependency on one.
 /// </summary>
 public sealed class KafkaDeadLetterPublisherBaseTests
 {
@@ -27,7 +26,7 @@ public sealed class KafkaDeadLetterPublisherBaseTests
     public async Task TheEnvelopeCarriesTheOriginalTopicPartitionOffsetAndFailureDetails()
     {
         var producer = new RecordingProducer();
-        var publisher = new KafkaDeadLetterPublisher(producer, Options.Create(new PaymentsKafkaOptions { DeadLetterTopic = "payments.decisions.dlq.v1" }));
+        var publisher = new KafkaDeadLetterPublisher<byte[]>(producer, "payments.decisions.dlq.v1", "payments.dead_letter.publish", Convert.ToBase64String);
         var payloadBytes = Encoding.UTF8.GetBytes("{\"bad\":true}");
         var consumeResult = BuildConsumeResult(topic: "orders.created.v1", partition: 2, offset: 42, key: "order-1", value: payloadBytes);
 
@@ -51,7 +50,7 @@ public sealed class KafkaDeadLetterPublisherBaseTests
     public async Task CorrelationAndTraceHeadersAreCopiedOntoTheDeadLetterMessage()
     {
         var producer = new RecordingProducer();
-        var publisher = new KafkaDeadLetterPublisher(producer, Options.Create(new PaymentsKafkaOptions { DeadLetterTopic = "payments.decisions.dlq.v1" }));
+        var publisher = new KafkaDeadLetterPublisher<byte[]>(producer, "payments.decisions.dlq.v1", "payments.dead_letter.publish", Convert.ToBase64String);
         var consumeResult = BuildConsumeResult(topic: "orders.created.v1", partition: 0, offset: 1, key: "order-2", value: []);
         consumeResult.Message.Headers.Add(MessagingHeaders.CorrelationId, Encoding.UTF8.GetBytes("correlation-xyz"));
         consumeResult.Message.Headers.Add(MessagingHeaders.TraceParent, Encoding.UTF8.GetBytes("00-trace-01"));
@@ -69,7 +68,7 @@ public sealed class KafkaDeadLetterPublisherBaseTests
     public async Task AnExceptionMessageOverTwoThousandCharactersIsTruncatedNotDropped()
     {
         var producer = new RecordingProducer();
-        var publisher = new KafkaDeadLetterPublisher(producer, Options.Create(new PaymentsKafkaOptions { DeadLetterTopic = "payments.decisions.dlq.v1" }));
+        var publisher = new KafkaDeadLetterPublisher<byte[]>(producer, "payments.decisions.dlq.v1", "payments.dead_letter.publish", Convert.ToBase64String);
         var longMessage = new string('x', 5_000);
         var consumeResult = BuildConsumeResult(topic: "orders.created.v1", partition: 0, offset: 1, key: "order-3", value: []);
 
@@ -84,7 +83,7 @@ public sealed class KafkaDeadLetterPublisherBaseTests
     public async Task AMissingOriginalKeyFallsBackToATopicPartitionOffsetComposite()
     {
         var producer = new RecordingProducer();
-        var publisher = new KafkaDeadLetterPublisher(producer, Options.Create(new PaymentsKafkaOptions { DeadLetterTopic = "payments.decisions.dlq.v1" }));
+        var publisher = new KafkaDeadLetterPublisher<byte[]>(producer, "payments.decisions.dlq.v1", "payments.dead_letter.publish", Convert.ToBase64String);
         var consumeResult = BuildConsumeResult(topic: "orders.created.v1", partition: 3, offset: 7, key: null!, value: []);
 
         await publisher.PublishAsync(consumeResult, new InvalidOperationException("failed"), attemptCount: 1, CancellationToken.None);

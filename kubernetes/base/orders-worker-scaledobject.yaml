@@ -25,6 +25,15 @@ spec:
             - type: Pods
               value: 1
               periodSeconds: 30
+  # bootstrapServers here is kafka.orders-lab.svc.cluster.local:9094, not
+  # the kafka-config ConfigMap's kafka:9092 the application workloads use
+  # (kubernetes/base/infrastructure-services.yaml) - deliberately: 9094 is
+  # the kafka-k8s listener, so KEDA's own consumer-group-offset reads reach
+  # the broker directly rather than through the app-facing 9092 listener.
+  # A ScaledObject trigger's metadata is a static string map (no
+  # configMapKeyRef support), so this can't be pulled from the same
+  # ConfigMap the app workloads read - if the broker's address ever
+  # changes, every occurrence below has to change too.
   triggers:
     - type: kafka
       metadata:
@@ -55,6 +64,86 @@ spec:
         bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
         consumerGroup: orders-projector
         topic: payments.result.v1
+        lagThreshold: "50"
+        activationLagThreshold: "10"
+        offsetResetPolicy: latest
+    # The saga orchestrator's request-side and reply-side consumer groups
+    # (Saga:Mode=Orchestration, the deployed default) were missing from
+    # this trigger list entirely - the critical path (a saga reply that
+    # decides whether an order commits or compensates) never scaled up
+    # under lag, while the projection triggers above scaled every replica
+    # regardless of whether the saga itself was backed up.
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
+        consumerGroup: orders-saga-orchestrator
+        topic: orders.created.v1
+        lagThreshold: "50"
+        activationLagThreshold: "10"
+        offsetResetPolicy: latest
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
+        consumerGroup: orders-saga-orchestrator-reply
+        topic: inventory.reservation-replied.v1
+        lagThreshold: "50"
+        activationLagThreshold: "10"
+        offsetResetPolicy: latest
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
+        consumerGroup: orders-saga-orchestrator-reply
+        topic: payments.decision-replied.v1
+        lagThreshold: "50"
+        activationLagThreshold: "10"
+        offsetResetPolicy: latest
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
+        consumerGroup: orders-saga-orchestrator-reply
+        topic: inventory.reservation-commit-replied.v1
+        lagThreshold: "50"
+        activationLagThreshold: "10"
+        offsetResetPolicy: latest
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
+        consumerGroup: orders-saga-orchestrator-reply
+        topic: inventory.reservation-release-replied.v1
+        lagThreshold: "50"
+        activationLagThreshold: "10"
+        offsetResetPolicy: latest
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
+        consumerGroup: orders-saga-orchestrator-reply
+        topic: payments.settlement-replied.v1
+        lagThreshold: "50"
+        activationLagThreshold: "10"
+        offsetResetPolicy: latest
+    # The event-store projector's own consumer group - previously scaled
+    # only by proxy, through the two consumer groups above.
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
+        consumerGroup: orders-event-store
+        topic: orders.created.v1
+        lagThreshold: "50"
+        activationLagThreshold: "10"
+        offsetResetPolicy: latest
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
+        consumerGroup: orders-event-store
+        topic: payments.result.v1
+        lagThreshold: "50"
+        activationLagThreshold: "10"
+        offsetResetPolicy: latest
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.orders-lab.svc.cluster.local:9094
+        consumerGroup: orders-event-store
+        topic: orders.status-changed.v1
         lagThreshold: "50"
         activationLagThreshold: "10"
         offsetResetPolicy: latest

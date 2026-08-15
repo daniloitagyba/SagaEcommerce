@@ -34,7 +34,7 @@ cp .env.example .env
 # edit .env: replace the placeholder passwords with your own random values
 
 docker compose up --detach --wait                          # infrastructure: Postgres, Kafka, Redis, MongoDB, Keycloak, observability stack
-docker compose --profile compose-apps up --detach --wait    # the seven services (orders-api runs 2 replicas) + nginx + one-shot migration/seed jobs
+docker compose --profile compose-apps up --build --detach --wait    # the seven services (orders-api runs 2 replicas) + nginx + one-shot migration/seed jobs
 
 ../scripts/infra/keycloak-configure-realm.sh                      # one-time: creates the auth realm/client the API expects
 ```

@@ -57,6 +57,12 @@ spec:
               value: redis:6379
             - name: Catalog__BaseUrl
               value: http://catalog-service
+            # Missing here previously - defaults to KeycloakJwtBearerExtensions'
+            # own InvalidOperationException, which throws during
+            # AddKeycloakJwtBearer's service registration, before this pod
+            # ever reaches a health check. Must match compose.yaml's value.
+            - name: Authentication__Authority
+              value: http://keycloak:8080/realms/orders-lab
             - name: InstanceId
               valueFrom:
                 fieldRef:

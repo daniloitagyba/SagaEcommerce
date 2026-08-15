@@ -21,3 +21,23 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+  # selfHeal fights any controller that writes spec.replicas outside of
+  # git - orders-api's HPA (orders-api-hpa.yaml) and orders-worker's KEDA
+  # ScaledObject (orders-worker-scaledobject.yaml) both do exactly that.
+  # Without this, the moment either controller scales its target, Argo CD
+  # sees drift from the manifest and self-heals it straight back, which
+  # either flaps the replica count or pins it - silently nullifying the
+  # autoscaling and canary-analysis milestones. Neither base manifest sets
+  # spec.replicas any more (see orders-api.yaml/orders-worker.yaml) so
+  # this is the only place that value is now decided.
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Rollout
+      name: orders-api
+      jsonPointers:
+        - /spec/replicas
+    - group: apps
+      kind: Deployment
+      name: orders-worker
+      jsonPointers:
+        - /spec/replicas

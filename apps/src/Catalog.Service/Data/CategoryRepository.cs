@@ -29,6 +29,15 @@ public sealed class CategoryRepository
         return _categories.InsertOneAsync(category, cancellationToken: cancellationToken);
     }
 
+    public async Task<bool> UpdateNameAsync(string slug, string name, CancellationToken cancellationToken)
+    {
+        var result = await _categories.UpdateOneAsync(
+            category => category.Slug == slug,
+            Builders<Category>.Update.Set(category => category.Name, name),
+            cancellationToken: cancellationToken);
+        return result.MatchedCount > 0;
+    }
+
     public async Task EnsureIndexesAsync(CancellationToken cancellationToken)
     {
         var slugIndex = new CreateIndexModel<Category>(

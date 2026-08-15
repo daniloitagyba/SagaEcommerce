@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
@@ -16,13 +17,66 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Box from '@mui/material/Box';
 import Alert from '@mui/material/Alert';
 import { RequireAuth } from '../components/RequireAuth';
-import { useCart, useRemoveCartItem, useUpdateCartItem } from '../api/cart';
+import { useCart, useClearCart, useRemoveCartItem, useUpdateCartItem } from '../api/cart';
 import { formatMoney } from '../format';
+import type { CartLineItem } from '../api/types';
+
+// Typing "10" into the quantity field used to fire one PUT per keystroke
+// (qty=1, then qty=10 moments later), with no debounce and no in-flight
+// guard - whichever response landed last won the query-cache write, not
+// whichever request was sent last. This collapses a burst of keystrokes
+// into a single commit after the shopper pauses.
+const QUANTITY_COMMIT_DELAY_MILLISECONDS = 400;
+
+function QuantityField({
+  item,
+  onCommit,
+}: {
+  item: CartLineItem;
+  onCommit: (sku: string, quantity: number) => void;
+}) {
+  const [value, setValue] = useState(item.quantity);
+  const commitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setValue(item.quantity);
+  }, [item.quantity]);
+
+  useEffect(
+    () => () => {
+      if (commitTimeoutRef.current) {
+        clearTimeout(commitTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
+  return (
+    <TextField
+      type="number"
+      size="small"
+      value={value}
+      onChange={(event) => {
+        const next = Math.max(1, Number(event.target.value));
+        setValue(next);
+        if (commitTimeoutRef.current) {
+          clearTimeout(commitTimeoutRef.current);
+        }
+        commitTimeoutRef.current = setTimeout(() => {
+          onCommit(item.sku, next);
+        }, QUANTITY_COMMIT_DELAY_MILLISECONDS);
+      }}
+      slotProps={{ htmlInput: { min: 1, style: { textAlign: 'center' } } }}
+      sx={{ width: 80 }}
+    />
+  );
+}
 
 function CartContents() {
   const { data: cart, isLoading } = useCart();
   const updateCartItem = useUpdateCartItem();
   const removeCartItem = useRemoveCartItem();
+  const clearCart = useClearCart();
   const navigate = useNavigate();
 
   if (isLoading) {
@@ -63,16 +117,9 @@ function CartContents() {
                 <TableCell>{item.productName}</TableCell>
                 <TableCell align="right">{formatMoney(item.unitPrice, item.currency)}</TableCell>
                 <TableCell align="center">
-                  <TextField
-                    type="number"
-                    size="small"
-                    value={item.quantity}
-                    onChange={(event) => {
-                      const next = Math.max(1, Number(event.target.value));
-                      updateCartItem.mutate({ sku: item.sku, quantity: next });
-                    }}
-                    slotProps={{ htmlInput: { min: 1, style: { textAlign: 'center' } } }}
-                    sx={{ width: 80 }}
+                  <QuantityField
+                    item={item}
+                    onCommit={(sku, quantity) => updateCartItem.mutate({ sku, quantity })}
                   />
                 </TableCell>
                 <TableCell align="right">{formatMoney(item.unitPrice * item.quantity, item.currency)}</TableCell>
@@ -91,6 +138,18 @@ function CartContents() {
       </TableContainer>
 
       <Stack direction="row" spacing={2} sx={{ justifyContent: 'flex-end', alignItems: 'center' }}>
+        {/* useClearCart previously had no caller anywhere in the app - the backend
+            already clears the cart server-side post-checkout, but a shopper had no
+            way to abandon a cart mid-shop short of removing every line one at a time. */}
+        <Button
+          variant="text"
+          color="inherit"
+          onClick={() => clearCart.mutate()}
+          loading={clearCart.isPending}
+          disabled={clearCart.isPending}
+        >
+          Clear cart
+        </Button>
         <Typography variant="h6">Total: {formatMoney(cart.total, cart.currency)}</Typography>
         <Button variant="contained" size="large" onClick={() => navigate('/checkout')}>
           Checkout

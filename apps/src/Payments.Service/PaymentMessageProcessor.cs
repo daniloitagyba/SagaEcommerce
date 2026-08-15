@@ -69,13 +69,10 @@ public sealed class PaymentMessageProcessor(
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
         var processedAt = DateTimeOffset.UtcNow;
-        var insertedRows = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            INSERT INTO inbox_messages (consumer_name, event_id, topic, partition, "offset", correlation_id, processed_at)
-            VALUES ({_kafkaOptions.ConsumerGroup}, {orderCreated.EventId}, {consumeResult.Topic}, {consumeResult.Partition.Value}, {consumeResult.Offset.Value}, {correlationId}, {processedAt})
-            ON CONFLICT (consumer_name, event_id) DO NOTHING
-            """,
-            cancellationToken);
+        var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
+            dbContext.Database, _kafkaOptions.ConsumerGroup, orderCreated.EventId,
+            consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
+            correlationId, processedAt, cancellationToken);
 
         if (insertedRows == 0)
         {

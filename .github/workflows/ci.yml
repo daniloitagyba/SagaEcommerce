@@ -100,6 +100,32 @@ jobs:
           print("No empty catch blocks.")
           '
 
+      - name: no hand-rolled inbox dedup SQL outside BuildingBlocks.Persistence
+        run: |
+          # The inbox half of every outbox-backed consumer's dedup
+          # (INSERT INTO inbox_messages ... ON CONFLICT DO NOTHING) used to
+          # be copy-pasted as raw SQL 8 times across Inventory.Service and
+          # Payments.Service, alongside a properly shared InboxStore
+          # Orders.Worker alone used - now consolidated into
+          # BuildingBlocks.Persistence/InboxStore.cs (both its
+          # standalone-connection and ambient-transaction variants). This
+          # keeps a ninth consumer from reintroducing a copy instead of
+          # calling InboxStore.TryRecordAsync/TryRecordWithinTransactionAsync.
+          python3 -c '
+          import glob, sys
+          files = [
+              f for f in glob.glob("apps/src/**/*.cs", recursive=True)
+              if "/obj/" not in f and "/bin/" not in f
+              and "BuildingBlocks.Persistence" not in f
+          ]
+          offenders = [f for f in files if "INSERT INTO inbox_messages" in open(f, encoding="utf-8", errors="ignore").read()]
+          if offenders:
+              print("Hand-rolled inbox dedup SQL found outside BuildingBlocks.Persistence - call InboxStore.TryRecordAsync/TryRecordWithinTransactionAsync instead:")
+              print("\n".join(offenders))
+              sys.exit(1)
+          print("No hand-rolled inbox dedup SQL outside BuildingBlocks.Persistence.")
+          '
+
   test:
     name: build and test
     runs-on: ubuntu-latest
@@ -108,6 +134,9 @@ jobs:
 
       - name: verify compose network names
         run: bash scripts/infra/verify-compose-network-names.sh
+
+      - name: verify compose/kubernetes config parity
+        run: bash scripts/ci/verify-config-parity.sh
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -296,16 +325,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: build and push
+      # Pushes only the immutable sha tag, never :latest - :latest is what
+      # kubernetes/base actually pulls (imagePullPolicy: IfNotPresent), so
+      # it must never point at an image before the scan/sign gates below
+      # have run. Before this, the push here carried both tags at once:
+      # a CRITICAL/HIGH CVE failed the *job*, but the vulnerable image was
+      # already in GHCR and already tagged :latest by the time that
+      # happened - the gate blocked the workflow, not the artifact a
+      # cluster would actually deploy.
+      - name: build and push (sha tag only)
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: apps/src/${{ matrix.project }}/Dockerfile
           push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ github.sha }}
-            ${{ env.IMAGE }}:latest
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
@@ -336,6 +371,16 @@ jobs:
 
       - name: sign image (keyless, Sigstore)
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      # Only now, after the scan and the signature both succeeded, does
+      # :latest move - a manifest re-tag against the digest already in
+      # GHCR, not a rebuild, so it can't drift from what was actually
+      # scanned and signed above.
+      - name: promote to :latest
+        run: docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
         env:
           IMAGE: ${{ env.IMAGE }}
           DIGEST: ${{ steps.build.outputs.digest }}

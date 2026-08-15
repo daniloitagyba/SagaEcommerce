@@ -1,6 +1,8 @@
+import type { ReactElement } from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation, useParams } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AxiosError } from 'axios';
 import { useAuth } from 'react-oidc-context';
 import { useCart } from '../api/cart';
@@ -15,6 +17,7 @@ vi.mock('react-oidc-context', () => ({
 
 vi.mock('../api/cart', () => ({
   useCart: vi.fn(),
+  CART_QUERY_KEY: ['cart'],
 }));
 
 vi.mock('../api/orders', () => ({
@@ -65,19 +68,32 @@ function OrderPlacedProbe() {
   return <div>Placed order {id}, justPlaced={String(justPlaced)}</div>;
 }
 
-function renderCheckoutPage() {
-  return render(
-    <MemoryRouter initialEntries={['/checkout']}>
-      <Routes>
-        <Route path="/checkout" element={<CheckoutPage />} />
-        <Route path="/orders/:id" element={<OrderPlacedProbe />} />
-      </Routes>
-    </MemoryRouter>,
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+function checkoutPageTree() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/checkout']}>
+        <Routes>
+          <Route path="/checkout" element={<CheckoutPage />} />
+          <Route path="/orders/:id" element={<OrderPlacedProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   );
+}
+
+function renderCheckoutPage() {
+  return render(checkoutPageTree());
+}
+
+function rerenderCheckoutPage(rerender: (ui: ReactElement) => void) {
+  rerender(checkoutPageTree());
 }
 
 describe('CheckoutPage', () => {
   beforeEach(() => {
+    queryClient.clear();
     mockedUseAuth.mockReturnValue({
       isLoading: false,
       isAuthenticated: true,
@@ -146,6 +162,27 @@ describe('CheckoutPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Accept & retry' }));
     expect(mutate).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables Accept & retry while a checkout mutation is in flight', () => {
+    const mismatch = axiosErrorWith(409, { title: 'Price Changed', expectedSubtotal: 20, actualSubtotal: 25 });
+    const mutate = vi.fn((_request, options: { onError?: (error: unknown) => void }) => {
+      options.onError?.(mismatch);
+    });
+    mockedUseCart.mockReturnValue({ data: sampleCart, isLoading: false } as never);
+    mockedUseCheckout.mockReturnValue({ mutate, isPending: false, isError: false, error: null } as never);
+
+    const { rerender } = renderCheckoutPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Place order' }));
+    expect(screen.getByRole('button', { name: 'Accept & retry' })).toBeEnabled();
+
+    // A second click before the retry mutation settles must not fire a
+    // concurrent request - unlike "Place order" and every other submit
+    // button in the app, this one previously had no loading/disabled guard.
+    mockedUseCheckout.mockReturnValue({ mutate, isPending: true, isError: false, error: null } as never);
+    rerenderCheckoutPage(rerender);
+
+    expect(screen.getByRole('button', { name: 'Accept & retry' })).toBeDisabled();
   });
 
   it('shows a generic error message for any other failure', () => {

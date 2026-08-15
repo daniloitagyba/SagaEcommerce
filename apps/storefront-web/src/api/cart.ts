@@ -3,7 +3,7 @@ import { apiClient } from './client';
 import type { Cart } from './types';
 import { useAuth } from 'react-oidc-context';
 
-const CART_QUERY_KEY = ['cart'];
+export const CART_QUERY_KEY = ['cart'];
 
 async function getCart(): Promise<Cart> {
   const { data } = await apiClient.get<Cart>('/cart/carts/me');
