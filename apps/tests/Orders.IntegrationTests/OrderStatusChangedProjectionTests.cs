@@ -1,0 +1,156 @@
+using System.Text;
+using BuildingBlocks;
+using Confluent.Kafka;
+using Confluent.SchemaRegistry;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Npgsql;
+using Orders.Domain;
+using Orders.Infrastructure.Data;
+using Orders.Worker;
+using Polly.Registry;
+using Testcontainers.PostgreSql;
+using Testcontainers.Redpanda;
+
+namespace Orders.IntegrationTests;
+
+/// <summary>
+/// Closes the gap the audit's finding 1 flagged: before OrderStatusChanged,
+/// order_summaries (OrderProjectionProcessor) and order_events
+/// (OrderEventStoreProjector) only ever learned an order's status from
+/// OrderCreated/PaymentDecided, so a saga-driven Confirmed - reached via
+/// OrderStatusStore, the high-volume path in Saga:Mode=Orchestration, the
+/// deployed default - never reached either. This test drives
+/// OrderStatusStore.TryConfirmAsync for real (the same call
+/// OrderSagaReplyConsumer.HandleCommitRepliedAsync makes), reads the exact
+/// outbox row it queues, and feeds it to both projection consumers -
+/// proving the read model and the event-store timeline both actually catch
+/// up, not just that the outbox row exists.
+/// </summary>
+public sealed class OrderStatusChangedProjectionTests : IAsyncLifetime, IDisposable
+{
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
+        .WithDatabase("orders_test")
+        .WithUsername("test_user")
+        .WithPassword("test-password-not-a-secret")
+        .Build();
+
+    private readonly RedpandaContainer _redpanda =
+        new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v26.2.1").Build();
+
+    private NpgsqlDataSource _dataSource = null!;
+    private OrdersDbContext _dbContext = null!;
+    private OrderStatusStore _orderStatusStore = null!;
+    private OrderProjectionStore _projectionStore = null!;
+    private InboxStore _inboxStore = null!;
+    private OrderEventStoreAppender _eventStoreAppender = null!;
+    private CachedSchemaRegistryClient _schemaRegistryClient = null!;
+
+    public async Task InitializeAsync()
+    {
+        await Task.WhenAll(_postgres.StartAsync(), _redpanda.StartAsync());
+
+        var dbOptions = new DbContextOptionsBuilder<OrdersDbContext>().UseNpgsql(_postgres.GetConnectionString()).Options;
+        _dbContext = new OrdersDbContext(dbOptions);
+        await _dbContext.Database.MigrateAsync();
+
+        var pipelineProvider = new ServiceCollection()
+            .AddOrdersResilience()
+            .BuildServiceProvider()
+            .GetRequiredService<ResiliencePipelineProvider<string>>();
+
+        _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
+        _orderStatusStore = new OrderStatusStore(
+            _dataSource, new CouponRedemptionStore(), new PaymentSettlementRequester(), new CustomerTierStore(), pipelineProvider);
+        _projectionStore = new OrderProjectionStore(_dataSource, pipelineProvider);
+        _inboxStore = new InboxStore(_dataSource, pipelineProvider);
+        _eventStoreAppender = new OrderEventStoreAppender(_dataSource, pipelineProvider);
+
+        // Never actually asked for Avro in this test (OrderStatusChanged is
+        // plain JSON) - constructed only because both projectors' Avro
+        // deserializer is built in their constructor regardless of which
+        // topic a given message arrives on.
+        _schemaRegistryClient = new CachedSchemaRegistryClient(new SchemaRegistryConfig { Url = _redpanda.GetSchemaRegistryAddress() });
+    }
+
+    public async Task DisposeAsync()
+    {
+        await _dbContext.DisposeAsync();
+        await _dataSource.DisposeAsync();
+        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redpanda.DisposeAsync().AsTask());
+    }
+
+    public void Dispose() => _schemaRegistryClient.Dispose();
+
+    [Fact]
+    public async Task AnOrchestratedConfirmationReachesBothTheReadModelAndTheEventStore()
+    {
+        var order = Order.Create("projection-test-customer", 199.90m, "BRL", DateTimeOffset.UtcNow);
+        _dbContext.Orders.Add(order);
+        await _dbContext.SaveChangesAsync();
+
+        // Seeds order_summaries the way a real OrderCreated projection
+        // would, so the write this test actually cares about is a genuine
+        // UPDATE against an existing row, the same shape a live order goes
+        // through - not an INSERT that would pass even if the upsert's own
+        // update branch were broken.
+        await _projectionStore.ProjectOrderCreatedAsync(
+            order.Id, order.CustomerId, order.Amount, order.Currency, order.CreatedAt, DateTimeOffset.UtcNow, CancellationToken.None);
+
+        // The same call OrderSagaReplyConsumer.HandleCommitRepliedAsync makes
+        // on a genuinely confirmed order - queues OrderStatusChanged onto the
+        // outbox in the same transaction as the status CAS (EfOrderStatusRepository's
+        // API-driven twin does the equivalent write; this is the saga-driven,
+        // high-volume path in Saga:Mode=Orchestration).
+        var transitioned = await _orderStatusStore.TryConfirmAsync(order.Id, "projection-test-correlation", CancellationToken.None);
+        Assert.True(transitioned);
+
+        var payloadBytes = await ReadQueuedStatusChangedPayloadAsync();
+
+        var projectionOptions = Options.Create(new OrderProjectionOptions());
+        var processor = new OrderProjectionProcessor(
+            _inboxStore, _projectionStore, _schemaRegistryClient, projectionOptions, NullLogger<OrderProjectionProcessor>.Instance);
+        var projected = await processor.ProcessAsync(
+            StatusChangedConsumeResult(order.Id, projectionOptions.Value.OrderStatusChangedTopic, payloadBytes),
+            CancellationToken.None);
+        Assert.Equal(MessageProcessingResult.Processed, projected);
+
+        var eventStoreOptions = Options.Create(new OrderEventStoreOptions());
+        var projector = new OrderEventStoreProjector(
+            eventStoreOptions, _eventStoreAppender, _schemaRegistryClient, NullLogger<OrderEventStoreProjector>.Instance);
+        await projector.AppendAsync(
+            StatusChangedConsumeResult(order.Id, eventStoreOptions.Value.OrderStatusChangedTopic, payloadBytes),
+            CancellationToken.None);
+
+        var summary = await _dbContext.OrderSummaries.SingleAsync(s => s.OrderId == order.Id);
+        Assert.Equal(OrderStatuses.Confirmed, summary.Status);
+
+        var events = await _dbContext.OrderEvents.Where(e => e.OrderId == order.Id).ToListAsync();
+        Assert.Contains(events, e => e.EventType == "OrderConfirmed");
+    }
+
+    /// <summary>
+    /// Reads back the exact row OrderStatusStore queued - not a hand-built
+    /// OrderStatusChanged - so this test fails if the outbox payload shape
+    /// ever drifts from what either projector expects to deserialize.
+    /// </summary>
+    private async Task<byte[]> ReadQueuedStatusChangedPayloadAsync()
+    {
+        await using var command = _dataSource.CreateCommand(
+            "SELECT payload::text FROM outbox_messages WHERE event_type = @event_type ORDER BY occurred_at DESC LIMIT 1");
+        command.Parameters.AddWithValue("event_type", nameof(OrderStatusChanged));
+        var payload = (string)(await command.ExecuteScalarAsync())!;
+        return Encoding.UTF8.GetBytes(payload);
+    }
+
+    private static ConsumeResult<string, byte[]> StatusChangedConsumeResult(Guid orderId, string topic, byte[] payload) =>
+        new()
+        {
+            Topic = topic,
+            Partition = new Partition(0),
+            Offset = new Offset(0),
+            Message = new Message<string, byte[]> { Key = orderId.ToString("N"), Value = payload, Headers = new Headers() }
+        };
+}

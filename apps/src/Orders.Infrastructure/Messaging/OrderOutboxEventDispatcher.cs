@@ -14,6 +14,12 @@ public sealed class OrderOutboxEventDispatcher(
         return message.EventType switch
         {
             nameof(OrderCreated) => PublishOrderCreatedAsync(message, cancellationToken),
+            // AdvanceFulfillmentHandler queues this in the same transaction
+            // as the status CAS (EfOrderStatusRepository.TryTransitionAsync) -
+            // the read-model projection otherwise never learns about a
+            // warehouse move or a shopper's self-service cancellation, only
+            // ever about OrderCreated/PaymentDecided.
+            nameof(OrderStatusChanged) => PublishOrderStatusChangedAsync(message, cancellationToken),
             // The fulfilment API queues these in the same
             // transaction as the status change, so they ride the outbox
             // rather than being produced inline - a capture command must
@@ -42,6 +48,16 @@ public sealed class OrderOutboxEventDispatcher(
         await publisher.PublishAsync(orderCreated, cancellationToken);
 
         return new Dictionary<string, object?> { ["OrderId"] = orderCreated.OrderId };
+    }
+
+    private async Task<IReadOnlyDictionary<string, object?>> PublishOrderStatusChangedAsync(OutboxMessage message, CancellationToken cancellationToken)
+    {
+        var statusChanged = JsonSerializer.Deserialize<OrderStatusChanged>(message.Payload, SerializerOptions)
+            ?? throw new JsonException("The outbox payload did not contain an OrderStatusChanged event.");
+
+        await publisher.PublishAsync(statusChanged, cancellationToken);
+
+        return new Dictionary<string, object?> { ["OrderId"] = statusChanged.OrderId, ["Status"] = statusChanged.Status };
     }
 
     private async Task<IReadOnlyDictionary<string, object?>> PublishCaptureAsync(OutboxMessage message, CancellationToken cancellationToken)

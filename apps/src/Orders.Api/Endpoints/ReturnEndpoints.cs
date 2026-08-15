@@ -85,6 +85,17 @@ public static class ReturnEndpoints
                 statusCode: StatusCodes.Status503ServiceUnavailable,
                 title: "Service Unavailable");
         }
+        catch (OrderReturnConflictException)
+        {
+            // 409, not 503 - nothing is down; this specific request lost a
+            // race against another write to the same order's lines (most
+            // likely a concurrent return) and needs a fresh read, not a
+            // delayed retry of the same stale one.
+            return Results.Problem(
+                detail: "This order was modified by another request. Retry the return.",
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Return Conflict");
+        }
 
         if (result.OrderNotFound)
         {

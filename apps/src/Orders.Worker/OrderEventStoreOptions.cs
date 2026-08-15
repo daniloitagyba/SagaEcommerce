@@ -10,6 +10,8 @@ public sealed class OrderEventStoreOptions
 
     public string PaymentResultTopic { get; init; } = "payments.result.v1";
 
+    public string OrderStatusChangedTopic { get; init; } = "orders.status-changed.v1";
+
     public string ConsumerGroup { get; init; } = "orders-event-store";
 
     public string ClientId { get; init; } = "orders-event-store";

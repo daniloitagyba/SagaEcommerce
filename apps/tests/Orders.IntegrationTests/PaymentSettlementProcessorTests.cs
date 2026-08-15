@@ -67,6 +67,11 @@ public sealed class PaymentSettlementProcessorTests : IAsyncLifetime
         Assert.Equal(nameof(PaymentSettlementReplied), outboxMessage.EventType);
         var reply = System.Text.Json.JsonSerializer.Deserialize<PaymentSettlementReplied>(outboxMessage.Payload, SerializerOptions);
         Assert.Equal(PaymentStates.Expired, reply!.State);
+        // The flag OrderSagaReplyConsumer.HandleSettlementRepliedAsync
+        // actually branches on - without it set, this reply is
+        // indistinguishable from an ordinary successful settlement and the
+        // saga would never learn the capture failed.
+        Assert.True(reply.RequiresReconciliation);
     }
 
     [Fact]
@@ -103,6 +108,8 @@ public sealed class PaymentSettlementProcessorTests : IAsyncLifetime
         var outboxMessage = await dbContext.OutboxMessages.SingleAsync();
         var reply = System.Text.Json.JsonSerializer.Deserialize<PaymentSettlementReplied>(outboxMessage.Payload, SerializerOptions);
         Assert.Equal(PaymentStates.Captured, reply!.State);
+        // An ordinary successful settlement - the saga must not react.
+        Assert.False(reply.RequiresReconciliation);
     }
 
     [Fact]

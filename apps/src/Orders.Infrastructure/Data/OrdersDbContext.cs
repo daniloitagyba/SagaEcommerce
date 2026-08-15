@@ -122,6 +122,24 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         line.HasIndex(item => item.OrderId).HasDatabaseName("ix_order_lines_order_id");
         line.HasIndex(item => item.Sku).HasDatabaseName("ix_order_lines_sku");
         line.Property(item => item.ReturnedQuantity).HasColumnName("returned_quantity").IsRequired();
+
+        // Two concurrent returns against the same line both read
+        // ReturnedQuantity=0, both validate against ReturnableQuantity, both
+        // write ReturnedQuantity=N - nothing before this stopped the second
+        // one, which meant a double refund and a double restock, not just a
+        // double-counted quantity. Postgres' own system column, not an
+        // application-owned version number, so no migration backfill and no
+        // extra write on every update - EF just includes it in the WHERE
+        // clause of the UPDATE and throws DbUpdateConcurrencyException if it
+        // no longer matches. Mapped by hand (shadow property + IsRowVersion),
+        // not the provider's UseXminAsConcurrencyToken shortcut - that
+        // extension isn't present in this Npgsql.EntityFrameworkCore.PostgreSQL
+        // version.
+        line.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsRowVersion();
     }
 
     private static void ConfigureCustomer(ModelBuilder modelBuilder)
@@ -313,6 +331,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         saga.Property(item => item.Amount).HasColumnName("amount").HasPrecision(18, 2).IsRequired();
         saga.Property(item => item.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
         saga.Property(item => item.CancellationRequestedAt).HasColumnName("cancellation_requested_at");
+        saga.Property(item => item.ParkedAt).HasColumnName("parked_at");
         saga.HasIndex(item => item.RequestedAt)
             .HasDatabaseName("ix_saga_orchestration_states_requested_at");
     }

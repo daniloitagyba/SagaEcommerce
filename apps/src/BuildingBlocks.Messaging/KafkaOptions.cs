@@ -8,6 +8,8 @@ public sealed class KafkaOptions
 
     public string OrderCreatedTopic { get; init; } = "orders.created.v1";
 
+    public string OrderStatusChangedTopic { get; init; } = "orders.status-changed.v1";
+
     public string DeadLetterTopic { get; init; } = "orders.created.dlq.v1";
 
     public string ConsumerGroup { get; init; } = "orders-worker";

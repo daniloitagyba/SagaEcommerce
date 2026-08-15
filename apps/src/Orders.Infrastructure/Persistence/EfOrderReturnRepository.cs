@@ -57,12 +57,24 @@ public sealed class EfOrderReturnRepository(
                     // Guarded on Delivered for the same reason every other
                     // status change is: two returns landing at once must not
                     // both believe they were the one that completed the order.
-                    await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                    var rowsAffected = await dbContext.Database.ExecuteSqlInterpolatedAsync(
                         $"""
                         UPDATE orders SET status = {OrderStatuses.Returned}
                         WHERE id = {order.Id} AND status = {OrderStatuses.Delivered}
                         """,
                         ct);
+
+                    // Only when this call actually won the race above - a
+                    // loser must not tell the read model/event-store timeline
+                    // about a transition that didn't happen. Same outbox
+                    // table EfOrderStatusRepository and OrderStatusStore
+                    // already write OrderStatusChanged to for every other
+                    // transition - this was the one status change that
+                    // never told either of them anything.
+                    if (rowsAffected > 0)
+                    {
+                        QueueStatusChangedEvent(order.Id, correlationId, orderReturn.RequestedAt);
+                    }
                 }
 
                 QueueRefundCommand(orderReturn, correlationId);
@@ -76,10 +88,36 @@ public sealed class EfOrderReturnRepository(
                 await transaction.CommitAsync(ct);
             }, cancellationToken);
         }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            // OrderLine.xmin (ConfigureOrderLine) caught a concurrent write
+            // to the same line - another return, most likely - between this
+            // request's read and this save. Not an infrastructure fault: the
+            // database is fine, this specific request just lost a race and
+            // needs to be retried against a fresh read, which is why this is
+            // its own exception rather than folded into
+            // InfrastructureUnavailableException's 503/Retry-After handling.
+            throw new OrderReturnConflictException(
+                "This order's lines changed since they were read - retry the return.", exception);
+        }
         catch (Exception exception) when (ResilienceExtensions.IsInfrastructureFault(exception))
         {
             throw new InfrastructureUnavailableException("PostgreSQL is currently unavailable.", exception);
         }
+    }
+
+    private void QueueStatusChangedEvent(Guid orderId, string correlationId, DateTimeOffset occurredAt)
+    {
+        var statusChanged = new OrderStatusChanged(Guid.NewGuid(), orderId, OrderStatuses.Returned, occurredAt, correlationId);
+
+        dbContext.OutboxMessages.Add(OutboxMessage.Create(
+            statusChanged.EventId,
+            nameof(OrderStatusChanged),
+            JsonSerializer.Serialize(statusChanged, SerializerOptions),
+            occurredAt,
+            correlationId,
+            Activity.Current?.Id,
+            Activity.Current?.TraceStateString));
     }
 
     private void QueueRefundCommand(OrderReturn orderReturn, string correlationId)

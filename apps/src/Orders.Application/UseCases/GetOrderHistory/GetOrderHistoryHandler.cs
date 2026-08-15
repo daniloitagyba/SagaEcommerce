@@ -75,6 +75,30 @@ public sealed class GetOrderHistoryHandler(IOrderEventStoreRepository repository
                 case "OrderCancelled":
                     status = "Cancelled";
                     break;
+                // Everything AdvanceFulfillmentHandler can move an order
+                // into besides Cancelled (which OrderConfirmed/OrderCancelled
+                // above already cover via PaymentDecided) - a warehouse move
+                // or a shopper's self-service cancellation now appends
+                // "Order" + status (OrderEventStoreProjector), so the fold
+                // needs a case for each target CanTransition ever allows.
+                case "OrderBackordered":
+                    status = "Backordered";
+                    break;
+                case "OrderPicking":
+                    status = "Picking";
+                    break;
+                case "OrderShipped":
+                    status = "Shipped";
+                    break;
+                case "OrderDelivered":
+                    status = "Delivered";
+                    break;
+                case "OrderReturned":
+                    status = "Returned";
+                    break;
+                case "OrderFulfillmentHold":
+                    status = "FulfillmentHold";
+                    break;
             }
         }
 

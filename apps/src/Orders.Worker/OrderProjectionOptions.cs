@@ -10,6 +10,8 @@ public sealed class OrderProjectionOptions
 
     public string PaymentResultTopic { get; init; } = "payments.result.v1";
 
+    public string OrderStatusChangedTopic { get; init; } = "orders.status-changed.v1";
+
     public string DeadLetterTopic { get; init; } = "orders.projection.dlq.v1";
 
     public string ConsumerGroup { get; init; } = "orders-projector";

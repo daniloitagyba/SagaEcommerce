@@ -6,6 +6,7 @@ using Npgsql;
 using NpgsqlTypes;
 using Orders.Application.Exceptions;
 using Orders.Application.Ports;
+using Orders.Domain;
 using Orders.Infrastructure.Data;
 using Polly;
 using Polly.Registry;
@@ -26,15 +27,19 @@ public sealed class EfOrderStatusRepository(
     // guard still catches the ordinary lost-race case (someone else's
     // transition landing first); the lock closes the narrower gap where
     // two different but both-legal predecessors are in play at once.
+    // coupon_code/customer_id/amount_cents ride along with the same
+    // FOR UPDATE read as payment_method - Confirmed's own side effects
+    // (coupon confirmation, loyalty tier) need them and a second read here
+    // would just reopen the exact race the lock above already closes.
     private const string TransitionSql = """
         WITH previous AS (
-            SELECT status, payment_method FROM orders WHERE id = @id FOR UPDATE
+            SELECT status, payment_method, coupon_code, customer_id, amount_cents FROM orders WHERE id = @id FOR UPDATE
         )
         UPDATE orders o
         SET status = @status
         FROM previous
         WHERE o.id = @id AND previous.status = ANY(@allowed_from)
-        RETURNING previous.status, previous.payment_method
+        RETURNING previous.status, previous.payment_method, previous.coupon_code, previous.customer_id, previous.amount_cents
         """;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -54,7 +59,9 @@ public sealed class EfOrderStatusRepository(
             {
                 await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-                var (previousStatus, paymentMethod) = await TryTransitionRowAsync(orderId, targetStatus, allowedFrom, ct);
+                var row = await TryTransitionRowAsync(orderId, targetStatus, allowedFrom, ct);
+                var previousStatus = row.PreviousStatus;
+                var paymentMethod = row.PaymentMethod;
 
                 if (previousStatus is null)
                 {
@@ -66,6 +73,26 @@ public sealed class EfOrderStatusRepository(
                         null);
                 }
 
+                // Same transaction as the status CAS above - the read-model
+                // projection (Orders.Worker's OrderProjectionProcessor) only
+                // ever learns an order's status from OrderCreated/PaymentDecided
+                // otherwise, so a warehouse move or a shopper's self-service
+                // cancellation through this repository never reached it,
+                // leaving /orders/summary reporting a stale status forever
+                // (not just until the next projection tick - no event meant
+                // no update would ever arrive).
+                var now = DateTimeOffset.UtcNow;
+                dbContext.OutboxMessages.Add(OutboxMessage.Create(
+                    Guid.NewGuid(),
+                    nameof(OrderStatusChanged),
+                    JsonSerializer.Serialize(
+                        new OrderStatusChanged(Guid.NewGuid(), orderId, targetStatus, now, correlationId),
+                        SerializerOptions),
+                    now,
+                    correlationId,
+                    System.Diagnostics.Activity.Current?.Id,
+                    System.Diagnostics.Activity.Current?.TraceStateString));
+
                 // A cancellation must give the coupon slot
                 // back, same as the saga-driven path - but this path can
                 // release it in the same transaction, since the coupon
@@ -75,11 +102,34 @@ public sealed class EfOrderStatusRepository(
                     await ReleaseCouponAsync(orderId, ct);
                 }
 
+                // Confirmed's own two side effects - previously only
+                // Orders.Worker's OrderStatusStore applied these (the
+                // saga-driven path), so an operator confirming an order
+                // through this endpoint (Confirmed is a legal
+                // FulfillmentEndpoints target - see OrderStatuses.PredecessorsOf)
+                // left the coupon parked at Reserved forever and never grew
+                // the customer's loyalty standing at all. Guarded on the
+                // *previous* row's coupon_code/customer_id - the same facts
+                // OrderStatusStore.ApplySideEffectsAsync reads off its own
+                // RETURNING clause - so this fires exactly once, from the
+                // one call that actually won the CAS above.
+                if (targetStatus == OrderStatuses.Confirmed)
+                {
+                    if (row.CouponCode is not null)
+                    {
+                        await ConfirmCouponAsync(orderId, ct);
+                    }
+
+                    if (row.CustomerId is not null)
+                    {
+                        await RecordCompletedOrderForTierAsync(row.CustomerId, row.Amount, ct);
+                    }
+                }
+
                 // Same transaction as the status change - a capture command outliving a rolled-back "Shipped" would charge for goods that never left.
                 if (settlementAction == OrderSettlementAction.Capture && paymentMethod is not null && PaymentMethods.RequiresCapture(paymentMethod))
                 {
                     QueueSettlementCommand(orderId, settlementAction, targetStatus, correlationId);
-                    await dbContext.SaveChangesAsync(ct);
                 }
                 else if (settlementAction == OrderSettlementAction.Cancel)
                 {
@@ -93,9 +143,14 @@ public sealed class EfOrderStatusRepository(
                     QueueSettlementCommand(orderId, settlementAction, targetStatus, correlationId);
                     await QueueInventoryCompensationAsync(orderId, previousStatus, correlationId, ct);
                     await FlagInFlightSagaAsCancelledAsync(orderId, previousStatus, ct);
-                    await dbContext.SaveChangesAsync(ct);
                 }
 
+                // Unconditional (not just inside the branches above) - the
+                // OrderStatusChanged outbox row above still needs flushing
+                // even when settlementAction is None (e.g. Picking,
+                // Delivered, Confirmed-from-Backordered), which neither
+                // branch above touches at all.
+                await dbContext.SaveChangesAsync(ct);
                 await transaction.CommitAsync(ct);
                 return new OrderTransition(OrderTransitionOutcome.Advanced, paymentMethod);
             }, cancellationToken);
@@ -115,7 +170,7 @@ public sealed class EfOrderStatusRepository(
     /// columns back; the same reason Orders.Worker's OrderStatusStore
     /// already talks to Npgsql directly for its own CAS.
     /// </summary>
-    private async Task<(string? PreviousStatus, string? PaymentMethod)> TryTransitionRowAsync(
+    private async Task<TransitionRow> TryTransitionRowAsync(
         Guid orderId,
         string targetStatus,
         IReadOnlyList<string> allowedFrom,
@@ -134,12 +189,25 @@ public sealed class EfOrderStatusRepository(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
-            return (null, null);
+            return TransitionRow.NotTransitioned;
         }
 
-        var previousStatus = reader.GetString(0);
-        var paymentMethod = await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetString(1);
-        return (previousStatus, paymentMethod);
+        return new TransitionRow(
+            reader.GetString(0),
+            await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetString(1),
+            await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2),
+            await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetString(3),
+            reader.GetInt64(4) / 100m);
+    }
+
+    private sealed record TransitionRow(
+        string? PreviousStatus,
+        string? PaymentMethod,
+        string? CouponCode,
+        string? CustomerId,
+        decimal Amount)
+    {
+        public static readonly TransitionRow NotTransitioned = new(null, null, null, null, 0m);
     }
 
     /// <summary>
@@ -273,6 +341,52 @@ public sealed class EfOrderStatusRepository(
             SET redemption_count = GREATEST(redemption_count - 1, 0)
             FROM released
             WHERE coupons.code = released.code
+            """,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Mirrors Orders.Worker's CouponRedemptionStore.ConfirmSql exactly -
+    /// guarded on Reserved so a redelivered/second-path confirm is a no-op,
+    /// not a double count. Does not touch coupons.redemption_count: that
+    /// column tracks reservations, already incremented at checkout, and
+    /// confirming a redemption doesn't reserve a second one.
+    /// </summary>
+    private async Task ConfirmCouponAsync(Guid orderId, CancellationToken cancellationToken)
+    {
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE coupon_redemptions
+            SET state = {CouponRedemptionState.Confirmed}, settled_at = {DateTimeOffset.UtcNow}
+            WHERE order_id = {orderId} AND state = {CouponRedemptionState.Reserved}
+            """,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Mirrors Orders.Worker's CustomerTierStore.RecordSql exactly,
+    /// including using one atomic UPDATE to increment and re-derive tier
+    /// together - two orders for the same customer confirming through
+    /// different paths (this one and the saga's own) at the same moment
+    /// must not each compute a new tier from a lifetime_spend that doesn't
+    /// yet include the other's contribution. Orders.Domain.CustomerTiers is
+    /// the threshold source of truth here, unlike CustomerTierStore's own
+    /// copy - Orders.Worker deliberately doesn't reference Orders.Domain,
+    /// but Orders.Infrastructure already does.
+    /// </summary>
+    private async Task RecordCompletedOrderForTierAsync(string customerId, decimal amount, CancellationToken cancellationToken)
+    {
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE customers
+            SET lifetime_spend = lifetime_spend + {amount},
+                completed_order_count = completed_order_count + 1,
+                tier = CASE
+                    WHEN lifetime_spend + {amount} >= {CustomerTiers.GoldThreshold} THEN {CustomerTiers.Gold}
+                    WHEN lifetime_spend + {amount} >= {CustomerTiers.SilverThreshold} THEN {CustomerTiers.Silver}
+                    ELSE {CustomerTiers.Bronze}
+                END
+            WHERE id = {customerId}
             """,
             cancellationToken);
     }

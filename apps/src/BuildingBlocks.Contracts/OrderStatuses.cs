@@ -96,8 +96,25 @@ public static class OrderStatuses
     public static bool CanTransition(string fromStatus, string toStatus) =>
         PredecessorsOf(toStatus).Contains(fromStatus, StringComparer.Ordinal);
 
-    /// <summary>Every status an order can be moved into after creation - the fulfilment API's accepted values.</summary>
+    /// <summary>Every status an order can be moved into after creation, by any means - the full set <see cref="AllowedPredecessors"/> knows about.</summary>
     public static IReadOnlyList<string> TransitionableTargets => [.. AllowedPredecessors.Keys];
+
+    /// <summary>
+    /// The subset of <see cref="TransitionableTargets"/> an external
+    /// fulfilment actor (a picker, a carrier webhook, an ops user hitting
+    /// <c>POST /orders/{id}/fulfillment</c>) may set directly. The rest are
+    /// legal in the table but only ever reached from inside the aggregate
+    /// or the saga that owns the invariant a direct write would skip:
+    /// <see cref="Confirmed"/> needs inventory actually reserved and
+    /// payment actually approved (the saga's job); <see cref="Backordered"/>
+    /// needs a real backorder row in Inventory.Service's FIFO queue, or
+    /// nothing will ever release the order a direct write leaves waiting
+    /// forever; <see cref="Returned"/> needs an <c>OrderReturn</c> with its
+    /// own refund and restock commands (<c>POST /orders/{id}/returns</c>),
+    /// not a bare status flip with no money or stock moving at all.
+    /// </summary>
+    public static IReadOnlyList<string> FulfillmentDrivableTargets =>
+        [Picking, Shipped, Delivered, FulfillmentHold, Cancelled];
 
     /// <summary>
     /// What reaching a status means for money still on hold - centralized

@@ -131,7 +131,8 @@ public sealed class PaymentAuthorizationSweeper(
                 payment.Amount,
                 payment.Currency,
                 payment.CorrelationId,
-                now);
+                now,
+                RequiresReconciliation: true);
 
             dbContext.OutboxMessages.Add(OutboxMessage.Create(
                 Guid.NewGuid(),

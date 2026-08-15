@@ -42,6 +42,7 @@ public sealed class OutboxPublisher<TDbContext>(
 {
     private readonly OutboxOptions _options = options.Value;
     private readonly string _instanceId = configuration["InstanceId"] ?? Environment.MachineName;
+    private DateTimeOffset _nextPendingSampleAt = DateTimeOffset.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -79,11 +80,66 @@ public sealed class OutboxPublisher<TDbContext>(
         }
     }
 
-    private async Task<int> ProcessBatchAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Ordering contract: this publisher guarantees at-least-once delivery
+    /// and, within one batch, publishes in <c>occurred_at</c> order - it does
+    /// <em>not</em> guarantee that order across retries. A message that fails
+    /// (<see cref="OutboxMessage.MarkFailed"/>) gets its own
+    /// <c>next_attempt_at</c> pushed forward by that message's own
+    /// exponential backoff, independently of any other message for the same
+    /// aggregate; a later message for that same aggregate that publishes
+    /// successfully on its first try is not held back waiting for it. A
+    /// consumer that needs a strict per-aggregate order from this outbox
+    /// (e.g. two status transitions for the same order landing at the
+    /// projection out of order) has to enforce it on the read side - see
+    /// OrderProjectionStore.UpsertDecisionSql's own guard for why this
+    /// applies to every status-bearing event this system produces, not a
+    /// single caller's row.
+    /// </summary>
+    /// <summary>Public so integration tests can drive it directly, the same testable seam the sweepers in this codebase (e.g. SagaTimeoutSweeper.SweepOnceAsync) already give.</summary>
+    public async Task<int> ProcessBatchAsync(CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TDbContext>();
         var dispatcher = scope.ServiceProvider.GetRequiredService<IOutboxEventDispatcher>();
+
+        var messages = await ClaimBatchAsync(dbContext, cancellationToken);
+
+        // Outside any transaction from here on - a slow or unreachable
+        // broker must never hold Postgres row locks (or the open
+        // transaction they imply) for as long as Kafka takes to answer;
+        // see ClaimBatchAsync's own comment for what stops a second
+        // poller from picking up the same rows in the meantime.
+        foreach (var message in messages)
+        {
+            await PublishAsync(message, dispatcher, cancellationToken);
+        }
+
+        if (messages.Count > 0)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        await SamplePendingIfDueAsync(dbContext, cancellationToken);
+
+        return messages.Count;
+    }
+
+    /// <summary>
+    /// Claims a batch by pushing each row's NextAttemptAt forward by
+    /// Outbox:ClaimWindowSeconds, inside a transaction that commits
+    /// immediately - not by holding the FOR UPDATE lock (and the
+    /// transaction that implies) open across the Kafka publish that follows
+    /// in ProcessBatchAsync. Another poller's own claim query
+    /// (next_attempt_at &lt;= now) will not see these rows again until that
+    /// window elapses, which is what makes this a claim and not just a
+    /// read - the standard at-least-once outbox contract already tolerates
+    /// a message being sent twice (every consumer dedups on EventId via its
+    /// inbox), so a claim that outlives a crashed instance is a redelivery,
+    /// not a new failure mode.
+    /// </summary>
+    private async Task<List<OutboxMessage>> ClaimBatchAsync(TDbContext dbContext, CancellationToken cancellationToken)
+    {
         var now = DateTimeOffset.UtcNow;
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
@@ -99,21 +155,41 @@ public sealed class OutboxPublisher<TDbContext>(
                 """)
             .ToListAsync(cancellationToken);
 
-        foreach (var message in messages)
+        if (messages.Count > 0)
         {
-            await PublishAsync(message, dispatcher, cancellationToken);
+            var claimedUntil = now.AddSeconds(_options.ClaimWindowSeconds);
+            foreach (var message in messages)
+            {
+                message.MarkClaimed(claimedUntil);
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        return messages;
+    }
+
+    /// <summary>
+    /// Sampled, not run on every batch - PollIntervalMilliseconds can drive
+    /// ProcessBatchAsync several times a second, and the gauge only needs
+    /// to be roughly current, not exact to the tick.
+    /// </summary>
+    private async Task SamplePendingIfDueAsync(TDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now < _nextPendingSampleAt)
+        {
+            return;
+        }
+
+        _nextPendingSampleAt = now.AddSeconds(_options.PendingSampleIntervalSeconds);
 
         // The real backlog, not just this batch - uses the
-        // same partial index (ix_outbox_messages_pending) the polling query
+        // same partial index (ix_outbox_messages_pending) the claim query
         // above filters on, so this is an index-only count, not a table scan.
         var pending = await dbContext.OutboxMessages.CountAsync(message => message.ProcessedAt == null, cancellationToken);
         OrdersTelemetry.RecordOutboxPending(pending);
-
-        return messages.Count;
     }
 
     private async Task PublishAsync(

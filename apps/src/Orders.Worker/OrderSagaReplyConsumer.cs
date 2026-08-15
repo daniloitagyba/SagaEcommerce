@@ -61,6 +61,8 @@ public sealed class OrderSagaReplyConsumer(
             // until every line has an answer.
             await orderStatusStore.TryTransitionAsync(
                 reply.OrderId, OrderStatuses.Backordered, reply.CorrelationId, cancellationToken);
+            // Parks the row against SagaTimeoutSweeper's own timeout - see SagaOrchestrationState.ParkedAt. Idempotent (keeps the earliest ParkedAt).
+            await store.MarkParkedAsync(reply.OrderId, timeProvider.GetUtcNow(), cancellationToken);
             await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
             SagaOrchestratorLog.Backordered(logger, reply.OrderId, reply.Sku, reply.CorrelationId);
             return;
@@ -72,6 +74,10 @@ public sealed class OrderSagaReplyConsumer(
             // Either an unknown reservation, or the order's saga row is
             // already gone (completed by a sibling line's rejection, or by
             // a timeout) - a redelivered/late reply for it is a no-op.
+            // Reserved:true landing here specifically means Inventory just
+            // created an allocation nothing will ever release - see
+            // OrdersTelemetry.RecordOrphanedSagaReply's own comment.
+            OrdersTelemetry.RecordOrphanedSagaReply("reservation", reply.Reserved);
             SagaOrchestratorLog.UnknownReply(logger, reply.OrderId);
             return;
         }
@@ -269,6 +275,7 @@ public sealed class OrderSagaReplyConsumer(
         var lines = await store.RecordLineOutcomeAsync(reply.OrderId, reply.ReservationId, SagaLineOutcomeField.Committed, reply.Committed, cancellationToken);
         if (lines is null || lines.Count == 0)
         {
+            OrdersTelemetry.RecordOrphanedSagaReply("commit", reply.Committed);
             SagaOrchestratorLog.UnknownReply(logger, reply.OrderId);
             return;
         }
@@ -382,6 +389,7 @@ public sealed class OrderSagaReplyConsumer(
             // completed the order for (HandleReservationRepliedAsync) -
             // that path deletes the saga row immediately rather than
             // waiting at ReleaseInventory, so this is an expected, harmless no-op.
+            OrdersTelemetry.RecordOrphanedSagaReply("release", reply.Released);
             SagaOrchestratorLog.UnknownReply(logger, reply.OrderId);
             return;
         }
@@ -410,19 +418,23 @@ public sealed class OrderSagaReplyConsumer(
     /// <summary>
     /// Not a saga step - the saga row is already gone by the
     /// time an order ships, so there's nothing here to advance or
-    /// complete. This is a standalone reconciliation for the one outcome
-    /// that must never pass silently: a capture that was supposed to
-    /// happen (the order shipped, or a settlement command was in flight)
-    /// but the authorization had already expired. Both
-    /// PaymentAuthorizationSweeper's bulk expiry and
-    /// PaymentSettlementProcessor's settlement-mismatch reply land here
-    /// through the same topic, and both mean the same thing: money that
-    /// should have moved never did, and it needs a human, not a log line.
+    /// complete. This is a standalone reconciliation for the outcome that
+    /// must never pass silently: a capture, cancellation or refund that was
+    /// supposed to apply but didn't, because the payment had already
+    /// settled some other way (an expired hold, a decline, a prior void, a
+    /// refund exceeding what's left to give back). Both PaymentAuthorizationSweeper's
+    /// bulk expiry and every one of PaymentSettlementProcessor's
+    /// settlement-mismatch replies land here through the same topic and
+    /// carry <see cref="PaymentSettlementReplied.RequiresReconciliation"/> -
+    /// previously this only recognized State == Expired by name, so a
+    /// refund mismatch on a Voided or Declined payment (the return had
+    /// already been accepted and restocked - only the money silently never
+    /// moved) reached this exact method and was ignored.
     /// </summary>
     private async Task HandleSettlementRepliedAsync(string payload, CancellationToken cancellationToken)
     {
         var reply = Deserialize<PaymentSettlementReplied>(payload);
-        if (reply is null || reply.State != PaymentStates.Expired)
+        if (reply is null || !reply.RequiresReconciliation)
         {
             return;
         }

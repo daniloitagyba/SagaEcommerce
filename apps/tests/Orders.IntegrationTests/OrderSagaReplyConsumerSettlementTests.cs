@@ -75,7 +75,7 @@ public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDis
         var orderId = await SeedShippedOrderAsync();
         var consumer = CreateConsumer();
 
-        await consumer.DispatchAsync(SettlementReply(orderId, PaymentStates.Expired), CancellationToken.None);
+        await consumer.DispatchAsync(SettlementReply(orderId, PaymentStates.Expired, requiresReconciliation: true), CancellationToken.None);
 
         var status = await CurrentStatusAsync(orderId);
         Assert.Equal(OrderStatuses.FulfillmentHold, status);
@@ -87,10 +87,31 @@ public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDis
         var orderId = await SeedShippedOrderAsync();
         var consumer = CreateConsumer();
 
-        await consumer.DispatchAsync(SettlementReply(orderId, PaymentStates.Captured), CancellationToken.None);
+        await consumer.DispatchAsync(SettlementReply(orderId, PaymentStates.Captured, requiresReconciliation: false), CancellationToken.None);
 
         var status = await CurrentStatusAsync(orderId);
         Assert.Equal(OrderStatuses.Shipped, status);
+    }
+
+    /// <summary>
+    /// The gap finding 8 closed: before RequiresReconciliation existed,
+    /// this consumer only recognized State == Expired by name, so a refund
+    /// mismatch reply for any other state (Voided here - a return's refund
+    /// request landing on a payment whose hold was already released some
+    /// other way) reached this exact method, with this exact shape, and was
+    /// silently dropped - the return had already been accepted and
+    /// restocked, but nothing ever told the saga the money never moved.
+    /// </summary>
+    [Fact]
+    public async Task AShippedOrderMovesToFulfillmentHoldWhenARefundMismatchesAVoidedPayment()
+    {
+        var orderId = await SeedShippedOrderAsync();
+        var consumer = CreateConsumer();
+
+        await consumer.DispatchAsync(SettlementReply(orderId, PaymentStates.Voided, requiresReconciliation: true), CancellationToken.None);
+
+        var status = await CurrentStatusAsync(orderId);
+        Assert.Equal(OrderStatuses.FulfillmentHold, status);
     }
 
     private async Task<Guid> SeedShippedOrderAsync()
@@ -128,9 +149,9 @@ public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDis
             TimeProvider.System,
             NullLogger<OrderSagaReplyConsumer>.Instance);
 
-    private static ConsumeResult<string, string> SettlementReply(Guid orderId, string state)
+    private static ConsumeResult<string, string> SettlementReply(Guid orderId, string state, bool requiresReconciliation)
     {
-        var reply = new PaymentSettlementReplied(orderId, Guid.NewGuid(), state, 149.90m, "BRL", "settlement-test-correlation", DateTimeOffset.UtcNow);
+        var reply = new PaymentSettlementReplied(orderId, Guid.NewGuid(), state, 149.90m, "BRL", "settlement-test-correlation", DateTimeOffset.UtcNow, requiresReconciliation);
         return new ConsumeResult<string, string>
         {
             Topic = "payments.settlement-replied.v1",

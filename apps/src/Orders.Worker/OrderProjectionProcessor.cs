@@ -38,6 +38,11 @@ public sealed class OrderProjectionProcessor(
             return await ProcessPaymentDecidedAsync(consumeResult, cancellationToken);
         }
 
+        if (consumeResult.Topic == _options.OrderStatusChangedTopic)
+        {
+            return await ProcessOrderStatusChangedAsync(consumeResult, cancellationToken);
+        }
+
         throw new InvalidProjectionMessageException($"Unexpected topic '{consumeResult.Topic}'.");
     }
 
@@ -127,6 +132,57 @@ public sealed class OrderProjectionProcessor(
 
         OrdersTelemetry.RecordProcessed("success");
         OrdersTelemetry.RecordProjectionLag(nameof(PaymentDecided), projectedAt - paymentDecided.OccurredAt);
+        return MessageProcessingResult.Processed;
+    }
+
+    /// <summary>
+    /// A warehouse move or a shopper's self-service cancellation
+    /// (AdvanceFulfillmentHandler, via EfOrderStatusRepository's outbox) -
+    /// the only other source of an order's status besides OrderCreated/
+    /// PaymentDecided above. Reuses ProjectPaymentDecidedAsync's plain
+    /// "set the status" write - it was never payment-specific, just named
+    /// for its one caller until now.
+    /// </summary>
+    private async Task<MessageProcessingResult> ProcessOrderStatusChangedAsync(
+        ConsumeResult<string, byte[]> consumeResult,
+        CancellationToken cancellationToken)
+    {
+        var statusChanged = DeserializeJson<OrderStatusChanged>(consumeResult.Message.Value, "OrderStatusChanged event");
+        if (statusChanged.EventId == Guid.Empty || statusChanged.OrderId == Guid.Empty)
+        {
+            throw new InvalidProjectionMessageException("The OrderStatusChanged event and order identifiers are required.");
+        }
+
+        var correlationId = GetHeader(consumeResult.Message.Headers, MessagingHeaders.CorrelationId) ?? statusChanged.CorrelationId;
+        using var activity = StartActivity(consumeResult, correlationId, statusChanged.EventId, statusChanged.OrderId);
+
+        var inserted = await inboxStore.TryRecordAsync(
+            _options.ConsumerGroup,
+            statusChanged.EventId,
+            consumeResult.Topic,
+            consumeResult.Partition.Value,
+            consumeResult.Offset.Value,
+            correlationId,
+            DateTimeOffset.UtcNow,
+            cancellationToken);
+
+        if (!inserted)
+        {
+            OrdersTelemetry.RecordProcessed("duplicate");
+            WorkerLog.Duplicate(logger, statusChanged.EventId, _options.ConsumerGroup);
+            return MessageProcessingResult.Duplicate;
+        }
+
+        var projectedAt = DateTimeOffset.UtcNow;
+        await projectionStore.ProjectPaymentDecidedAsync(
+            statusChanged.OrderId,
+            statusChanged.Status,
+            statusChanged.OccurredAt,
+            projectedAt,
+            cancellationToken);
+
+        OrdersTelemetry.RecordProcessed("success");
+        OrdersTelemetry.RecordProjectionLag(nameof(OrderStatusChanged), projectedAt - statusChanged.OccurredAt);
         return MessageProcessingResult.Processed;
     }
 

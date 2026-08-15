@@ -19,7 +19,8 @@ public sealed record SagaOrchestrationRecord(
     decimal Amount,
     string Currency,
     IReadOnlyList<SagaLineRecord> Lines,
-    DateTimeOffset? CancellationRequestedAt = null);
+    DateTimeOffset? CancellationRequestedAt = null,
+    DateTimeOffset? ParkedAt = null);
 
 public sealed record SagaReservationLine(Guid ReservationId, string Sku, int Quantity);
 

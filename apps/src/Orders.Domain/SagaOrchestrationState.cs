@@ -47,4 +47,21 @@ public sealed class SagaOrchestrationState
     /// non-null value changes what the next reply for this order does.
     /// </summary>
     public DateTimeOffset? CancellationRequestedAt { get; private set; }
+
+    /// <summary>
+    /// Set the moment any line of this order's reservation comes back
+    /// Backordered, while the row stays parked at the ReserveInventory step
+    /// waiting for a restock (see
+    /// <c>OrderSagaReplyConsumer.HandleReservationRepliedAsync</c> in
+    /// Orders.Worker). Only meaningful while <see cref="Step"/> is still
+    /// ReserveInventory - <c>SagaTimeoutSweeper</c>'s claim query excludes a
+    /// parked row from that step's timeout so a customer waiting on a
+    /// restock is not cancelled after
+    /// <c>SagaOrchestration:TimeoutSeconds</c> (seconds, not the
+    /// <c>Backorder:TimeoutMinutes</c> window the backorder itself is
+    /// actually supposed to wait out). Never cleared: once every line
+    /// answers, the row advances past ReserveInventory and this column stops
+    /// being consulted at all.
+    /// </summary>
+    public DateTimeOffset? ParkedAt { get; private set; }
 }

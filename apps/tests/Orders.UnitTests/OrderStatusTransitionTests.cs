@@ -129,6 +129,30 @@ public class OrderStatusTransitionTests
     }
 
     [Fact]
+    public void FulfillmentDrivableTargetsExcludesTheStatusesOnlyAnAggregateOrTheSagaMayReach()
+    {
+        // A direct write to any of these three would skip the invariant
+        // the owning aggregate/saga exists to keep: Confirmed needs real
+        // inventory/payment, Backordered needs a real backorder row in
+        // Inventory, Returned needs a real OrderReturn with its own refund
+        // and restock commands.
+        Assert.DoesNotContain(OrderStatuses.Confirmed, OrderStatuses.FulfillmentDrivableTargets);
+        Assert.DoesNotContain(OrderStatuses.Backordered, OrderStatuses.FulfillmentDrivableTargets);
+        Assert.DoesNotContain(OrderStatuses.Returned, OrderStatuses.FulfillmentDrivableTargets);
+
+        // Every one of these still has to be a real, legal transition
+        // target - FulfillmentDrivableTargets narrows who may set it, not
+        // which statuses exist.
+        Assert.All(
+            OrderStatuses.FulfillmentDrivableTargets,
+            target => Assert.Contains(target, OrderStatuses.TransitionableTargets));
+
+        Assert.Equal(
+            new[] { OrderStatuses.Picking, OrderStatuses.Shipped, OrderStatuses.Delivered, OrderStatuses.FulfillmentHold, OrderStatuses.Cancelled },
+            OrderStatuses.FulfillmentDrivableTargets);
+    }
+
+    [Fact]
     public void CancelIsRequestedAtMostOnceButRepeatedCaptureRequestsAreSafeOnlyBecausePaymentItselfIsIdempotent()
     {
         // Cancel only ever fires at Cancelled, and Cancelled is terminal -

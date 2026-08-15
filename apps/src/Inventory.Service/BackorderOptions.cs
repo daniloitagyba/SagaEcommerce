@@ -12,6 +12,12 @@ public sealed class BackorderOptions
 
     public int TimeoutSweepIntervalSeconds { get; init; } = 30;
 
+    /// <summary>
+    /// Bounds distinct SKUs per sweep tick, not backorder rows -
+    /// BackorderTimeoutSweeper locks and re-reads one SKU's rows at a time
+    /// (see SkuAdvisoryLock), so a SKU with a long FIFO queue can still
+    /// clear every one of its own overdue rows in a single tick.
+    /// </summary>
     public int TimeoutSweepBatchSize { get; init; } = 50;
 
     /// <summary>

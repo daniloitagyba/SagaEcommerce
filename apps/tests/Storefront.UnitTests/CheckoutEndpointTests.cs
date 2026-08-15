@@ -155,6 +155,118 @@ public sealed class CheckoutEndpointTests
         Assert.Contains("order-2", ReadBody(httpContext));
     }
 
+    /// <summary>
+    /// The fix for the audit's finding 10: a moved catalog price used to
+    /// have no resolution short of the shopper removing and re-adding
+    /// every affected item. Orders.Api's 409 "Price Changed" now triggers
+    /// one automatic reprice-and-retry entirely inside this layer.
+    /// </summary>
+    [Fact]
+    public async Task APriceMismatchRepricesTheCartAndRetriesCheckoutOnce()
+    {
+        var cartGetCount = 0;
+        var cartHandler = new RecordingHandler(request =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                cartGetCount++;
+                // The second GET, after the reprice below, reflects the refreshed price/version.
+                var (unitPrice, version) = cartGetCount == 1 ? (45m, 7L) : (50m, 8L);
+                return JsonResponse(HttpStatusCode.OK, new
+                {
+                    cartId = "cart-generation-7",
+                    items = new[] { new { sku = "SKU-BOOK-001", quantity = 2, unitPrice } },
+                    version
+                });
+            }
+
+            if (request.Method == HttpMethod.Post)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+
+        var ordersCallCount = 0;
+        var ordersHandler = new RecordingHandler(_ =>
+        {
+            ordersCallCount++;
+            return ordersCallCount == 1
+                ? JsonResponse(HttpStatusCode.Conflict, new { title = "Price Changed", detail = "prices moved", expectedSubtotal = 90m, actualSubtotal = 100m })
+                : JsonResponse(HttpStatusCode.Created, new { id = "order-repriced", status = "Created" });
+        });
+
+        var httpContext = await InvokeAsync(cartHandler, ordersHandler);
+
+        Assert.Equal(StatusCodes.Status201Created, httpContext.Response.StatusCode);
+        Assert.Contains("order-repriced", ReadBody(httpContext));
+        Assert.Equal(2, ordersHandler.Requests.Count);
+
+        // The retry priced against the refreshed 50 unit price (2 x 50 = 100), not the stale 45.
+        var retryBody = JsonSerializer.Deserialize<JsonElement>(ordersHandler.Requests[1].Body!, JsonOptions);
+        Assert.Equal(100m, retryBody.GetProperty("expectedSubtotal").GetDecimal());
+        // A different Idempotency-Key from the first attempt - the cart's version moved when it was repriced.
+        Assert.NotEqual(ordersHandler.Requests[0].IdempotencyKeyHeader, ordersHandler.Requests[1].IdempotencyKeyHeader);
+
+        Assert.Contains(cartHandler.Requests, r => r.Method == HttpMethod.Post && r.PathAndQuery.Contains("refresh-price", StringComparison.Ordinal));
+        Assert.Equal(HttpMethod.Delete, cartHandler.Requests[^1].Method);
+    }
+
+    [Fact]
+    public async Task APriceMismatchThatCannotBeRepricedRelaysTheOriginalConflict()
+    {
+        var cartHandler = new RecordingHandler(request =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return JsonResponse(HttpStatusCode.OK, new
+                {
+                    cartId = "cart-generation-7",
+                    items = new[] { new { sku = "SKU-VANISHED", quantity = 1, unitPrice = 45m } },
+                    version = 7
+                });
+            }
+
+            if (request.Method == HttpMethod.Post)
+            {
+                // The SKU no longer resolves in the catalog at all - nothing to reprice against.
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            throw new InvalidOperationException("must not be called - a failed reprice must not clear the cart");
+        });
+
+        var ordersHandler = new RecordingHandler(_ => JsonResponse(
+            HttpStatusCode.Conflict, new { title = "Price Changed", detail = "prices moved", expectedSubtotal = 45m, actualSubtotal = 50m }));
+
+        var httpContext = await InvokeAsync(cartHandler, ordersHandler);
+
+        Assert.Equal(StatusCodes.Status409Conflict, httpContext.Response.StatusCode);
+        Assert.Contains("Price Changed", ReadBody(httpContext));
+        // Only the original attempt - a reprice that could not complete must not retry against a still-stale cart.
+        Assert.Single(ordersHandler.Requests);
+    }
+
+    [Fact]
+    public async Task ADifferentConflictIsNotTreatedAsAPriceMismatch()
+    {
+        var cartHandler = new RecordingHandler(request => request.Method == HttpMethod.Get
+            ? JsonResponse(HttpStatusCode.OK, new { cartId = "cart-generation-1", items = new[] { new { sku = "SKU-BOOK-001", quantity = 1, unitPrice = 45m } }, version = 1 })
+            : throw new InvalidOperationException("must not be called - only a Price Changed 409 triggers a reprice"));
+
+        var ordersHandler = new RecordingHandler(_ => JsonResponse(
+            HttpStatusCode.Conflict, new { title = "Idempotency Key Conflict", detail = "reused" }));
+
+        var httpContext = await InvokeAsync(cartHandler, ordersHandler);
+
+        Assert.Equal(StatusCodes.Status409Conflict, httpContext.Response.StatusCode);
+        Assert.Contains("Idempotency Key Conflict", ReadBody(httpContext));
+        Assert.Single(ordersHandler.Requests);
+        // Only the one GET that priced the original attempt - no refresh-price, no retry, no clear.
+        Assert.Single(cartHandler.Requests);
+    }
+
     private static async Task<DefaultHttpContext> InvokeAsync(
         RecordingHandler cartHandler,
         RecordingHandler ordersHandler,

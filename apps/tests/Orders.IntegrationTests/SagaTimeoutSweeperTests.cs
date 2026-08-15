@@ -129,6 +129,29 @@ public sealed class SagaTimeoutSweeperTests : IAsyncLifetime, IDisposable
         await AssertReleaseQueuedAsync(saga.Lines[0].ReservationId);
     }
 
+    /// <summary>
+    /// Reproduces the bug this fix closes: before ParkedAt existed, this
+    /// sweeper claimed a backordered order exactly like the un-parked case
+    /// above (SagaOrchestration:TimeoutSeconds is 5, far shorter than
+    /// Backorder:TimeoutMinutes' 120), cancelled it, and deleted the saga
+    /// row - so a restock arriving afterwards reserved against a
+    /// reservationId nothing was tracking any more, leaking that stock
+    /// forever. A parked row must survive this sweep untouched; only
+    /// BackorderTimeoutSweeper's own, much longer window may resolve it.
+    /// </summary>
+    [Fact]
+    public async Task ATimeoutAtReserveInventoryDoesNotCancelAParkedBackorderedOrder()
+    {
+        var (orderId, _) = await SeedAsync(SagaStep.ReserveInventory);
+        await _orderStatusStore.TryTransitionAsync(orderId, OrderStatuses.Backordered, "saga-timeout-correlation", CancellationToken.None);
+        await _sagaStore.MarkParkedAsync(orderId, DateTimeOffset.UtcNow.AddMinutes(-10), CancellationToken.None);
+
+        Assert.Equal(0, await _sweeper.SweepOnceAsync(TimeSpan.FromMinutes(1), DateTimeOffset.UtcNow, CancellationToken.None));
+
+        Assert.Equal(OrderStatuses.Backordered, await CurrentStatusAsync(orderId));
+        Assert.Equal(0, await QueuedReleaseCountAsync(orderId));
+    }
+
     private async Task<(Guid OrderId, SagaOrchestrationRecord Saga)> SeedAsync(string step)
     {
         var order = Order.Create("saga-timeout-test-customer", 199.90m, "BRL", DateTimeOffset.UtcNow);

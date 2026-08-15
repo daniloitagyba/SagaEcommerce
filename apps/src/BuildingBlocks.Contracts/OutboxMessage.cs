@@ -52,6 +52,19 @@ public sealed class OutboxMessage
         };
     }
 
+    /// <summary>
+    /// Reserves this row for the caller that just claimed it, without
+    /// touching AttemptCount or LastError the way MarkFailed does - this is
+    /// not a failed publish, it is "don't let another poller pick this row
+    /// up while I carry it to Kafka outside any open transaction." See
+    /// OutboxPublisher.ClaimBatchAsync for why NextAttemptAt is what a claim
+    /// is expressed as, rather than a dedicated column.
+    /// </summary>
+    public void MarkClaimed(DateTimeOffset claimedUntil)
+    {
+        NextAttemptAt = claimedUntil;
+    }
+
     public void MarkPublished(DateTimeOffset processedAt)
     {
         ProcessedAt = processedAt;

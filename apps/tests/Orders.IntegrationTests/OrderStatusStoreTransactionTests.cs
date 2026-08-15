@@ -58,7 +58,7 @@ public sealed class OrderStatusStoreTransactionTests : IAsyncLifetime, IDisposab
     }
 
     [Fact]
-    public async Task ShippingAndCaptureCommandCommitTogether()
+    public async Task ShippingAndCaptureCommandAndStatusChangedCommitTogether()
     {
         var orderId = await SeedPickingCardOrderAsync();
 
@@ -71,9 +71,20 @@ public sealed class OrderStatusStoreTransactionTests : IAsyncLifetime, IDisposab
         Assert.Equal(StatusTransitionResult.Transitioned, result);
         Assert.Equal(OrderStatuses.Shipped, await CurrentStatusAsync(orderId));
 
-        var command = await _dbContext.OutboxMessages.AsNoTracking().SingleAsync();
-        Assert.Equal(nameof(PaymentCaptureRequested), command.EventType);
+        // Two rows now, not one: the capture command Shipped-with-Card has
+        // always queued, plus OrderStatusChanged - QueueOrderStatusChangedAsync
+        // is unconditional (see ApplySideEffectsAsync's own comment), so every
+        // legal transition through this store queues it alongside whatever
+        // else that target status implies.
+        var messages = await _dbContext.OutboxMessages.AsNoTracking().ToListAsync();
+        Assert.Equal(2, messages.Count);
+
+        var command = Assert.Single(messages, message => message.EventType == nameof(PaymentCaptureRequested));
         Assert.Contains(orderId.ToString(), command.Payload, StringComparison.OrdinalIgnoreCase);
+
+        var statusChanged = Assert.Single(messages, message => message.EventType == nameof(OrderStatusChanged));
+        Assert.Contains(orderId.ToString(), statusChanged.Payload, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(OrderStatuses.Shipped, statusChanged.Payload, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -19,13 +19,26 @@ public sealed class OrderProjectionStore(NpgsqlDataSource dataSource, Resilience
             projected_at = EXCLUDED.projected_at;
         """;
 
+    // The WHERE clause is the ordering guard: PaymentDecided,
+    // OrderStatusChanged (saga-driven and API-driven) and inbox-deduplicated
+    // redeliveries can all reach this upsert for the same order from
+    // different topics/partitions, with no ordering between them beyond
+    // each event's own OccurredAt. Without this guard, a transient publish
+    // failure that pushes one event's outbox retry behind a later one's
+    // (see OutboxPublisher/BuildingBlocks.Persistence) is enough for an
+    // older status (e.g. Shipped, redelivered late) to permanently
+    // overwrite a newer one (Delivered) that already projected. `>=`, not
+    // `>`, so a later write for the exact same decided_at (a status derived
+    // and re-emitted from the same instant) still applies rather than
+    // silently losing to whichever happened to insert first.
     private const string UpsertDecisionSql = """
         INSERT INTO order_summaries (order_id, status, decided_at, projected_at)
         VALUES (@order_id, @status, @decided_at, @projected_at)
         ON CONFLICT (order_id) DO UPDATE SET
             status = EXCLUDED.status,
             decided_at = EXCLUDED.decided_at,
-            projected_at = EXCLUDED.projected_at;
+            projected_at = EXCLUDED.projected_at
+        WHERE order_summaries.decided_at IS NULL OR EXCLUDED.decided_at >= order_summaries.decided_at;
         """;
 
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);

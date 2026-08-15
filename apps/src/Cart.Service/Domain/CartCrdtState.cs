@@ -90,6 +90,29 @@ public sealed record CartCrdtState(
         return this with { Items = items };
     }
 
+    /// <summary>
+    /// Overwrites a present SKU's snapshotted price/name with a fresh one,
+    /// leaving the CRDT quantity state (Items) completely untouched - the
+    /// one deliberate exception to "snapshotted once, never merged"
+    /// (CartItemMetadata's own comment), for the shopper who explicitly
+    /// asked to see today's price rather than the one they saw when they
+    /// added the line. Distinct from Merge's first-writer-wins TryAdd:
+    /// this is a direct, local overwrite the caller asked for, not a join
+    /// against another replica's state. A no-op (returns this unchanged)
+    /// for a SKU that isn't currently present - refreshing a price for a
+    /// line that isn't there has nothing to refresh.
+    /// </summary>
+    public CartCrdtState RefreshMetadata(string sku, CartItemMetadata metadata)
+    {
+        if (!Items.TryGetValue(sku, out var item) || !item.IsPresent)
+        {
+            return this;
+        }
+
+        var metadataMap = new Dictionary<string, CartItemMetadata>(Metadata, StringComparer.Ordinal) { [sku] = metadata };
+        return this with { Metadata = metadataMap };
+    }
+
     /// <summary>The join, lifted key-wise from <see cref="CartItemCrdt.Merge"/> - see the class comment for why that's sufficient.</summary>
     public static CartCrdtState Merge(CartCrdtState a, CartCrdtState b)
     {

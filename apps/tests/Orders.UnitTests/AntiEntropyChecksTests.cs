@@ -72,4 +72,23 @@ public class AntiEntropyChecksTests
     {
         Assert.False(AntiEntropyChecks.CommittedInventoryBelongsToACancelledOrder(orderStatus));
     }
+
+    [Fact]
+    public void MatchingWriteAndReadModelStatusesAreNotADivergence()
+    {
+        Assert.False(AntiEntropyChecks.WriteModelDivergesFromReadModel(OrderStatuses.Shipped, OrderStatuses.Shipped));
+    }
+
+    [Fact]
+    public void AMismatchedReadModelStatusIsADivergence()
+    {
+        // orders.status moved on to Delivered but order_summaries is still projecting Shipped.
+        Assert.True(AntiEntropyChecks.WriteModelDivergesFromReadModel(OrderStatuses.Delivered, OrderStatuses.Shipped));
+    }
+
+    [Fact]
+    public void AMissingSummaryRowIsADivergence()
+    {
+        Assert.True(AntiEntropyChecks.WriteModelDivergesFromReadModel(OrderStatuses.Confirmed, null));
+    }
 }

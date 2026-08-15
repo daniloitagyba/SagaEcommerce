@@ -41,6 +41,13 @@ public static class OrdersTelemetry
     // follow. Never expected to be nonzero for long, same shape as the
     // anti-entropy counter above.
     private static readonly Counter<long> SettlementReconciliationUnresolvedCounter = Meter.CreateCounter<long>("payments.settlement_reconciliation.unresolved");
+    // A saga reply (reservation/commit/release) arrived for an order/line
+    // whose saga row is already gone. Usually a harmless, expected race
+    // (see OrderSagaReplyConsumer's own comments on each UnknownReply call
+    // site) - but a *successful* reservation reply landing here means
+    // Inventory now holds stock nothing will ever release, so that specific
+    // reason is worth alerting on distinctly from the benign ones.
+    private static readonly Counter<long> OrphanedSagaReplyCounter = Meter.CreateCounter<long>("saga.orphaned_reply");
 
     public static Activity? StartActivity(
         string name,
@@ -112,6 +119,15 @@ public static class OrdersTelemetry
     public static void RecordSettlementReconciliationUnresolved(string transitionResult)
     {
         SettlementReconciliationUnresolvedCounter.Add(1, new KeyValuePair<string, object?>("transition_result", transitionResult));
+    }
+
+    /// <summary>Tagged by reply kind ("reservation"/"commit"/"release") and whether the reply said the operation succeeded - a successful reservation reply for a saga row that's already gone is the one combination that means leaked stock, not a benign race.</summary>
+    public static void RecordOrphanedSagaReply(string replyKind, bool succeeded)
+    {
+        OrphanedSagaReplyCounter.Add(
+            1,
+            new KeyValuePair<string, object?>("reply_kind", replyKind),
+            new KeyValuePair<string, object?>("succeeded", succeeded));
     }
 
     public static void RecordCacheMiss()

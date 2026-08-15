@@ -243,9 +243,68 @@ public static class StorefrontEndpoints
         }
 
         var orderRequest = StorefrontCheckoutPolicy.BuildOrderRequest(cart, request);
-
         var ordersClient = httpClientFactory.CreateClient("orders");
 
+        var response = await PostOrderAsync(ordersClient, orderRequest, authorization, cart, cancellationToken);
+
+        // A moved catalog price is not the shopper's fault, and until now
+        // had no resolution short of removing and re-adding every affected
+        // item. One automatic reprice-and-retry, entirely server-side: the
+        // frontend that called this endpoint sees either the success it
+        // originally asked for, or - if the reprice itself fails, or prices
+        // moved again in the meantime - the exact same Price Changed 409 it
+        // already knows how to show, never a new failure mode.
+        if (await IsPriceMismatchAsync(response, cancellationToken))
+        {
+            var repricedCart = await TryRepriceCartAsync(cartClient, authorization, cart, logger, cancellationToken);
+            if (repricedCart is not null)
+            {
+                response.Dispose();
+                cart = repricedCart;
+                var retryOrderRequest = StorefrontCheckoutPolicy.BuildOrderRequest(cart, request);
+                response = await PostOrderAsync(ordersClient, retryOrderRequest, authorization, cart, cancellationToken);
+            }
+        }
+
+        using (response)
+        {
+            if (response.IsSuccessStatusCode)
+            {
+                // Buffered so the order id can be read for the log line below
+                // and the body still relayed to the client afterwards - a
+                // stream can only be read once otherwise.
+                await response.Content.LoadIntoBufferAsync(cancellationToken);
+                var orderId = await TryReadOrderIdAsync(response, cancellationToken);
+
+                try
+                {
+                    var clearPath = $"/carts/me?cartId={Uri.EscapeDataString(cart.CartId)}&expectedVersion={cart.Version}";
+                    using var clearRequest = new HttpRequestMessage(HttpMethod.Delete, clearPath);
+                    clearRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+                    using var clearResponse = await cartClient.SendAsync(clearRequest, cancellationToken);
+                    clearResponse.EnsureSuccessStatusCode();
+                }
+                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+                {
+                    // The order already succeeded - a failure to clear the cart
+                    // afterwards must never read back as a checkout failure.
+                    StorefrontLog.CartClearFailedAfterCheckout(logger, "me", orderId ?? "unknown", exception);
+                }
+            }
+
+            // Relayed to the client exactly as Orders.Api answered, same as
+            // every route in ProxyEndpoints.
+            await ProxyEndpoints.WriteResponseAsync(httpContext, response, cancellationToken);
+        }
+    }
+
+    private static async Task<HttpResponseMessage> PostOrderAsync(
+        HttpClient ordersClient,
+        CheckoutOrderRequest orderRequest,
+        string authorization,
+        CartSnapshot cart,
+        CancellationToken cancellationToken)
+    {
         using var upstreamRequest = new HttpRequestMessage(HttpMethod.Post, "/orders")
         {
             Content = JsonContent.Create(orderRequest, options: JsonOptions)
@@ -256,48 +315,91 @@ public static class StorefrontEndpoints
         // cart state ("this shopper, this cart generation, this version") checks out at most
         // once. A double-submitted click carries the identical version and
         // replays instead of double-charging; adding or removing an item
-        // bumps the version, so a genuinely new checkout after editing the
-        // cart is never blocked by a stale key. The subject comes from the
+        // bumps the version - including a repriced item, see
+        // TryRepriceCartAsync - so a genuinely new checkout after the cart
+        // changed is never blocked by a stale key. The subject comes from the
         // same forwarded token, read without verifying it - only
         // uniqueness per shopper matters here, and Orders.Api verifies the
         // token itself regardless of what this layer assumed about it.
         var idempotencyKey = StorefrontCheckoutPolicy.BuildIdempotencyKey(authorization, cart);
         if (idempotencyKey is not null)
         {
-            upstreamRequest.Headers.TryAddWithoutValidation(
-                "Idempotency-Key",
-                idempotencyKey);
+            upstreamRequest.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
         }
 
-        using var response = await ordersClient.SendAsync(upstreamRequest, cancellationToken);
+        return await ordersClient.SendAsync(upstreamRequest, cancellationToken);
+    }
 
-        if (response.IsSuccessStatusCode)
+    /// <summary>
+    /// Orders.Api's own distinguishing signal for this specific 409 - see
+    /// OrderEndpoints' PriceMismatch mapping - not just any Conflict, which
+    /// also covers a lost coupon slot and an idempotency-key reuse, neither
+    /// of which a reprice-and-retry would ever resolve. Buffers the content
+    /// so it can still be read again (by the retry decision here, and by
+    /// WriteResponseAsync afterwards if no retry happens) - the same
+    /// pattern the success branch below already uses for the same reason.
+    /// </summary>
+    private static async Task<bool> IsPriceMismatchAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.StatusCode != HttpStatusCode.Conflict)
         {
-            // Buffered so the order id can be read for the log line below
-            // and the body still relayed to the client afterwards - a
-            // stream can only be read once otherwise.
-            await response.Content.LoadIntoBufferAsync(cancellationToken);
-            var orderId = await TryReadOrderIdAsync(response, cancellationToken);
-
-            try
-            {
-                var clearPath = $"/carts/me?cartId={Uri.EscapeDataString(cart.CartId)}&expectedVersion={cart.Version}";
-                using var clearRequest = new HttpRequestMessage(HttpMethod.Delete, clearPath);
-                clearRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
-                using var clearResponse = await cartClient.SendAsync(clearRequest, cancellationToken);
-                clearResponse.EnsureSuccessStatusCode();
-            }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-            {
-                // The order already succeeded - a failure to clear the cart
-                // afterwards must never read back as a checkout failure.
-                StorefrontLog.CartClearFailedAfterCheckout(logger, "me", orderId ?? "unknown", exception);
-            }
+            return false;
         }
 
-        // Relayed to the client exactly as Orders.Api answered, same as
-        // every route in ProxyEndpoints.
-        await ProxyEndpoints.WriteResponseAsync(httpContext, response, cancellationToken);
+        await response.Content.LoadIntoBufferAsync(cancellationToken);
+        try
+        {
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            return problem.TryGetProperty("title", out var title)
+                && string.Equals(title.GetString(), "Price Changed", StringComparison.Ordinal);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Refreshes every cart line's price via Cart.Service's refresh-price
+    /// endpoint (CartEndpoints.RefreshItemPriceAsync), then re-reads the
+    /// cart so the retry above prices against what Orders.Api will actually
+    /// charge this time. Null on any failure - Cart.Service unreachable, or
+    /// a SKU no longer resolvable in the catalog at all - so the caller
+    /// falls back to relaying the original Price Changed response rather
+    /// than guessing at a cart this couldn't actually bring current.
+    /// </summary>
+    private static async Task<CartSnapshot?> TryRepriceCartAsync(
+        HttpClient cartClient,
+        string authorization,
+        CartSnapshot cart,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            foreach (var item in cart.Items)
+            {
+                using var refreshRequest = new HttpRequestMessage(
+                    HttpMethod.Post, $"/carts/me/items/{Uri.EscapeDataString(item.Sku)}/refresh-price");
+                refreshRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+                using var refreshResponse = await cartClient.SendAsync(refreshRequest, cancellationToken);
+                if (!refreshResponse.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+            }
+
+            using var cartRequest = new HttpRequestMessage(HttpMethod.Get, "/carts/me");
+            cartRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+            using var cartResponse = await cartClient.SendAsync(cartRequest, cancellationToken);
+            cartResponse.EnsureSuccessStatusCode();
+            return await cartResponse.Content.ReadFromJsonAsync<CartSnapshot>(JsonOptions, cancellationToken);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        {
+            StorefrontLog.CartUnavailableDuringCheckout(logger, "me", exception);
+            return null;
+        }
     }
 
     internal static async Task<string?> TryReadOrderIdAsync(HttpResponseMessage response, CancellationToken cancellationToken)

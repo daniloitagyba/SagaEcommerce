@@ -48,4 +48,18 @@ public static class AntiEntropyChecks
     /// </summary>
     public static bool CommittedInventoryBelongsToACancelledOrder(string? orderStatus) =>
         orderStatus is null or OrderStatuses.Cancelled;
+
+    /// <summary>
+    /// The fourth check, comparing Orders against itself rather than
+    /// another service: orders.status (the write model) against
+    /// order_summaries.status (the read model OrderProjectionProcessor
+    /// maintains from OrderCreated/PaymentDecided/OrderStatusChanged). Every
+    /// status transition now emits OrderStatusChanged specifically so this
+    /// projection stays current - a divergence here means that emission, its
+    /// outbox delivery, or its consumption silently stopped, exactly the bug
+    /// class this system already lived with once (every order reporting
+    /// Created forever) before OrderStatusChanged existed.
+    /// </summary>
+    public static bool WriteModelDivergesFromReadModel(string orderStatus, string? summaryStatus) =>
+        !string.Equals(orderStatus, summaryStatus, StringComparison.Ordinal);
 }

@@ -19,7 +19,11 @@ public sealed record AdvanceFulfillmentRequest(string? Status);
 /// able to move <em>any</em> customer's order and reach every fulfilment
 /// state including Picking and Shipped, neither of which a shopper should
 /// ever trigger themselves. A shopper cancelling their own order has its
-/// own, narrower route - see CancellationEndpoints.
+/// own, narrower route - see CancellationEndpoints. Restricted to
+/// <see cref="OrderStatuses.FulfillmentDrivableTargets"/>, not the full
+/// <see cref="OrderStatuses.TransitionableTargets"/> table - Confirmed,
+/// Backordered and Returned are legal moves, but only the saga or the
+/// return flow, not an operator's direct status flip, is allowed to make them.
 /// </summary>
 public static class FulfillmentEndpoints
 {
@@ -45,6 +49,25 @@ public static class FulfillmentEndpoints
             {
                 ["status"] = ["status is required."]
             });
+        }
+
+        var normalizedStatus = request.Status.Trim();
+
+        // A status can be legal in OrderStatuses' table (TransitionableTargets)
+        // without this endpoint being the one allowed to set it directly -
+        // Confirmed, Backordered and Returned are each owned by an
+        // aggregate or the saga that keeps inventory/payment/refund state
+        // consistent with the status flip; a direct write here would skip
+        // all of it. Checked before IllegalTransition below so the two
+        // refusals stay distinguishable: "not a real status" vs "a real
+        // status, but not this endpoint's to set".
+        if (!OrderStatuses.FulfillmentDrivableTargets.Contains(normalizedStatus, StringComparer.Ordinal)
+            && OrderStatuses.TransitionableTargets.Contains(normalizedStatus, StringComparer.Ordinal))
+        {
+            return Results.Problem(
+                detail: $"'{normalizedStatus}' is reached automatically (by the saga or the return flow), not set directly through fulfilment. This endpoint may only set: {string.Join(", ", OrderStatuses.FulfillmentDrivableTargets)}.",
+                statusCode: StatusCodes.Status422UnprocessableEntity,
+                title: "Illegal Transition");
         }
 
         AdvanceFulfillmentResult result;

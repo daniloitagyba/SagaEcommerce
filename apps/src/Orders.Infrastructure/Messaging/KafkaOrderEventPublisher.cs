@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using Avro.Generic;
 using BuildingBlocks;
 using Confluent.Kafka;
@@ -13,6 +14,8 @@ namespace Orders.Infrastructure.Messaging;
 public interface IOrderEventPublisher
 {
     Task PublishAsync(OrderCreated orderCreated, CancellationToken cancellationToken);
+
+    Task PublishAsync(OrderStatusChanged statusChanged, CancellationToken cancellationToken);
 }
 
 public sealed class KafkaOrderEventPublisher(
@@ -21,6 +24,7 @@ public sealed class KafkaOrderEventPublisher(
     IOptions<KafkaOptions> options,
     ResiliencePipelineProvider<string> pipelineProvider) : IOrderEventPublisher
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly Polly.ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.KafkaProducerPipeline);
     private readonly AvroSerializer<GenericRecord> _avroSerializer =
         new(schemaRegistryClient, new AvroSerializerConfig { AutoRegisterSchemas = true });
@@ -45,6 +49,31 @@ public sealed class KafkaOrderEventPublisher(
 
         await _pipeline.ExecuteAsync(
             async ct => await producer.ProduceAsync(options.Value.OrderCreatedTopic, message, ct).WaitAsync(ct),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Plain JSON, not Avro - unlike OrderCreated this is an internal
+    /// signal only OrderProjectionProcessor ever reads, the same choice
+    /// PaymentDecided already made for the same reason (no external schema
+    /// registry consumer to justify Avro's extra ceremony here).
+    /// </summary>
+    public async Task PublishAsync(OrderStatusChanged statusChanged, CancellationToken cancellationToken)
+    {
+        var headers = new Headers();
+        AddHeader(headers, MessagingHeaders.CorrelationId, statusChanged.CorrelationId);
+        AddHeader(headers, MessagingHeaders.TraceParent, Activity.Current?.Id);
+        AddHeader(headers, MessagingHeaders.TraceState, Activity.Current?.TraceStateString);
+
+        var message = new Message<string, byte[]>
+        {
+            Key = statusChanged.OrderId.ToString("N"),
+            Value = JsonSerializer.SerializeToUtf8Bytes(statusChanged, SerializerOptions),
+            Headers = headers
+        };
+
+        await _pipeline.ExecuteAsync(
+            async ct => await producer.ProduceAsync(options.Value.OrderStatusChangedTopic, message, ct).WaitAsync(ct),
             cancellationToken);
     }
 

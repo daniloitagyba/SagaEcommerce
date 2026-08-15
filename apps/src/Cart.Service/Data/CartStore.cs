@@ -140,6 +140,26 @@ public sealed class CartStore(
             cancellationToken);
     }
 
+    /// <summary>
+    /// The mechanical piece that was missing for a shopper hitting a
+    /// checkout PriceMismatch (Orders.Api's CreateOrderHandler): previously
+    /// the only way to update a cart line's snapshotted price was to
+    /// DELETE it and PUT it again, discarding AddedAt and forcing a full
+    /// re-add instead of a targeted refresh. Leaves the CRDT quantity state
+    /// untouched - see CartCrdtState.RefreshMetadata.
+    /// </summary>
+    public Task<bool> RefreshItemPriceAsync(string ownerId, string sku, CartItemMetadata metadata, CancellationToken cancellationToken)
+    {
+        return MutateAsync(
+            ownerId,
+            state =>
+            {
+                var refreshed = state.RefreshMetadata(sku, metadata);
+                return (refreshed, !ReferenceEquals(refreshed, state));
+            },
+            cancellationToken);
+    }
+
     public Task<bool> RemoveItemAsync(string ownerId, string sku, CancellationToken cancellationToken)
     {
         return MutateAsync(

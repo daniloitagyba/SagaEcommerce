@@ -70,7 +70,7 @@ public sealed partial class InventoryReservationMessageProcessor(
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        await AcquireSkuLockAsync(dbContext, request.Sku, cancellationToken);
+        await SkuAdvisoryLock.AcquireAsync(dbContext, request.Sku, cancellationToken);
 
         var processedAt = _timeProvider.GetUtcNow();
         var insertedRows = await dbContext.Database.ExecuteSqlInterpolatedAsync(
@@ -320,7 +320,7 @@ public sealed partial class InventoryReservationMessageProcessor(
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        await AcquireSkuLockAsync(dbContext, sku, cancellationToken);
+        await SkuAdvisoryLock.AcquireAsync(dbContext, sku, cancellationToken);
 
         var processedAt = _timeProvider.GetUtcNow();
         var inboxConsumerName = $"{_kafkaOptions.ConsumerGroup}-{inboxConsumerSuffix}";
@@ -383,19 +383,6 @@ public sealed partial class InventoryReservationMessageProcessor(
         OrdersTelemetry.RecordProcessed("success");
         logDecided(reservationId, sku, succeeded, correlationId);
         return MessageProcessingResult.Processed;
-    }
-
-    private static async Task AcquireSkuLockAsync(
-        InventoryDbContext dbContext,
-        string sku,
-        CancellationToken cancellationToken)
-    {
-        // A dedicated seed keeps this lock namespace separate from any
-        // future advisory locks in the same database. Transaction-scoped:
-        // commit, rollback and process death all release it automatically.
-        _ = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT pg_advisory_xact_lock(hashtextextended({sku}, 73000001))",
-            cancellationToken);
     }
 
     private static TRequest DeserializeAndValidate<TRequest>(

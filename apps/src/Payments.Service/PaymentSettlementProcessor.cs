@@ -180,7 +180,8 @@ public sealed class PaymentSettlementProcessor(
                 payment.Amount,
                 payment.Currency,
                 correlationId,
-                settledAt);
+                settledAt,
+                RequiresReconciliation: true);
 
             dbContext.OutboxMessages.Add(OutboxMessage.Create(
                 Guid.NewGuid(),
@@ -207,7 +208,8 @@ public sealed class PaymentSettlementProcessor(
             payment.Amount,
             payment.Currency,
             correlationId,
-            settledAt);
+            settledAt,
+            RequiresReconciliation: false);
 
         dbContext.OutboxMessages.Add(OutboxMessage.Create(
             Guid.NewGuid(),

@@ -50,6 +50,7 @@ public static class CartEndpoints
         group.MapDelete("/me/items/{sku}", DeleteItemAsync);
         group.MapDelete("/me", ClearCartAsync);
         group.MapPost("/me/merge", MergeAsync);
+        group.MapPost("/me/items/{sku}/refresh-price", RefreshItemPriceAsync);
 
         return endpoints;
     }
@@ -104,6 +105,44 @@ public static class CartEndpoints
         }
 
         await cartStore.UpsertItemAsync(cartId, item, cancellationToken);
+
+        var snapshot = await cartStore.GetSnapshotAsync(cartId, cancellationToken);
+        return Results.Ok(ToCartResponse(snapshot));
+    }
+
+    /// <summary>
+    /// Answers the checkout PriceMismatch that would otherwise have no
+    /// resolution short of DELETE-then-PUT: re-reads the SKU's current
+    /// price from the catalog and overwrites just this line's snapshot
+    /// (CartStore.RefreshItemPriceAsync / CartCrdtState.RefreshMetadata),
+    /// leaving quantity and every other line untouched. 404 either way a
+    /// price can't be refreshed - the SKU isn't in this cart, or the
+    /// catalog no longer carries it - so the caller doesn't have to tell
+    /// those two apart to know retrying checkout with this SKU won't help.
+    /// </summary>
+    private static async Task<IResult> RefreshItemPriceAsync(
+        string sku,
+        HttpContext httpContext,
+        CartStore cartStore,
+        ICatalogClient catalogClient,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        var cartId = httpContext.GetCustomerId();
+        var existing = await cartStore.GetItemAsync(cartId, sku, cancellationToken);
+        if (existing is null)
+        {
+            return Results.NotFound(new { message = $"Sku '{sku}' is not in this cart." });
+        }
+
+        var product = await catalogClient.FindBySkuAsync(sku, cancellationToken);
+        if (product is null)
+        {
+            return Results.NotFound(new { message = $"No product with sku '{sku}' was found in the catalog." });
+        }
+
+        var metadata = new CartItemMetadata(product.Name, product.Price, product.Currency, timeProvider.GetUtcNow());
+        await cartStore.RefreshItemPriceAsync(cartId, sku, metadata, cancellationToken);
 
         var snapshot = await cartStore.GetSnapshotAsync(cartId, cancellationToken);
         return Results.Ok(ToCartResponse(snapshot));

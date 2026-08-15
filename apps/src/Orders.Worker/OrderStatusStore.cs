@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using BuildingBlocks;
 using Npgsql;
 using NpgsqlTypes;
@@ -38,6 +40,22 @@ public sealed class OrderStatusStore(
         RETURNING coupon_code, payment_method, customer_id, amount_cents;
         """;
 
+    // Same table, same database, same transaction as the status CAS above -
+    // see EfOrderStatusRepository's identical write for why this is needed:
+    // the read-model projection only ever learned an order's status from
+    // OrderCreated/PaymentDecided otherwise, and PaymentDecided is not even
+    // produced in Saga:Mode=Orchestration (the deployed default), so this
+    // saga-driven path - Confirmed, Cancelled, Backordered, FulfillmentHold -
+    // is actually the high-volume source of status changes the projection
+    // was missing entirely, not an edge case.
+    private const string InsertOutboxSql = """
+        INSERT INTO outbox_messages
+            (id, event_type, payload, occurred_at, correlation_id, trace_parent, trace_state, attempt_count, next_attempt_at)
+        VALUES
+            (@id, @event_type, @payload, @occurred_at, @correlation_id, @trace_parent, @trace_state, 0, @occurred_at);
+        """;
+
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
 
     public Task<bool> TryConfirmAsync(Guid orderId, string correlationId, CancellationToken cancellationToken)
@@ -130,6 +148,11 @@ public sealed class OrderStatusStore(
     {
         var now = DateTimeOffset.UtcNow;
 
+        // Unconditional - every legal transition this store performs (not
+        // just Confirmed/Cancelled below) needs the read model and the
+        // event-store timeline to learn about it.
+        await QueueOrderStatusChangedAsync(connection, transaction, orderId, targetStatus, correlationId, now, cancellationToken);
+
         if (targetStatus == OrderStatuses.Confirmed && context.CustomerId is not null)
         {
             await customerTierStore.RecordCompletedOrderAsync(
@@ -183,6 +206,31 @@ public sealed class OrderStatusStore(
                 now,
                 cancellationToken);
         }
+    }
+
+    private static async Task QueueOrderStatusChangedAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid orderId,
+        string targetStatus,
+        string correlationId,
+        DateTimeOffset occurredAt,
+        CancellationToken cancellationToken)
+    {
+        var statusChanged = new OrderStatusChanged(Guid.NewGuid(), orderId, targetStatus, occurredAt, correlationId);
+        var payload = JsonSerializer.Serialize(statusChanged, SerializerOptions);
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = InsertOutboxSql;
+        command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, Guid.NewGuid());
+        command.Parameters.AddWithValue("event_type", NpgsqlDbType.Varchar, nameof(OrderStatusChanged));
+        command.Parameters.AddWithValue("payload", NpgsqlDbType.Jsonb, payload);
+        command.Parameters.AddWithValue("occurred_at", NpgsqlDbType.TimestampTz, occurredAt);
+        command.Parameters.AddWithValue("correlation_id", NpgsqlDbType.Varchar, correlationId);
+        command.Parameters.AddWithValue("trace_parent", NpgsqlDbType.Varchar, (object?)Activity.Current?.Id ?? DBNull.Value);
+        command.Parameters.AddWithValue("trace_state", NpgsqlDbType.Varchar, (object?)Activity.Current?.TraceStateString ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<TransitionContext> TryTransitionRowAsync(

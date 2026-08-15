@@ -54,6 +54,57 @@ public class CartCrdtStateTests
     }
 
     [Fact]
+    public void RefreshMetadataOverwritesPriceAndNameWithoutTouchingQuantity()
+    {
+        var state = CartCrdtState.Empty.Increase("SKU-A", "replica-a", 3, 0, Book);
+
+        var refreshed = state.RefreshMetadata("SKU-A", new CartItemMetadata("Livro (2ª edição)", 44.90m, "BRL", DateTimeOffset.UtcNow));
+
+        var line = refreshed.ToLineItems().Single();
+        Assert.Equal(44.90m, line.UnitPrice);
+        Assert.Equal("Livro (2ª edição)", line.ProductName);
+        Assert.Equal(3, line.Quantity);
+    }
+
+    [Fact]
+    public void RefreshMetadataOnASkuNotInTheCartIsANoOp()
+    {
+        var state = CartCrdtState.Empty.Increase("SKU-A", "replica-a", 1, 0, Book);
+
+        var refreshed = state.RefreshMetadata("SKU-DOES-NOT-EXIST", new CartItemMetadata("Ghost", 1m, "BRL", DateTimeOffset.UtcNow));
+
+        Assert.Same(state, refreshed);
+        Assert.DoesNotContain(refreshed.ToLineItems(), item => item.Sku == "SKU-DOES-NOT-EXIST");
+    }
+
+    [Fact]
+    public void RefreshMetadataOnARemovedSkuIsANoOp()
+    {
+        var state = CartCrdtState.Empty
+            .Increase("SKU-A", "replica-a", 1, 0, Book)
+            .Remove("SKU-A");
+
+        var refreshed = state.RefreshMetadata("SKU-A", new CartItemMetadata("Should Not Resurrect", 1m, "BRL", DateTimeOffset.UtcNow));
+
+        Assert.Same(state, refreshed);
+        Assert.Empty(refreshed.ToLineItems());
+    }
+
+    [Fact]
+    public void RefreshMetadataLeavesOtherSkusUntouched()
+    {
+        var state = CartCrdtState.Empty
+            .Increase("SKU-A", "replica-a", 1, 0, Book)
+            .Increase("SKU-B", "replica-a", 2, 1, Book);
+
+        var refreshed = state.RefreshMetadata("SKU-A", new CartItemMetadata("New Name", 10m, "BRL", DateTimeOffset.UtcNow));
+
+        var lines = refreshed.ToLineItems().ToDictionary(item => item.Sku);
+        Assert.Equal("Livro", lines["SKU-B"].ProductName);
+        Assert.Equal(2, lines["SKU-B"].Quantity);
+    }
+
+    [Fact]
     public void AConcurrentAddOnOneReplicaSurvivesARemoveOnAnotherThatNeverSawIt()
     {
         // The map-level version of CartItemCrdtPropertyTests'

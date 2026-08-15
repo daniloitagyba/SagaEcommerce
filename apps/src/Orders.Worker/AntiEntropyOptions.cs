@@ -24,4 +24,13 @@ public sealed class AntiEntropyOptions
     public string PaymentsBaseUrl { get; init; } = "http://payments-service:8080";
 
     public string InventoryBaseUrl { get; init; } = "http://inventory-service:8080";
+
+    /// <summary>
+    /// How long order_summaries' own last projection has to have gone
+    /// stale before a status mismatch against orders counts as a
+    /// divergence, not just ordinary in-flight outbox/Kafka lag - see
+    /// AntiEntropyChecks.WriteModelDivergesFromReadModel. Comfortably
+    /// longer than the outbox's own poll interval plus a Kafka round trip.
+    /// </summary>
+    public int ProjectionLagThresholdSeconds { get; init; } = 120;
 }

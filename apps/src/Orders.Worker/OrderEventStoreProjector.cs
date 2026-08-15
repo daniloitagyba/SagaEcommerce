@@ -36,6 +36,10 @@ public sealed class OrderEventStoreProjector(
         {
             await AppendPaymentDecidedAsync(consumeResult.Message.Value, cancellationToken);
         }
+        else if (consumeResult.Topic == _options.OrderStatusChangedTopic)
+        {
+            await AppendOrderStatusChangedAsync(consumeResult.Message.Value, cancellationToken);
+        }
     }
 
     private async Task AppendOrderCreatedAsync(ConsumeResult<string, byte[]> consumeResult, CancellationToken cancellationToken)
@@ -61,6 +65,26 @@ public sealed class OrderEventStoreProjector(
         var eventType = paymentDecided.Approved ? "OrderConfirmed" : "OrderCancelled";
         await appender.AppendAsync(paymentDecided.OrderId, eventType, "{}", paymentDecided.OccurredAt, cancellationToken);
         OrderEventStoreLog.Appended(logger, paymentDecided.OrderId, eventType);
+    }
+
+    /// <summary>
+    /// A warehouse move or a shopper's self-service cancellation
+    /// (AdvanceFulfillmentHandler) - the timeline otherwise only ever
+    /// learned an order's status changed from OrderCreated/PaymentDecided
+    /// above, so this was invisible in GetOrderHistory even after
+    /// OrderProjectionProcessor started reflecting it in /orders/summary.
+    /// "Order" + Status matches OrderConfirmed/OrderCancelled's own naming
+    /// exactly, so GetOrderHistoryHandler's Fold needs no change for those
+    /// two - only the statuses it didn't already fold on are new here.
+    /// </summary>
+    private async Task AppendOrderStatusChangedAsync(byte[] payload, CancellationToken cancellationToken)
+    {
+        var statusChanged = JsonSerializer.Deserialize<OrderStatusChanged>(payload, SerializerOptions)
+            ?? throw new JsonException("The Kafka message did not contain a valid OrderStatusChanged event.");
+
+        var eventType = "Order" + statusChanged.Status;
+        await appender.AppendAsync(statusChanged.OrderId, eventType, "{}", statusChanged.OccurredAt, cancellationToken);
+        OrderEventStoreLog.Appended(logger, statusChanged.OrderId, eventType);
     }
 }
 

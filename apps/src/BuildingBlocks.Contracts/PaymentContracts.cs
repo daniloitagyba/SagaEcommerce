@@ -108,9 +108,21 @@ public sealed record PaymentCancellationRequested(
     DateTimeOffset RequestedAt);
 
 /// <summary>
-/// The outcome of a capture or void. One reply type for both so the
+/// The outcome of a capture, cancellation, refund, or the
+/// authorization sweep's bulk expiry. One reply type for all of them so the
 /// consumer has a single shape to handle - <see cref="State"/> says which
 /// terminal state the payment actually reached.
+///
+/// <see cref="RequiresReconciliation"/> is what tells
+/// OrderSagaReplyConsumer.HandleSettlementRepliedAsync whether this reply
+/// needs the saga's attention (move the order to FulfillmentHold - a
+/// human has to look) or is just the ordinary reply to a settlement
+/// that applied exactly as requested. Without it, that consumer could
+/// only single out PaymentStates.Expired by name - every other way a
+/// capture or refund can fail to apply (the hold was already Voided or
+/// Declined, a refund exceeds what's left to give back) reached the same
+/// consumer with the same shape and was silently ignored, so the saga
+/// never learned money that should have moved never did.
 /// </summary>
 public sealed record PaymentSettlementReplied(
     Guid OrderId,
@@ -119,4 +131,5 @@ public sealed record PaymentSettlementReplied(
     decimal Amount,
     string Currency,
     string CorrelationId,
-    DateTimeOffset SettledAt);
+    DateTimeOffset SettledAt,
+    bool RequiresReconciliation = false);

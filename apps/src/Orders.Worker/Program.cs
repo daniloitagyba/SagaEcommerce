@@ -205,8 +205,11 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         [options.OrderCreatedTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
 });
-// Which saga(s) this instance answers to - see SagaMode's
-// own comment. Both is for side-by-side comparison; Choreography is the default.
+// Which saga(s) this instance answers to - see SagaMode's own comment.
+// Orchestration is the default (and every deployed Compose/Kubernetes
+// configuration's explicit value) because it includes the inventory
+// reservation step the choreographed path skips entirely; Both remains
+// available for a side-by-side comparison.
 var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Orchestration);
 
 if (sagaMode is SagaMode.Choreography or SagaMode.Both)
@@ -234,7 +237,7 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderProjectionConsumer");
     return new KafkaConsumerHost<byte[]>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
-        [options.OrderCreatedTopic, options.PaymentResultTopic], options.DeadLetterTopic,
+        [options.OrderCreatedTopic, options.PaymentResultTopic, options.OrderStatusChangedTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
 });
 
@@ -306,7 +309,7 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
     var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Orders.Worker.OrderEventStoreProjector");
     return new KafkaConsumerHost<byte[]>(
         options.BootstrapServers, options.ConsumerGroup, options.ClientId,
-        [options.OrderCreatedTopic, options.PaymentResultTopic], options.DeadLetterTopic,
+        [options.OrderCreatedTopic, options.PaymentResultTopic, options.OrderStatusChangedTopic], options.DeadLetterTopic,
         processingOptions, processor.AppendAsync, deadLetterPublisher.PublishAsync, logger);
 });
 builder.Services.AddHealthChecks()
