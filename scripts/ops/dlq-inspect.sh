@@ -17,7 +17,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 topic=${1:?Usage: dlq-inspect.sh <dlq-topic>}
 network=${COMPOSE_BACKEND_NETWORK:-local-distributed-lab_backend}
 runtime_image=${DOTNET_RUNTIME_IMAGE:-mcr.microsoft.com/dotnet/aspnet:10.0}

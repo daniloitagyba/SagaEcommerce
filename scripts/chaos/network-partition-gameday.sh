@@ -13,7 +13,7 @@ set -euo pipefail
 # partition heals.
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 namespace=${KUBERNETES_NAMESPACE:-orders-lab}
 results_root=${K6_RESULTS_DIRECTORY:-"$project_directory/artifacts/k6"}
 

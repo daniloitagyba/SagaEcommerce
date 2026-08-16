@@ -12,7 +12,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 compose_directory="$project_directory/compose"
 n=${1:-200}
 sku="SKU-ELEC-001"

@@ -16,7 +16,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 compose_directory="$project_directory/compose"
 topic="chaos-demo.sku-partitioning.v1"
 skus=(SKU-A SKU-B SKU-C SKU-D SKU-E SKU-F SKU-G SKU-H SKU-I SKU-J)

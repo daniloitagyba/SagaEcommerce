@@ -17,7 +17,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 compose_directory="$project_directory/compose"
 namespace=${KUBERNETES_NAMESPACE:-orders-lab}
 order_count=${1:-20}

@@ -16,7 +16,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 topic=${1:?Usage: dlq-redrive.sh <dlq-topic> [--dry-run] [--key-filter <substring>] [--consumer-group <group>]}
 shift
 tool_arguments=("$@")

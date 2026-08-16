@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 compose_directory="$project_directory/compose"
 workload_file="$project_directory/load-tests/k6/orders.js"
 namespace=${KUBERNETES_NAMESPACE:-orders-lab}

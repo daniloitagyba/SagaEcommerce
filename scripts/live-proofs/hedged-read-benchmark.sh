@@ -12,7 +12,7 @@ set -euo pipefail
 # steered to a specific replica.
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 workload_file="$project_directory/load-tests/k6/orders.js"
 namespace=${KUBERNETES_NAMESPACE:-orders-lab}
 hedge_delay_ms=${1:-20}

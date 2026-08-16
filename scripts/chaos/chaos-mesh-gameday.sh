@@ -12,7 +12,7 @@ set -euo pipefail
 # it does not assume it.
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 namespace=${KUBERNETES_NAMESPACE:-orders-lab}
 order_count=${1:-20}
 kill_after=${2:-10}

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 prometheus_url=${PROMETHEUS_URL:-http://127.0.0.1:9090}
 alertmanager_url=${ALERTMANAGER_URL:-http://127.0.0.1:9093}
 results_root=${K6_RESULTS_DIRECTORY:-"$project_directory/artifacts/k6"}

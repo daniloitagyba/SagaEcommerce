@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 results_root=${K6_RESULTS_DIRECTORY:-"$project_directory/artifacts/k6"}
 prometheus_url=${PROMETHEUS_URL:-http://127.0.0.1:9090}
 max_p95_lag_ms=${MAX_P95_PROJECTION_LAG_MS:-4000}

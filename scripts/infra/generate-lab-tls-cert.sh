@@ -15,7 +15,7 @@ set -euo pipefail
 #   docker compose --profile compose-apps up -d nginx
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 certs_directory="$project_directory/compose/nginx/certs"
 mkdir -p "$certs_directory"
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 namespace=${KUBERNETES_NAMESPACE:-orders-lab}
 toxiproxy_admin_url=${TOXIPROXY_ADMIN_URL:-http://127.0.0.1:8474}
 results_root=${K6_RESULTS_DIRECTORY:-"$project_directory/artifacts/k6"}

@@ -18,7 +18,7 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/.." && pwd)
+project_directory=$(cd -- "$script_directory/../.." && pwd)
 compose_directory="$project_directory/compose"
 chaos_manifest="$project_directory/kubernetes/chaos-experiments/timechaos-orders-worker-clock-skew.yaml"
 namespace=${KUBERNETES_NAMESPACE:-orders-lab}
