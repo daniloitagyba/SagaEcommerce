@@ -79,7 +79,7 @@ jobs:
         with:
           name: backup-restore-evidence-${{ github.run_id }}
           path: drill-evidence
-          retention-days: 365
+          retention-days: 90
 
   chaos-gameday:
     name: chaos game day (K3s lab)
@@ -122,4 +122,4 @@ jobs:
         with:
           name: chaos-evidence-${{ github.run_id }}
           path: drill-evidence
-          retention-days: 365
+          retention-days: 90

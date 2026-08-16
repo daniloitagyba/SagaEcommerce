@@ -12,6 +12,7 @@
     "backup_restore": {
       "run_id": 31973821277,
       "result": "success",
+      "artifact_retention_days": 90,
       "mongodb": {
         "products": 9,
         "categories": 4,
@@ -29,12 +30,14 @@
     "staging_smoke": {
       "run_id": 31976283730,
       "result": "success",
+      "artifact_retention_days": 90,
       "orders": 6,
       "all_seven_digests_verified": true
     },
     "chaos": {
       "run_id": 31976574923,
       "result": "success",
+      "artifact_retention_days": 90,
       "orders_created": 20,
       "orders_converged": 20,
       "data_loss": 0,

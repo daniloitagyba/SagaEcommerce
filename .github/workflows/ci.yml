@@ -550,4 +550,4 @@ jobs:
         with:
           name: image-provenance-${{ matrix.service }}
           path: image-${{ matrix.service }}.json
-          retention-days: 365
+          retention-days: 90
