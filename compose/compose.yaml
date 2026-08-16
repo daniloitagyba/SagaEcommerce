@@ -1117,6 +1117,11 @@ services:
       # argument) before these can serve anything.
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${STOREFRONT_TLS_PORT:-8443}:8443"
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${KEYCLOAK_TLS_PORT:-18443}:18443"
+      # Name-based HTTPS routing (domains.conf) for *.sagaecommerce.local -
+      # standard ports so browser URLs need no :port suffix. Additive: the
+      # port-specific listeners above keep working unchanged.
+      - "${LAB_BIND_ADDRESS:-127.0.0.1}:${DOMAINS_HTTP_PORT:-80}:80"
+      - "${LAB_BIND_ADDRESS:-127.0.0.1}:${DOMAINS_HTTPS_PORT:-443}:443"
     volumes:
       # Whole directory, not a single file: nginx's own nginx.conf already
       # does "include /etc/nginx/conf.d/*.conf", so orders.conf,
@@ -1137,6 +1142,20 @@ services:
         condition: service_started
       keycloak:
         condition: service_healthy
+      # domains.conf's proxy_pass targets - none define a healthcheck, so
+      # service_started is the strongest condition available. Needed for
+      # the same reason as the four above: proxy_pass resolves hostnames
+      # once at nginx startup (no `resolver` directive in this config), so
+      # nginx would fail DNS resolution and crash-loop if it started
+      # before these containers exist on the network.
+      grafana:
+        condition: service_started
+      prometheus:
+        condition: service_started
+      kafka-ui:
+        condition: service_started
+      alertmanager:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --output-document=- http://127.0.0.1:8080/nginx-health >/dev/null"]
       interval: 5s
@@ -1307,6 +1326,11 @@ services:
     ports:
       - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
     networks:
+      # frontend (not internal) is required for nginx's domains.conf to
+      # reach alertmanager:9093 at all - same reasoning as keycloak's own
+      # networks comment. Doesn't change the loopback-only 127.0.0.1:9093
+      # publish above.
+      - frontend
       - backend
     mem_limit: 64m
     cpus: 0.25
