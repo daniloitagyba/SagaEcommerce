@@ -81,7 +81,7 @@ jobs:
 
       - name: Dockerfile static analysis (Hadolint)
         run: |
-          docker run --rm -v "$PWD:/repo" -w /repo hadolint/hadolint:v2.12.0-debian \
+          docker run --rm -v "$PWD:/repo" -w /repo --entrypoint hadolint hadolint/hadolint:v2.12.0-debian \
             apps/src/*/Dockerfile compose/nginx/Dockerfile
 
       - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
