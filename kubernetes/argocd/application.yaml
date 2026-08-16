@@ -4,14 +4,17 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: saga-ecommerce
+  # Keep the original bootstrap identity so applying this tracked resource
+  # updates the lab application instead of creating a second controller for
+  # the same namespace.
+  name: distributed-ecommerce
   namespace: argocd
 spec:
   project: default
   source:
     repoURL: git@github.com:daniloitagyba/SagaEcommerce.git
     targetRevision: main
-    path: kubernetes/overlays/local
+    path: kubernetes/overlays/staging
   destination:
     server: https://kubernetes.default.svc
     namespace: orders-lab

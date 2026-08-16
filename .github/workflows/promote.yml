@@ -135,7 +135,7 @@ jobs:
             done
           } > "$overlay/kustomization.yaml"
           kubectl kustomize "$overlay" > promotion/rendered.yaml
-          if rg -n 'image: (saga-ecommerce/|ghcr.io/daniloitagyba/saga-ecommerce/).*:[^@[:space:]]+$' promotion/rendered.yaml; then
+          if rg -n 'image: (saga-ecommerce/|ghcr.io/daniloitagyba/saga-ecommerce/)[^@[:space:]]+:[^@[:space:]]+$' promotion/rendered.yaml; then
             echo "A mutable image tag survived promotion rendering." >&2
             exit 1
           fi

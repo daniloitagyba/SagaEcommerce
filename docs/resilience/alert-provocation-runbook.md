@@ -8,9 +8,9 @@
 
 | Alert | Provocation script | Last confirmed fired | Notes |
 |---|---|---|---|
-| `AntiEntropyDivergenceDetected` | `scripts/live-proofs/inventory-reservation-concurrency-test.sh` or `scripts/chaos/resilience-chaos.sh` | _(not yet run)_ | Check `AntiEntropySweeper`'s own logs for which check fired, per the rule's own comment. |
-| `SettlementReconciliationUnresolved` | _(no dedicated script exists yet)_ | _(not yet run)_ | Closest available lever: force a settlement mismatch by cancelling an order's payment authorization out from under an in-flight capture (see `PaymentSettlementProcessorTests.ACaptureThatArrivesAfterTheHoldAlreadyExpiredPublishesAMismatchReplyInsteadOfSilence` for the shape of the race) and confirm the reply's `RequiresReconciliation: true` flag actually produces the metric increment in a live deployment, not just the unit test. A real provocation script under `scripts/live-proofs/` would close this gap properly. |
-| `RateLimitingFailedOpen` | `scripts/chaos/resilience-chaos.sh` (Redis outage window) | _(not yet run)_ | Confirm `orders_rate_limit_distributed_bypassed_total` increments and the alert fires within the Redis-down window the script creates, not just that requests keep succeeding. |
+| `AntiEntropyDivergenceDetected` | `scripts/live-proofs/page-alert-provocation.sh anti-entropy` | _(not yet run)_ | Inserts one uniquely identified, impossible backorder, waits for the deployed scheduled sweep to detect it, and removes the marker through an exit trap. |
+| `SettlementReconciliationUnresolved` | `scripts/live-proofs/page-alert-provocation.sh settlement-reconciliation` | _(not yet run)_ | Publishes a synthetic reconciliation-required reply for a nonexistent order. The consumer must reject the transition, increment the metric, and make the alert fire. |
+| `RateLimitingFailedOpen` | `scripts/live-proofs/page-alert-provocation.sh rate-limit-fail-open` | _(not yet run)_ | Stops only the lab Redis container, sends authenticated requests through the deployed middleware, restores Redis through an exit trap, and verifies readiness after the alert fires. |
 
 ## Why this list is short
 
