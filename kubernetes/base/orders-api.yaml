@@ -83,9 +83,10 @@ spec:
             # Milestone 66: checkout prices line items against the live
             # catalog server-side, so orders-api now depends on
             # catalog-service. CatalogClientOptions defaults to
-            # localhost:5080, which would resolve to the pod itself.
+            # localhost:5080, which would resolve to the pod itself. Use the
+            # Service port (80), not the catalog container port (8080).
             - name: Catalog__BaseUrl
-              value: http://catalog-service:8080
+              value: http://catalog-service
             - name: Cache__TimeToLiveSeconds
               value: "30"
             - name: Cache__LockTimeoutMilliseconds
