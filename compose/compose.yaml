@@ -1117,7 +1117,7 @@ services:
       # argument) before these can serve anything.
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${STOREFRONT_TLS_PORT:-8443}:8443"
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${KEYCLOAK_TLS_PORT:-18443}:18443"
-      # Name-based HTTPS routing (domains.conf) for *.sagaecommerce.local -
+      # Name-based HTTPS routing (domains.conf) for *.sagaecommerce.test -
       # standard ports so browser URLs need no :port suffix. Additive: the
       # port-specific listeners above keep working unchanged.
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${DOMAINS_HTTP_PORT:-80}:80"
