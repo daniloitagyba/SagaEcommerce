@@ -129,6 +129,7 @@ builder.Services.AddOrdersSchemaRegistry(builder.Configuration);
 builder.Services.AddSingleton<InboxStore>();
 builder.Services.AddSingleton<PaymentSettlementRequester>();
 builder.Services.AddSingleton<CouponRedemptionStore>();
+builder.Services.AddSingleton<PromotionCampaignStore>();
 builder.Services.AddSingleton<CustomerTierStore>();
 builder.Services.AddSingleton<OrderStatusStore>();
 builder.Services.AddSingleton<OrderMessageProcessor>();

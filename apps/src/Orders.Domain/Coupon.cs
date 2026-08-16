@@ -41,6 +41,9 @@ public sealed class Coupon
     /// </summary>
     public int RedemptionCount { get; private set; }
 
+    /// <summary>Coupons sharing a group do not stack with each other or with any other promotion in the same group - the best-value one wins; see NRulesPricingEngine's exclusivity reduction.</summary>
+    public string? ExclusivityGroup { get; private set; }
+
     public static Coupon Create(
         string code,
         string description,
@@ -49,7 +52,8 @@ public sealed class Coupon
         DateTimeOffset validUntil,
         decimal minimumOrderAmount = 0m,
         int? maxTotalRedemptions = null,
-        int? maxPerCustomer = null)
+        int? maxPerCustomer = null,
+        string? exclusivityGroup = null)
     {
         return new Coupon
         {
@@ -61,7 +65,8 @@ public sealed class Coupon
             MinimumOrderAmount = minimumOrderAmount,
             MaxTotalRedemptions = maxTotalRedemptions,
             MaxPerCustomer = maxPerCustomer,
-            RedemptionCount = 0
+            RedemptionCount = 0,
+            ExclusivityGroup = exclusivityGroup
         };
     }
 }
@@ -119,7 +124,8 @@ public sealed record CouponSnapshot(
     decimal MinimumOrderAmount,
     int? MaxTotalRedemptions,
     int? MaxPerCustomer,
-    int RedemptionCount);
+    int RedemptionCount,
+    string? ExclusivityGroup = null);
 
 public static class CouponEligibility
 {

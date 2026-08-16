@@ -101,6 +101,7 @@ public sealed class EfOrderStatusRepository(
                 if (targetStatus == OrderStatuses.Cancelled)
                 {
                     await ReleaseCouponAsync(orderId, ct);
+                    await ReleaseCampaignAsync(orderId, ct);
                 }
 
                 // Confirmed's own two side effects - previously only
@@ -120,6 +121,13 @@ public sealed class EfOrderStatusRepository(
                     {
                         await ConfirmCouponAsync(orderId, ct);
                     }
+
+                    // Unconditional, unlike ConfirmCouponAsync above - the
+                    // row projection was never widened to carry
+                    // campaign_code (it costs nothing extra here, since the
+                    // guarded WHERE clause already makes this a no-op when
+                    // no campaign was claimed).
+                    await ConfirmCampaignAsync(orderId, ct);
 
                     if (row.CustomerId is not null)
                     {
@@ -398,6 +406,44 @@ public sealed class EfOrderStatusRepository(
             UPDATE coupon_redemptions
             SET state = {CouponRedemptionState.Confirmed}, settled_at = {DateTimeOffset.UtcNow}
             WHERE order_id = {orderId} AND state = {CouponRedemptionState.Reserved}
+            """,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// The campaign-budget mirror of ReleaseCouponAsync - unconditional,
+    /// same as its coupon counterpart: the guarded WHERE clause is what
+    /// makes calling this for every cancellation safe even when no
+    /// campaign was ever claimed for the order, rather than needing the
+    /// caller to first check row.CampaignCode.
+    /// </summary>
+    private async Task ReleaseCampaignAsync(Guid orderId, CancellationToken cancellationToken)
+    {
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            WITH released AS (
+                UPDATE promotion_campaign_claims
+                SET state = {PromotionCampaignClaimState.Released}, settled_at = {DateTimeOffset.UtcNow}
+                WHERE order_id = {orderId}
+                  AND state IN ({PromotionCampaignClaimState.Reserved}, {PromotionCampaignClaimState.Confirmed})
+                RETURNING code, amount
+            )
+            UPDATE promotion_campaigns
+            SET budget_remaining = LEAST(budget_remaining + released.amount, total_budget)
+            FROM released
+            WHERE promotion_campaigns.code = released.code
+            """,
+            cancellationToken);
+    }
+
+    /// <summary>Mirrors ConfirmCouponAsync exactly - see its own comment for why this does not touch the budget column.</summary>
+    private async Task ConfirmCampaignAsync(Guid orderId, CancellationToken cancellationToken)
+    {
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE promotion_campaign_claims
+            SET state = {PromotionCampaignClaimState.Confirmed}, settled_at = {DateTimeOffset.UtcNow}
+            WHERE order_id = {orderId} AND state = {PromotionCampaignClaimState.Reserved}
             """,
             cancellationToken);
     }

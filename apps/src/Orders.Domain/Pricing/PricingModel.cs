@@ -30,7 +30,15 @@ public sealed record PricingLine(
 /// not as a code, so no rule reaches into the database mid-evaluation and
 /// makes pricing non-deterministic.
 /// </summary>
-public sealed record ResolvedCoupon(string Code, string Description, decimal Percentage);
+public sealed record ResolvedCoupon(string Code, string Description, decimal Percentage, string? ExclusivityGroup = null);
+
+/// <summary>
+/// A campaign already looked up and found eligible - the automatic,
+/// budget-limited counterpart to ResolvedCoupon (Milestone 90). Amount is
+/// a flat value, not a percentage: the budget claim needs to know exactly
+/// how much it is claiming before pricing runs, not after.
+/// </summary>
+public sealed record ResolvedCampaign(string Code, string Description, decimal Amount, string? ExclusivityGroup);
 
 /// <summary>
 /// Who's buying, resolved before pricing for the same reason the coupon
@@ -46,8 +54,19 @@ public sealed record PricingRequest(
     IReadOnlyList<PricingLine> Lines,
     ResolvedCoupon? Coupon = null,
     PricingCustomer? Customer = null,
-    PricingDestination? Destination = null)
+    PricingDestination? Destination = null,
+    /// <summary>The best currently-active, still-funded campaign, if any - resolved the same way Coupon is, before pricing runs.</summary>
+    ResolvedCampaign? Campaign = null,
+    /// <summary>
+    /// The instant every promotion's validity window is checked against -
+    /// order creation time, the same clock OrderPricingService already uses
+    /// to check a coupon's ValidFrom/ValidUntil. Defaults to now for callers
+    /// (tests, mostly) that don't care about calendar-gated promotions.
+    /// </summary>
+    DateTimeOffset? EvaluatedAt = null)
 {
+    public DateTimeOffset EffectiveEvaluatedAt => EvaluatedAt ?? DateTimeOffset.UtcNow;
+
     public Money Subtotal => Lines.Aggregate(
         new Money(0m, Currency),
         (running, line) => running + line.LineSubtotal);
@@ -65,7 +84,7 @@ public sealed record PricingRequest(
 /// all match, and value equality would make the second grant look like a
 /// duplicate of the first and lose it.
 /// </summary>
-public sealed record AppliedDiscount(string Code, string Description, Money Amount)
+public sealed record AppliedDiscount(string Code, string Description, Money Amount, string? ExclusivityGroup = null)
 {
     public bool Equals(AppliedDiscount? other) => ReferenceEquals(this, other);
 

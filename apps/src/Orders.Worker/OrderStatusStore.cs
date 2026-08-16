@@ -23,6 +23,7 @@ public enum StatusTransitionResult
 public sealed class OrderStatusStore(
     NpgsqlDataSource dataSource,
     CouponRedemptionStore couponRedemptionStore,
+    PromotionCampaignStore promotionCampaignStore,
     PaymentSettlementRequester settlementRequester,
     CustomerTierStore customerTierStore,
     ResiliencePipelineProvider<string> pipelineProvider)
@@ -46,13 +47,13 @@ public sealed class OrderStatusStore(
     // the moment the lock is granted, which is what stops a lost update.
     private const string UpdateSql = """
         WITH previous AS (
-            SELECT status, coupon_code, payment_method, customer_id, amount_cents FROM orders WHERE id = @id FOR UPDATE
+            SELECT status, coupon_code, payment_method, customer_id, amount_cents, campaign_code FROM orders WHERE id = @id FOR UPDATE
         )
         UPDATE orders o
         SET status = @status
         FROM previous
         WHERE o.id = @id AND previous.status = ANY(@allowed_from)
-        RETURNING previous.status, previous.coupon_code, previous.payment_method, previous.customer_id, previous.amount_cents;
+        RETURNING previous.status, previous.coupon_code, previous.payment_method, previous.customer_id, previous.amount_cents, previous.campaign_code;
         """;
 
     // Same table, same database, same transaction as the status CAS above -
@@ -248,6 +249,23 @@ public sealed class OrderStatusStore(
             }
         }
 
+        if (context.CampaignCode is not null)
+        {
+            var settleCampaign = targetStatus switch
+            {
+                OrderStatuses.Confirmed => promotionCampaignStore.TryConfirmAsync(
+                    connection, transaction, context.CampaignCode, orderId, now, cancellationToken),
+                OrderStatuses.Cancelled => promotionCampaignStore.TryReleaseAsync(
+                    connection, transaction, context.CampaignCode, orderId, now, cancellationToken),
+                _ => null
+            };
+
+            if (settleCampaign is not null)
+            {
+                await settleCampaign;
+            }
+        }
+
         if (context.PaymentMethod is null)
         {
             return;
@@ -348,7 +366,8 @@ public sealed class OrderStatusStore(
             await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetString(1),
             await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2),
             await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetString(3),
-            reader.GetInt64(4) / 100m);
+            reader.GetInt64(4) / 100m,
+            await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5));
     }
 
     private sealed record TransitionContext(
@@ -357,8 +376,9 @@ public sealed class OrderStatusStore(
         string? CouponCode,
         string? PaymentMethod,
         string? CustomerId,
-        decimal Amount)
+        decimal Amount,
+        string? CampaignCode = null)
     {
-        public static readonly TransitionContext NotTransitioned = new(false, null, null, null, null, 0m);
+        public static readonly TransitionContext NotTransitioned = new(false, null, null, null, null, 0m, null);
     }
 }

@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Polly.Registry;
 
 namespace Inventory.IntegrationTests;
 
@@ -30,6 +31,7 @@ public sealed class BackorderTimeoutSweeperTests(PostgresFixture fixture) : IAsy
 
         var services = new ServiceCollection();
         services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddOrdersResilience();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -104,5 +106,6 @@ public sealed class BackorderTimeoutSweeperTests(PostgresFixture fixture) : IAsy
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new BackorderOptions { TimeoutMinutes = timeoutMinutes }),
             TimeProvider.System,
-            NullLogger<BackorderTimeoutSweeper>.Instance);
+            NullLogger<BackorderTimeoutSweeper>.Instance,
+            _serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>());
 }

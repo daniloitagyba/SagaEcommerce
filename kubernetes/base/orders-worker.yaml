@@ -1,3 +1,10 @@
+# No PodDisruptionBudget for this Deployment, deliberately - unlike
+# cart-service/catalog-service/inventory-service/orders-api/storefront-
+# service, which all define one. Its replica count is owned by
+# orders-worker-scaledobject.yaml (KEDA), not this manifest, so a static
+# minAvailable/maxUnavailable here would fight the same autoscaler
+# kubernetes/argocd/application.yaml already tells Argo CD not to fight
+# over the replicas field. Don't "fix" this by adding one back.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

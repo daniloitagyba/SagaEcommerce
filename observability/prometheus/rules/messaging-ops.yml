@@ -25,6 +25,22 @@ groups:
           summary: "A message landed in a dead-letter topic"
           description: "{{ $value }} message(s) dead-lettered on {{ $labels.messaging_destination_name }} in the last 5m - see docs/messaging/milestone-62-dlq-redrive.md for the redrive procedure."
 
+      # A different DLQ from the one above: the M91-99 outbox dead-letter
+      # path (OutboxPublisher.ApplyPublishAttemptAsync, SagaOutboxPublisher's
+      # own) stops retrying a poison row that keeps failing to publish,
+      # instead of retrying it forever - correct, but silent until now.
+      # Same zero-tolerance shape as DeadLetterMessagesDetected: one
+      # dead-lettered outbox row is as actionable as one dead-lettered
+      # Kafka message, and needs the same redrive attention.
+      - alert: OutboxRowDeadLettered
+        expr: increase(outbox_dead_lettered_total[5m]) > 0
+        for: 0s
+        labels:
+          severity: ticket
+        annotations:
+          summary: "An outbox row stopped retrying and was dead-lettered"
+          description: "{{ $value }} outbox message(s) of type {{ $labels.event_type }} were dead-lettered in the last 5m - a redrive tool run (see docs/messaging/milestone-62-dlq-redrive.md) or manual inspection of the outbox dead-letter table is needed to recover them."
+
       # The outbox publisher polls every 500ms in normal operation
       # (OutboxOptions.PollIntervalMilliseconds) - a backlog that stays
       # above a small cushion for 5 minutes straight means publishing has

@@ -210,7 +210,7 @@ public static class StorefrontEndpoints
         try
         {
             using var cartRequest = new HttpRequestMessage(HttpMethod.Get, "/carts/me");
-            cartRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+            ProxyEndpoints.CopyForwardedRequestHeaders(httpContext.Request, cartRequest);
             using var cartResponse = await cartClient.SendAsync(cartRequest, cancellationToken);
             if (cartResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
@@ -245,7 +245,7 @@ public static class StorefrontEndpoints
         var orderRequest = StorefrontCheckoutPolicy.BuildOrderRequest(cart, request);
         var ordersClient = httpClientFactory.CreateClient("orders");
 
-        var response = await PostOrderAsync(ordersClient, orderRequest, authorization, cart, cancellationToken);
+        var response = await PostOrderAsync(ordersClient, orderRequest, httpContext.Request, authorization, cart, cancellationToken);
 
         // A moved catalog price is not the shopper's fault, and until now
         // had no resolution short of removing and re-adding every affected
@@ -256,13 +256,13 @@ public static class StorefrontEndpoints
         // already knows how to show, never a new failure mode.
         if (await IsPriceMismatchAsync(response, cancellationToken))
         {
-            var repricedCart = await TryRepriceCartAsync(cartClient, authorization, cart, logger, cancellationToken);
+            var repricedCart = await TryRepriceCartAsync(cartClient, httpContext.Request, cart, logger, cancellationToken);
             if (repricedCart is not null)
             {
                 response.Dispose();
                 cart = repricedCart;
                 var retryOrderRequest = StorefrontCheckoutPolicy.BuildOrderRequest(cart, request);
-                response = await PostOrderAsync(ordersClient, retryOrderRequest, authorization, cart, cancellationToken);
+                response = await PostOrderAsync(ordersClient, retryOrderRequest, httpContext.Request, authorization, cart, cancellationToken);
             }
         }
 
@@ -280,7 +280,7 @@ public static class StorefrontEndpoints
                 {
                     var clearPath = $"/carts/me?cartId={Uri.EscapeDataString(cart.CartId)}&expectedVersion={cart.Version}";
                     using var clearRequest = new HttpRequestMessage(HttpMethod.Delete, clearPath);
-                    clearRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+                    ProxyEndpoints.CopyForwardedRequestHeaders(httpContext.Request, clearRequest);
                     using var clearResponse = await cartClient.SendAsync(clearRequest, cancellationToken);
                     clearResponse.EnsureSuccessStatusCode();
                 }
@@ -301,6 +301,7 @@ public static class StorefrontEndpoints
     private static async Task<HttpResponseMessage> PostOrderAsync(
         HttpClient ordersClient,
         CheckoutOrderRequest orderRequest,
+        HttpRequest incomingRequest,
         string authorization,
         CartSnapshot cart,
         CancellationToken cancellationToken)
@@ -309,7 +310,10 @@ public static class StorefrontEndpoints
         {
             Content = JsonContent.Create(orderRequest, options: JsonOptions)
         };
-        upstreamRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+        // Idempotency-Key excluded: this endpoint always overrides it with
+        // the deterministic key computed below, never the caller-supplied
+        // one - see that key's own comment for why.
+        ProxyEndpoints.CopyForwardedRequestHeaders(incomingRequest, upstreamRequest, excludeHeaderName: "Idempotency-Key");
 
         // Deterministic, not client-generated - this exact
         // cart state ("this shopper, this cart generation, this version") checks out at most
@@ -370,7 +374,7 @@ public static class StorefrontEndpoints
     /// </summary>
     private static async Task<CartSnapshot?> TryRepriceCartAsync(
         HttpClient cartClient,
-        string authorization,
+        HttpRequest incomingRequest,
         CartSnapshot cart,
         ILogger logger,
         CancellationToken cancellationToken)
@@ -381,7 +385,7 @@ public static class StorefrontEndpoints
             {
                 using var refreshRequest = new HttpRequestMessage(
                     HttpMethod.Post, $"/carts/me/items/{Uri.EscapeDataString(item.Sku)}/refresh-price");
-                refreshRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+                ProxyEndpoints.CopyForwardedRequestHeaders(incomingRequest, refreshRequest);
                 using var refreshResponse = await cartClient.SendAsync(refreshRequest, cancellationToken);
                 if (!refreshResponse.IsSuccessStatusCode)
                 {
@@ -390,7 +394,7 @@ public static class StorefrontEndpoints
             }
 
             using var cartRequest = new HttpRequestMessage(HttpMethod.Get, "/carts/me");
-            cartRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
+            ProxyEndpoints.CopyForwardedRequestHeaders(incomingRequest, cartRequest);
             using var cartResponse = await cartClient.SendAsync(cartRequest, cancellationToken);
             cartResponse.EnsureSuccessStatusCode();
             return await cartResponse.Content.ReadFromJsonAsync<CartSnapshot>(JsonOptions, cancellationToken);

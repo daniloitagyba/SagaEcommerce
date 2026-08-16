@@ -6,6 +6,8 @@ using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Payments.Service.Data;
+using Polly;
+using Polly.Registry;
 
 namespace Payments.Service;
 
@@ -25,10 +27,14 @@ public sealed class InvalidPaymentDecisionRequestException(string message, Excep
 public sealed class PaymentDecisionRequestProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<PaymentDecisionRequestOptions> requestOptions,
-    ILogger<PaymentDecisionRequestProcessor> logger)
+    ILogger<PaymentDecisionRequestProcessor> logger,
+    ResiliencePipelineProvider<string> pipelineProvider)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentDecisionRequestOptions _requestOptions = requestOptions.Value;
+    // No-retry transactional pipeline, not the retrying PostgresPipeline -
+    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
+    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, string> consumeResult,
@@ -61,67 +67,70 @@ public sealed class PaymentDecisionRequestProcessor(
         await using var serviceScope = scopeFactory.CreateAsyncScope();
         var dbContext = serviceScope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-
-        var processedAt = DateTimeOffset.UtcNow;
-        var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
-            dbContext.Database, _requestOptions.ConsumerGroup, request.OrderId,
-            consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
-            correlationId, processedAt, cancellationToken);
-
-        if (insertedRows == 0)
+        return await _pipeline.ExecuteAsync(async ct =>
         {
-            await transaction.RollbackAsync(cancellationToken);
-            OrdersTelemetry.RecordProcessed("duplicate");
-            OrdersTelemetry.RecordInboxDuplicate(_requestOptions.ConsumerGroup);
-            PaymentsLog.Duplicate(logger, request.OrderId, _requestOptions.ConsumerGroup);
-            return MessageProcessingResult.Duplicate;
-        }
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-        var decisionCoordinator = serviceScope.ServiceProvider.GetRequiredService<PaymentDecisionCoordinator>();
-        var decision = await decisionCoordinator.GetOrCreateAsync(
-            new PaymentDecisionInput(
-                request.OrderId,
-                request.CustomerId,
-                request.Amount,
-                request.Currency,
-                request.PaymentMethod,
-                request.ShippingPostalPrefix,
-                correlationId),
-            processedAt,
-            cancellationToken);
-        var payment = decision.Payment;
-        var approved = payment.Approved;
-        var reply = new PaymentDecisionReplied(request.OrderId, approved, correlationId, processedAt);
-        var outboxMessage = OutboxMessage.Create(
-            payment.Id,
-            nameof(PaymentDecisionReplied),
-            JsonSerializer.Serialize(reply, SerializerOptions),
-            processedAt,
-            correlationId,
-            Activity.Current?.Id,
-            Activity.Current?.TraceStateString);
+            var processedAt = DateTimeOffset.UtcNow;
+            var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
+                dbContext.Database, _requestOptions.ConsumerGroup, request.OrderId,
+                consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
+                correlationId, processedAt, ct);
 
-        dbContext.OutboxMessages.Add(outboxMessage);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            if (insertedRows == 0)
+            {
+                await transaction.RollbackAsync(ct);
+                OrdersTelemetry.RecordProcessed("duplicate");
+                OrdersTelemetry.RecordInboxDuplicate(_requestOptions.ConsumerGroup);
+                PaymentsLog.Duplicate(logger, request.OrderId, _requestOptions.ConsumerGroup);
+                return MessageProcessingResult.Duplicate;
+            }
 
-        activity?.SetTag("payment.approved", approved);
-        activity?.SetTag("payment.decision_created", decision.Created);
-        activity?.SetTag("payment.risk_score", decision.Assessment?.Score);
-        OrdersTelemetry.RecordProcessed("success");
-        OrdersTelemetry.RecordPaymentDecided(approved);
-        if (decision.Assessment is { } assessment)
-        {
-            PaymentsLog.DecidedWithRisk(
-                logger, request.OrderId, payment.Id, approved,
-                assessment.Score, assessment.ReasonSummary, correlationId);
-        }
-        else
-        {
-            PaymentsLog.ReusedDecision(logger, request.OrderId, payment.Id, correlationId);
-        }
-        return MessageProcessingResult.Processed;
+            var decisionCoordinator = serviceScope.ServiceProvider.GetRequiredService<PaymentDecisionCoordinator>();
+            var decision = await decisionCoordinator.GetOrCreateAsync(
+                new PaymentDecisionInput(
+                    request.OrderId,
+                    request.CustomerId,
+                    request.Amount,
+                    request.Currency,
+                    request.PaymentMethod,
+                    request.ShippingPostalPrefix,
+                    correlationId),
+                processedAt,
+                ct);
+            var payment = decision.Payment;
+            var approved = payment.Approved;
+            var reply = new PaymentDecisionReplied(request.OrderId, approved, correlationId, processedAt);
+            var outboxMessage = OutboxMessage.Create(
+                payment.Id,
+                nameof(PaymentDecisionReplied),
+                JsonSerializer.Serialize(reply, SerializerOptions),
+                processedAt,
+                correlationId,
+                Activity.Current?.Id,
+                Activity.Current?.TraceStateString);
+
+            dbContext.OutboxMessages.Add(outboxMessage);
+            await dbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            activity?.SetTag("payment.approved", approved);
+            activity?.SetTag("payment.decision_created", decision.Created);
+            activity?.SetTag("payment.risk_score", decision.Assessment?.Score);
+            OrdersTelemetry.RecordProcessed("success");
+            OrdersTelemetry.RecordPaymentDecided(approved);
+            if (decision.Assessment is { } assessment)
+            {
+                PaymentsLog.DecidedWithRisk(
+                    logger, request.OrderId, payment.Id, approved,
+                    assessment.Score, assessment.ReasonSummary, correlationId);
+            }
+            else
+            {
+                PaymentsLog.ReusedDecision(logger, request.OrderId, payment.Id, correlationId);
+            }
+            return MessageProcessingResult.Processed;
+        }, cancellationToken);
     }
 
     /// <summary>Not private: Payments.UnitTests exercises this directly - the request's shape validation has no database dependency at all.</summary>

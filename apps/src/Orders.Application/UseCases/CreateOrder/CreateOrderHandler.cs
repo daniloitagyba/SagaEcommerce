@@ -101,7 +101,8 @@ public sealed class CreateOrderHandler(
                 checkout.Breakdown.ShippingTotal.Amount,
                 checkout.Breakdown.TaxTotal.Amount,
                 command.PaymentMethod ?? PaymentMethods.Pix,
-                command.ShippingAddress);
+                command.ShippingAddress,
+                checkout.CampaignCode);
 
         var orderCreated = new OrderCreated(
             Guid.NewGuid(),
@@ -140,12 +141,17 @@ public sealed class CreateOrderHandler(
             ? new CouponReservation(couponCode, order.Id, order.CustomerId, createdAt)
             : null;
 
+        // Same reasoning as the coupon reservation - see CampaignReservation.
+        var campaignReservation = checkout?.CampaignCode is { } campaignCode
+            ? new CampaignReservation(campaignCode, checkout.CampaignAmount, order.Id, createdAt)
+            : null;
+
         var idempotencyClaim = idempotencyKey is null
             ? null
             : new OrderIdempotencyClaim(
                 customerId, idempotencyKey, requestHash!, order.Id, createdAt);
         var writeResult = await repository.AddAsync(
-            order, outboxMessage, couponReservation, idempotencyClaim, cancellationToken);
+            order, outboxMessage, couponReservation, idempotencyClaim, cancellationToken, campaignReservation);
 
         if (writeResult.Outcome != OrderWriteOutcome.Created)
         {

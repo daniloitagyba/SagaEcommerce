@@ -18,6 +18,7 @@ public sealed class CreateOrderHandlerTests
         new(new ThrowingCatalogClient(),
             new ThrowingCouponRepository(),
             new ThrowingCustomerRepository(),
+            new ThrowingCampaignRepository(),
             new NRulesPricingEngine(Options.Create(new PricingOptions())),
             TimeProvider.System);
 
@@ -38,6 +39,25 @@ public sealed class CreateOrderHandlerTests
         public Task<(CouponSnapshot? Coupon, int CustomerRedemptionCount)> FindAsync(
             string code, string customerId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("The amount-only path must not resolve a coupon.");
+    }
+
+    private sealed class ThrowingCampaignRepository : ICampaignRepository
+    {
+        public Task<CampaignSnapshot?> FindBestActiveAsync(decimal subtotal, DateTimeOffset now, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The amount-only path must not resolve a campaign.");
+    }
+
+    /// <summary>No campaign is configured - the line-item tests below price against a plain catalog/coupon setup with nothing automatic in play.</summary>
+    private sealed class NullCampaignRepository : ICampaignRepository
+    {
+        public Task<CampaignSnapshot?> FindBestActiveAsync(decimal subtotal, DateTimeOffset now, CancellationToken cancellationToken) =>
+            Task.FromResult<CampaignSnapshot?>(null);
+    }
+
+    private sealed class FixedCampaignRepository(CampaignSnapshot campaign) : ICampaignRepository
+    {
+        public Task<CampaignSnapshot?> FindBestActiveAsync(decimal subtotal, DateTimeOffset now, CancellationToken cancellationToken) =>
+            Task.FromResult<CampaignSnapshot?>(campaign);
     }
 
     [Fact]
@@ -115,6 +135,7 @@ public sealed class CreateOrderHandlerTests
         new(new FixedPriceCatalogClient(livePrice),
             new ThrowingCouponRepository(),
             new FixedCustomerRepository(),
+            new NullCampaignRepository(),
             new NRulesPricingEngine(Options.Create(new PricingOptions { FlatShippingAmount = 0m })),
             TimeProvider.System);
 
@@ -166,6 +187,42 @@ public sealed class CreateOrderHandlerTests
         Assert.NotNull(result.Order);
     }
 
+    /// <summary>
+    /// End to end from an active campaign through to the reservation
+    /// CreateOrderHandler hands the repository - the same transactional
+    /// claim shape as a coupon (see CampaignReservation's own comment),
+    /// but built automatically rather than from a shopper-typed code.
+    /// </summary>
+    [Fact]
+    public async Task AnActiveCampaignReservesItsBudgetClaimAlongsideTheOrder()
+    {
+        var repository = new FakeOrderRepository();
+        var now = DateTimeOffset.UtcNow;
+        var campaign = new CampaignSnapshot(
+            "FLASH20", "R$20 off", 20m, now.AddDays(-1), now.AddDays(30), 0m, ExclusivityGroup: null, BudgetRemaining: 500m);
+        var pricing = new OrderPricingService(
+            new FixedPriceCatalogClient(50m),
+            new ThrowingCouponRepository(),
+            new FixedCustomerRepository(),
+            new FixedCampaignRepository(campaign),
+            new NRulesPricingEngine(Options.Create(new PricingOptions { FlatShippingAmount = 0m })),
+            TimeProvider.System);
+        var handler = new CreateOrderHandler(repository, pricing, TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
+        var command = new CreateOrderCommand(
+            "customer-1", 0m, null, "correlation-1", "instance-1",
+            Items: [new CreateOrderItem("SKU-A", 2)]);
+
+        var result = await handler.HandleAsync(command, CancellationToken.None);
+
+        Assert.True(result.IsValid);
+        Assert.NotNull(result.Order);
+        Assert.Equal("FLASH20", result.Order!.CampaignCode);
+        var reservation = Assert.Single(repository.CampaignReservations);
+        Assert.Equal("FLASH20", reservation.Code);
+        Assert.Equal(20m, reservation.Amount);
+        Assert.Equal(result.Order.Id, reservation.OrderId);
+    }
+
     [Fact]
     public async Task AMismatchedExpectedSubtotalIsRejectedWithoutCreatingAnOrder()
     {
@@ -212,6 +269,7 @@ public sealed class CreateOrderHandlerTests
             catalog,
             new ThrowingCouponRepository(),
             new FixedCustomerRepository(),
+            new NullCampaignRepository(),
             new NRulesPricingEngine(Options.Create(new PricingOptions { FlatShippingAmount = 0m })),
             TimeProvider.System);
         var handler = new CreateOrderHandler(repository, pricing, TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
@@ -238,12 +296,15 @@ public sealed class CreateOrderHandlerTests
 
         public List<CouponReservation> CouponReservations { get; } = [];
 
+        public List<CampaignReservation> CampaignReservations { get; } = [];
+
         public Task<OrderWriteResult> AddAsync(
             Order order,
             OutboxMessage outboxMessage,
             CouponReservation? couponReservation,
             OrderIdempotencyClaim? idempotencyClaim,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            CampaignReservation? campaignReservation = null)
         {
             if (idempotencyClaim is not null
                 && _idempotency.TryGetValue((idempotencyClaim.CustomerId, idempotencyClaim.IdempotencyKey), out var existing))
@@ -266,6 +327,11 @@ public sealed class CreateOrderHandlerTests
             if (couponReservation is not null)
             {
                 CouponReservations.Add(couponReservation);
+            }
+
+            if (campaignReservation is not null)
+            {
+                CampaignReservations.Add(campaignReservation);
             }
 
             return Task.FromResult(new OrderWriteResult(OrderWriteOutcome.Created, order.Id));

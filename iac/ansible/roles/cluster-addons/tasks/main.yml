@@ -12,6 +12,7 @@
   kubernetes.core.helm:
     name: "{{ item.name }}"
     chart_ref: "{{ item.chart_ref }}"
+    chart_version: "{{ item.chart_version }}"
     release_namespace: "{{ item.release_namespace }}"
     create_namespace: true
     update_repo_cache: true
@@ -24,6 +25,19 @@
 # Security Standard, see docs/gitops/milestone-24-service-mesh.md) rather
 # than a single generic Helm release, so it's handled separately from the
 # loop above instead of forced into a shape that doesn't fit it.
+- name: Report the Linkerd CLI version this run is about to drive
+  # No install/pin mechanism exists for the CLI itself in this repo - it
+  # relies on whatever `linkerd` is already on the host's $PATH, unlike
+  # k3s_version and the Helm chart_versions above which actually drive an
+  # install/upgrade. Surfacing the version every run at least makes a
+  # drift *visible* in the playbook's own output instead of silent -
+  # pinning the CLI itself needs the version this lab's `linkerd` binary
+  # was actually built with, which has to be read off the host, not
+  # guessed from here.
+  ansible.builtin.command: linkerd version --client --short
+  register: linkerd_cli_version
+  changed_when: false
+
 - name: Check whether the Linkerd control plane is already installed
   kubernetes.core.k8s_info:
     kind: Namespace

@@ -39,3 +39,92 @@ spec:
         # own explicit allow too.
         - protocol: TCP
           port: 4191
+---
+# Egress had no default-deny at all before this - every pod could reach
+# arbitrary destinations outbound, including the open internet. A
+# compromised pod (a dependency supply-chain issue, an RCE in any of the
+# seven app images) could exfiltrate data or call out to a C2 host with
+# nothing in the cluster to stop it. Split into three policies, same
+# pattern as the ingress side above: a deny-all baseline, then explicit
+# allows for the traffic that is actually legitimate.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+---
+# DNS resolution is a prerequisite for every other allow below (a Service
+# name has to resolve before a pod can even attempt to reach it) - CoreDNS
+# normally lives in kube-system, so this cannot be scoped to the app's own
+# namespace the way the cluster-internal rule below is.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-dns
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-cluster-internal-and-infra
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: saga-ecommerce
+  policyTypes:
+    - Egress
+  egress:
+    # Every pod in the cluster - the API server (orders-worker's leader
+    # election, Milestone 36, and KEDA/HPA scaler queries), Linkerd's
+    # control plane, and every in-cluster service this app talks to. The
+    # threat default-deny-egress actually closes is arbitrary *external*
+    # traffic (exfiltration, a C2 callback) - not east-west traffic inside
+    # a boundary the cluster already trusts, so this stays unscoped by port.
+    - to:
+        - namespaceSelector: {}
+    # The docker-compose-hosted infra this lab's services depend on -
+    # Postgres, Kafka, Redis, MongoDB, the OTel collector, Prometheus,
+    # schema registry, Keycloak, MinIO, Pyroscope. Sits outside the
+    # cluster's pod network (see infrastructure-endpoints.yaml's own
+    # comment on why), so unlike the rule above it needs an explicit
+    # CIDR-and-port allow rather than a namespace selector.
+    - to:
+        - ipBlock:
+            cidr: 172.30.0.0/24
+      ports:
+        - protocol: TCP
+          port: 5432 # postgres
+        - protocol: TCP
+          port: 9092 # kafka
+        - protocol: TCP
+          port: 9094 # kafka (k8s listener)
+        - protocol: TCP
+          port: 4317 # otel-collector (OTLP gRPC)
+        - protocol: TCP
+          port: 6379 # redis
+        - protocol: TCP
+          port: 9090 # prometheus
+        - protocol: TCP
+          port: 8081 # schema-registry
+        - protocol: TCP
+          port: 8080 # keycloak
+        - protocol: TCP
+          port: 9000 # minio
+        - protocol: TCP
+          port: 4040 # pyroscope
+        - protocol: TCP
+          port: 27017 # mongodb

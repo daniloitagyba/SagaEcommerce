@@ -6,6 +6,8 @@ using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Payments.Service.Data;
+using Polly;
+using Polly.Registry;
 
 namespace Payments.Service;
 
@@ -28,11 +30,15 @@ public sealed class PaymentSettlementProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<PaymentSettlementOptions> settlementOptions,
     ILogger<PaymentSettlementProcessor> logger,
+    ResiliencePipelineProvider<string> pipelineProvider,
     TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentSettlementOptions _options = settlementOptions.Value;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    // No-retry transactional pipeline, not the retrying PostgresPipeline -
+    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
+    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, string> consumeResult,
@@ -66,108 +72,138 @@ public sealed class PaymentSettlementProcessor(
         await using var serviceScope = scopeFactory.CreateAsyncScope();
         var dbContext = serviceScope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-
-        // Every state transition, including expiry, must serialize on the
-        // payment row. Kafka preserves order only inside one topic/partition;
-        // capture, refund and cancellation are different topics, and the
-        // expiry sweeper is not a Kafka consumer at all.
-        var payment = await dbContext.Payments
-            .FromSqlInterpolated($"""
-                SELECT *
-                FROM payments
-                WHERE is_primary AND order_id = {orderId}
-                FOR UPDATE
-                """)
-            .SingleOrDefaultAsync(cancellationToken);
-
-        if (payment is null)
+        return await _pipeline.ExecuteAsync(async ct =>
         {
-            // Nothing to settle, and not worth retrying: no recorded payment means no hold to release.
-            await transaction.RollbackAsync(cancellationToken);
-            PaymentSettlementLog.NoPaymentToSettle(logger, orderId);
-            return MessageProcessingResult.Processed;
-        }
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-        if (operation == SettlementOperation.Refund)
-        {
-            if (!string.Equals(payment.Currency, command.Currency, StringComparison.OrdinalIgnoreCase))
+            // Every state transition, including expiry, must serialize on the
+            // payment row. Kafka preserves order only inside one topic/partition;
+            // capture, refund and cancellation are different topics, and the
+            // expiry sweeper is not a Kafka consumer at all.
+            var payment = await dbContext.Payments
+                .FromSqlInterpolated($"""
+                    SELECT *
+                    FROM payments
+                    WHERE is_primary AND order_id = {orderId}
+                    FOR UPDATE
+                    """)
+                .SingleOrDefaultAsync(ct);
+
+            if (payment is null)
             {
-                throw new InvalidSettlementRequestException(
-                    $"Refund currency '{command.Currency}' does not match payment currency '{payment.Currency}'.");
+                // Nothing to settle, and not worth retrying: no recorded payment means no hold to release.
+                await transaction.RollbackAsync(ct);
+                PaymentSettlementLog.NoPaymentToSettle(logger, orderId);
+                return MessageProcessingResult.Processed;
             }
 
-            var inserted = await InboxStore.TryRecordWithinTransactionAsync(
-                dbContext.Database, _options.ConsumerGroup, command.OperationId!.Value,
-                consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
-                correlationId, _timeProvider.GetUtcNow(), cancellationToken);
-
-            if (inserted == 0)
+            if (operation == SettlementOperation.Refund)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                OrdersTelemetry.RecordProcessed("duplicate");
-                OrdersTelemetry.RecordInboxDuplicate(_options.ConsumerGroup);
-                PaymentSettlementLog.DuplicateRefund(logger, command.OperationId.Value, orderId);
-                return MessageProcessingResult.Duplicate;
+                if (!string.Equals(payment.Currency, command.Currency, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidSettlementRequestException(
+                        $"Refund currency '{command.Currency}' does not match payment currency '{payment.Currency}'.");
+                }
+
+                var inserted = await InboxStore.TryRecordWithinTransactionAsync(
+                    dbContext.Database, _options.ConsumerGroup, command.OperationId!.Value,
+                    consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
+                    correlationId, _timeProvider.GetUtcNow(), ct);
+
+                if (inserted == 0)
+                {
+                    await transaction.RollbackAsync(ct);
+                    OrdersTelemetry.RecordProcessed("duplicate");
+                    OrdersTelemetry.RecordInboxDuplicate(_options.ConsumerGroup);
+                    PaymentSettlementLog.DuplicateRefund(logger, command.OperationId.Value, orderId);
+                    return MessageProcessingResult.Duplicate;
+                }
             }
-        }
 
-        var settledAt = _timeProvider.GetUtcNow();
-        var changed = operation switch
-        {
-            SettlementOperation.Capture => payment.TryCapture(settledAt),
-            // ReturnId was claimed in the inbox above, in this same
-            // transaction, so a redelivery cannot apply this delta twice.
-            SettlementOperation.Refund => payment.TryRefund(command.RefundAmount, settledAt),
-            // Decides void vs. refund from the payment's own
-            // current state - see Payment.TryCancel. Replaces the old
-            // method-agnostic "Void" operation entirely: nothing produces
-            // that command any more, since a Pix payment is Captured the
-            // instant it's approved and voiding it was never the right verb.
-            SettlementOperation.Cancel => payment.TryCancel(command.Reason, settledAt),
-            _ => throw new UnreachableException($"Unhandled {nameof(SettlementOperation)} '{operation}'.")
-        };
-
-        if (!changed)
-        {
-            // Not every guard failure is a harmless redelivery.
-            // A true duplicate is this exact operation landing twice, and the
-            // payment is already sitting in the state it would have produced
-            // - safe to drop silently, the first attempt's reply already
-            // told the saga. Anything else is a genuine mismatch: most often
-            // the expiry sweeper voiding/expiring the hold in the window
-            // between the order shipping and the capture command arriving.
-            // That capture can never happen now, and the saga has to be told
-            // - the alternative is a shipped order nobody ever charged, with
-            // nothing in the system recording that it went wrong.
-            //
-            // Cancel is different in kind from the other
-            // three - it has no single target state (it might void, might
-            // refund, depending on what it finds), so "did it apply" can't
-            // be compared against one expected outcome the way Capture and
-            // Void can. Every state TryCancel refuses to move from -
-            // Declined (nothing was ever approved), Expired (the hold
-            // already lapsed), Voided or Refunded (already settled) - means
-            // there is genuinely nothing left to do, not that a capture was
-            // silently missed. Cancel-unchanged is therefore always the
-            // benign case; unlike Capture, there is no "money should have
-            // moved and didn't" reading of it that the saga needs to hear about.
-            var isRedeliveryOfAlreadyAppliedOperation = operation switch
+            var settledAt = _timeProvider.GetUtcNow();
+            var changed = operation switch
             {
-                SettlementOperation.Capture => payment.State == PaymentStates.Captured,
-                SettlementOperation.Refund => payment.State == PaymentStates.Refunded && payment.RefundedAmount >= payment.Amount,
-                SettlementOperation.Cancel => true,
+                SettlementOperation.Capture => payment.TryCapture(settledAt),
+                // ReturnId was claimed in the inbox above, in this same
+                // transaction, so a redelivery cannot apply this delta twice.
+                SettlementOperation.Refund => payment.TryRefund(command.RefundAmount, settledAt),
+                // Decides void vs. refund from the payment's own
+                // current state - see Payment.TryCancel. Replaces the old
+                // method-agnostic "Void" operation entirely: nothing produces
+                // that command any more, since a Pix payment is Captured the
+                // instant it's approved and voiding it was never the right verb.
+                SettlementOperation.Cancel => payment.TryCancel(command.Reason, settledAt),
                 _ => throw new UnreachableException($"Unhandled {nameof(SettlementOperation)} '{operation}'.")
             };
 
-            if (isRedeliveryOfAlreadyAppliedOperation)
+            if (!changed)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                PaymentSettlementLog.AlreadySettled(logger, orderId, payment.State);
-                return MessageProcessingResult.Duplicate;
+                // Not every guard failure is a harmless redelivery.
+                // A true duplicate is this exact operation landing twice, and the
+                // payment is already sitting in the state it would have produced
+                // - safe to drop silently, the first attempt's reply already
+                // told the saga. Anything else is a genuine mismatch: most often
+                // the expiry sweeper voiding/expiring the hold in the window
+                // between the order shipping and the capture command arriving.
+                // That capture can never happen now, and the saga has to be told
+                // - the alternative is a shipped order nobody ever charged, with
+                // nothing in the system recording that it went wrong.
+                //
+                // Cancel is different in kind from the other
+                // three - it has no single target state (it might void, might
+                // refund, depending on what it finds), so "did it apply" can't
+                // be compared against one expected outcome the way Capture and
+                // Void can. Every state TryCancel refuses to move from -
+                // Declined (nothing was ever approved), Expired (the hold
+                // already lapsed), Voided or Refunded (already settled) - means
+                // there is genuinely nothing left to do, not that a capture was
+                // silently missed. Cancel-unchanged is therefore always the
+                // benign case; unlike Capture, there is no "money should have
+                // moved and didn't" reading of it that the saga needs to hear about.
+                var isRedeliveryOfAlreadyAppliedOperation = operation switch
+                {
+                    SettlementOperation.Capture => payment.State == PaymentStates.Captured,
+                    SettlementOperation.Refund => payment.State == PaymentStates.Refunded && payment.RefundedAmount >= payment.Amount,
+                    SettlementOperation.Cancel => true,
+                    _ => throw new UnreachableException($"Unhandled {nameof(SettlementOperation)} '{operation}'.")
+                };
+
+                if (isRedeliveryOfAlreadyAppliedOperation)
+                {
+                    await transaction.RollbackAsync(ct);
+                    PaymentSettlementLog.AlreadySettled(logger, orderId, payment.State);
+                    return MessageProcessingResult.Duplicate;
+                }
+
+                var mismatchReply = new PaymentSettlementReplied(
+                    orderId,
+                    payment.Id,
+                    payment.State,
+                    payment.Amount,
+                    payment.Currency,
+                    correlationId,
+                    settledAt,
+                    RequiresReconciliation: true);
+
+                dbContext.OutboxMessages.Add(OutboxMessage.Create(
+                    Guid.NewGuid(),
+                    nameof(PaymentSettlementReplied),
+                    JsonSerializer.Serialize(mismatchReply, SerializerOptions),
+                    settledAt,
+                    correlationId,
+                    Activity.Current?.Id,
+                    Activity.Current?.TraceStateString));
+
+                await dbContext.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+
+                activity?.SetTag("payment.state", payment.State);
+                OrdersTelemetry.RecordProcessed("mismatch");
+                PaymentSettlementLog.SettlementMismatch(logger, orderId, payment.Id, operation.ToString(), payment.State, correlationId);
+                return MessageProcessingResult.Processed;
             }
 
-            var mismatchReply = new PaymentSettlementReplied(
+            var reply = new PaymentSettlementReplied(
                 orderId,
                 payment.Id,
                 payment.State,
@@ -175,52 +211,25 @@ public sealed class PaymentSettlementProcessor(
                 payment.Currency,
                 correlationId,
                 settledAt,
-                RequiresReconciliation: true);
+                RequiresReconciliation: false);
 
             dbContext.OutboxMessages.Add(OutboxMessage.Create(
                 Guid.NewGuid(),
                 nameof(PaymentSettlementReplied),
-                JsonSerializer.Serialize(mismatchReply, SerializerOptions),
+                JsonSerializer.Serialize(reply, SerializerOptions),
                 settledAt,
                 correlationId,
                 Activity.Current?.Id,
                 Activity.Current?.TraceStateString));
 
-            await dbContext.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await dbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
 
             activity?.SetTag("payment.state", payment.State);
-            OrdersTelemetry.RecordProcessed("mismatch");
-            PaymentSettlementLog.SettlementMismatch(logger, orderId, payment.Id, operation.ToString(), payment.State, correlationId);
+            OrdersTelemetry.RecordProcessed("success");
+            PaymentSettlementLog.Settled(logger, orderId, payment.Id, payment.State, payment.Amount, correlationId);
             return MessageProcessingResult.Processed;
-        }
-
-        var reply = new PaymentSettlementReplied(
-            orderId,
-            payment.Id,
-            payment.State,
-            payment.Amount,
-            payment.Currency,
-            correlationId,
-            settledAt,
-            RequiresReconciliation: false);
-
-        dbContext.OutboxMessages.Add(OutboxMessage.Create(
-            Guid.NewGuid(),
-            nameof(PaymentSettlementReplied),
-            JsonSerializer.Serialize(reply, SerializerOptions),
-            settledAt,
-            correlationId,
-            Activity.Current?.Id,
-            Activity.Current?.TraceStateString));
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-
-        activity?.SetTag("payment.state", payment.State);
-        OrdersTelemetry.RecordProcessed("success");
-        PaymentSettlementLog.Settled(logger, orderId, payment.Id, payment.State, payment.Amount, correlationId);
-        return MessageProcessingResult.Processed;
+        }, cancellationToken);
     }
 
     private static SettlementCommand Deserialize(

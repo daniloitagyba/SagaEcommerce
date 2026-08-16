@@ -71,6 +71,31 @@ public sealed class CheckoutEndpointTests
         Assert.All(cartHandler.Requests, r => Assert.Equal(expectedAuthorization, r.AuthorizationHeader));
     }
 
+    /// <summary>
+    /// The fix for a loose end the M91-99 header-forwarding fix left open:
+    /// ProxyEndpoints' generic passthrough routes got the fix, but this
+    /// endpoint - the one that actually creates orders and moves money -
+    /// built its outbound requests by hand and never called the shared
+    /// header-copy helper, so a caller-supplied X-Correlation-ID was
+    /// silently dropped on exactly the highest-value path.
+    /// </summary>
+    [Fact]
+    public async Task ACorrelationIdHeaderSurvivesToEveryDownstreamCallDuringCheckout()
+    {
+        var cartHandler = new RecordingHandler(request => request.Method == HttpMethod.Get
+            ? JsonResponse(HttpStatusCode.OK, new { cartId = "cart-generation-7", items = new[] { new { sku = "SKU-BOOK-001", quantity = 2, unitPrice = 45m } }, version = 7 })
+            : new HttpResponseMessage(HttpStatusCode.NoContent));
+        var ordersHandler = new RecordingHandler(_ => JsonResponse(HttpStatusCode.Created, new { id = "order-1", status = "Created" }));
+
+        var httpContext = await InvokeAsync(cartHandler, ordersHandler, correlationIdHeader: "trace-abc-123");
+
+        Assert.Equal(StatusCodes.Status201Created, httpContext.Response.StatusCode);
+        var orderRequest = Assert.Single(ordersHandler.Requests);
+        Assert.Equal("trace-abc-123", orderRequest.CorrelationIdHeader);
+        // Both the cart GET that priced the order and the DELETE that cleared it.
+        Assert.All(cartHandler.Requests, r => Assert.Equal("trace-abc-123", r.CorrelationIdHeader));
+    }
+
     [Fact]
     public async Task NoAuthorizationHeaderIs401WithoutCallingAnyDependency()
     {
@@ -273,7 +298,8 @@ public sealed class CheckoutEndpointTests
         string? couponCode = null,
         string? paymentMethod = null,
         StorefrontEndpoints.CheckoutShippingAddress? shippingAddress = null,
-        string? authorizationHeader = "default")
+        string? authorizationHeader = "default",
+        string? correlationIdHeader = null)
     {
         var httpContext = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
         // Results.Problem resolves IProblemDetailsService from RequestServices while formatting - it just can't be null, which DefaultHttpContext leaves it as.
@@ -287,6 +313,11 @@ public sealed class CheckoutEndpointTests
         if (resolvedHeader is not null)
         {
             httpContext.Request.Headers.Authorization = resolvedHeader;
+        }
+
+        if (correlationIdHeader is not null)
+        {
+            httpContext.Request.Headers["X-Correlation-ID"] = correlationIdHeader;
         }
 
         var httpClientFactory = new FakeHttpClientFactory(new Dictionary<string, HttpMessageHandler>(StringComparer.Ordinal)
@@ -340,7 +371,8 @@ public sealed class CheckoutEndpointTests
         string PathAndQuery,
         string? Body,
         string? AuthorizationHeader,
-        string? IdempotencyKeyHeader);
+        string? IdempotencyKeyHeader,
+        string? CorrelationIdHeader);
 
     /// <summary>Snapshots method/body/auth-header at Send time, not the HttpRequestMessage itself - CheckoutAsync disposes it afterward.</summary>
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
@@ -351,12 +383,14 @@ public sealed class CheckoutEndpointTests
         {
             var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
             var idempotencyKey = request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.FirstOrDefault() : null;
+            var correlationId = request.Headers.TryGetValues("X-Correlation-ID", out var correlationValues) ? correlationValues.FirstOrDefault() : null;
             Requests.Add(new RecordedRequest(
                 request.Method,
                 request.RequestUri?.PathAndQuery ?? string.Empty,
                 body,
                 request.Headers.Authorization?.ToString(),
-                idempotencyKey));
+                idempotencyKey,
+                correlationId));
             return respond(request);
         }
     }

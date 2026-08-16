@@ -59,6 +59,7 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests(PostgresFixture 
         _orderStatusStore = new OrderStatusStore(
             _dataSource,
             new CouponRedemptionStore(),
+            new PromotionCampaignStore(),
             new PaymentSettlementRequester(),
             new CustomerTierStore(),
             pipelineProvider);

@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Polly.Registry;
 using System.Text.Json;
 
 namespace Inventory.IntegrationTests;
@@ -25,6 +26,7 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
         var services = new ServiceCollection();
         services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<WarehouseAllocationStore>();
+        services.AddOrdersResilience();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -195,6 +197,65 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
         Assert.Equal(item.ReservedQuantity, stock.ReservedQuantity);
     }
 
+    [Fact]
+    public async Task ARestockNamingAWarehouseLandsThereEvenWhenAnotherWarehouseHasLessStock()
+    {
+        await using (var scope = _serviceProvider.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            var item = InventoryItem.Create("SKU-MULTI-WH", 6, DateTimeOffset.UtcNow);
+            dbContext.InventoryItems.Add(item);
+            // WH-LOW has the least available stock - the warehouse the pre-fix
+            // TryRestockAsync would always have picked regardless of which
+            // warehouse a purchase order was actually raised for.
+            dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-MULTI-WH", "WH-LOW", 1, reorderPoint: 0, DateTimeOffset.UtcNow));
+            dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-MULTI-WH", "WH-HIGH", 5, reorderPoint: 0, DateTimeOffset.UtcNow));
+            await dbContext.SaveChangesAsync();
+        }
+
+        var processor = CreateProcessor();
+        var result = await processor.ProcessRestockAsync(
+            CreateRestockConsumeResult("SKU-MULTI-WH", 4, warehouseCode: "WH-HIGH"), CancellationToken.None);
+
+        Assert.Equal(MessageProcessingResult.Processed, result);
+
+        await using var verifyScope = _serviceProvider.CreateAsyncScope();
+        var verifyDbContext = verifyScope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var low = await verifyDbContext.WarehouseStocks.SingleAsync(s => s.WarehouseCode == "WH-LOW");
+        var high = await verifyDbContext.WarehouseStocks.SingleAsync(s => s.WarehouseCode == "WH-HIGH");
+
+        Assert.Equal(1, low.AvailableQuantity);
+        Assert.Equal(9, high.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task ARestockWithNoWarehouseNamedFallsBackToTheWarehouseWithTheMostRoom()
+    {
+        await using (var scope = _serviceProvider.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+            var item = InventoryItem.Create("SKU-MULTI-WH-2", 6, DateTimeOffset.UtcNow);
+            dbContext.InventoryItems.Add(item);
+            dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-MULTI-WH-2", "WH-LOW", 1, reorderPoint: 0, DateTimeOffset.UtcNow));
+            dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-MULTI-WH-2", "WH-HIGH", 5, reorderPoint: 0, DateTimeOffset.UtcNow));
+            await dbContext.SaveChangesAsync();
+        }
+
+        var processor = CreateProcessor();
+        var result = await processor.ProcessRestockAsync(
+            CreateRestockConsumeResult("SKU-MULTI-WH-2", 4, warehouseCode: null), CancellationToken.None);
+
+        Assert.Equal(MessageProcessingResult.Processed, result);
+
+        await using var verifyScope = _serviceProvider.CreateAsyncScope();
+        var verifyDbContext = verifyScope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var low = await verifyDbContext.WarehouseStocks.SingleAsync(s => s.WarehouseCode == "WH-LOW");
+        var high = await verifyDbContext.WarehouseStocks.SingleAsync(s => s.WarehouseCode == "WH-HIGH");
+
+        Assert.Equal(1, low.AvailableQuantity);
+        Assert.Equal(9, high.AvailableQuantity);
+    }
+
     private async Task SeedAllocationAsync(Guid reservationId, int quantity)
     {
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -210,7 +271,8 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
         return new InventoryReservationMessageProcessor(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             kafkaOptions,
-            NullLogger<InventoryReservationMessageProcessor>.Instance);
+            NullLogger<InventoryReservationMessageProcessor>.Instance,
+            _serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>());
     }
 
     private static ConsumeResult<string, string> CreateReserveConsumeResult(Guid reservationId, string sku, int quantity)
@@ -231,11 +293,11 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
         return CreateConsumeResult("inventory.reservation-release-requested.v1", sku, request);
     }
 
-    private static ConsumeResult<string, string> CreateRestockConsumeResult(string sku, int quantity)
+    private static ConsumeResult<string, string> CreateRestockConsumeResult(string sku, int quantity, string? warehouseCode = null)
     {
         var request = new InventoryRestockRequested(
             Guid.NewGuid(), Guid.NewGuid(), sku, quantity,
-            "integration-correlation", DateTimeOffset.UtcNow);
+            "integration-correlation", DateTimeOffset.UtcNow, warehouseCode);
         return CreateConsumeResult("inventory.restock-requested.v1", sku, request);
     }
 

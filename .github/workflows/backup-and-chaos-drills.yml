@@ -1,0 +1,63 @@
+name: backup-and-chaos-drills
+
+# Milestone 80 built scripts/backup-drills/{mongodb,redis}-backup-restore-drill.sh
+# and proved the restore path works once, by hand, at the milestone that
+# wrote them. Nothing re-ran them since - a regression in mongodump, Redis
+# BGSAVE, or CNPG WAL archiving introduced by a later infra change would go
+# uncaught until an actual incident forces a real restore. Same story for
+# the chaos game days under scripts/chaos/ and kubernetes/chaos-experiments/:
+# "Applied ad hoc for the game day, not left running" per those manifests'
+# own comments, so a resilience regression is equally uncaught until it's
+# live. This mirrors the pattern mutation-testing.yml and
+# coupon-redemption-concurrency.yml already use for "too slow/heavy for
+# every push" checks - a scheduled run on the self-hosted runner that
+# already has docker compose (backup drills) and kubectl access to the K3s
+# lab (the chaos game day), the same access memory-leak-check.yml assumes.
+on:
+  schedule:
+    # Backup drills: monthly, first of the month.
+    - cron: "0 5 1 * *"
+    # Chaos game day: quarterly (Jan/Apr/Jul/Oct 1st) - heavier and more
+    # disruptive to the shared lab than the backup drills, so it runs far
+    # less often than the data it's protecting is backed up.
+    - cron: "0 6 1 1,4,7,10 *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which drill to run on a manual trigger"
+        required: true
+        default: backup-drill
+        type: choice
+        options:
+          - backup-drill
+          - chaos-gameday
+
+permissions:
+  contents: read
+
+jobs:
+  backup-drill:
+    name: backup/restore drill (MongoDB + Redis)
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'backup-drill' || github.event.schedule == '0 5 1 * *'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MongoDB backup/restore drill
+        run: bash scripts/backup-drills/mongodb-backup-restore-drill.sh
+
+      - name: Redis backup/restore drill
+        run: bash scripts/backup-drills/redis-backup-restore-drill.sh
+
+  chaos-gameday:
+    name: chaos game day (K3s lab)
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'chaos-gameday' || github.event.schedule == '0 6 1 1,4,7,10 *'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: verify kubectl reaches the lab
+        run: kubectl get deployment/orders-worker --namespace orders-lab
+
+      - name: run the Chaos Mesh pod-kill game day
+        run: bash scripts/chaos/chaos-mesh-gameday.sh

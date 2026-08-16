@@ -1,6 +1,28 @@
 namespace Orders.Application.Pricing;
 
 /// <summary>
+/// An optional validity window and exclusivity group for one of the
+/// automatic promotion rules (Milestone 90). Null on a PricingOptions
+/// property means "always active, stacks with everything" - today's
+/// default and fully backward compatible; setting one turns that
+/// promotion into a calendar-gated campaign the way CategoryDiscounts'
+/// percentages already turn a category into a discounted one. One window
+/// per promotion *type*, not per category/SKU - "electronics get 5% off,
+/// and that runs Black Friday through Cyber Monday" is the granularity a
+/// campaign calendar actually needs; per-category calendars would be a
+/// different feature.
+/// </summary>
+public sealed record PromotionWindow(
+    DateTimeOffset? ValidFrom,
+    DateTimeOffset? ValidUntil,
+    /// <summary>Promotions sharing a group do not stack - the best-value one wins; see NRulesPricingEngine's exclusivity reduction.</summary>
+    string? ExclusivityGroup = null)
+{
+    public bool IsActive(DateTimeOffset at) =>
+        (ValidFrom is null || at >= ValidFrom) && (ValidUntil is null || at < ValidUntil);
+}
+
+/// <summary>
 /// The promotion policy, kept in configuration rather than
 /// compiled into the rules so a campaign can be changed without a
 /// redeploy. The <em>shape</em> of each promotion is a rule (code); which
@@ -12,6 +34,18 @@ public sealed class PricingOptions
 
     // The Coupons dictionary was removed - coupons are now rows in
     // `coupons` with validity windows and redemption limits, since config alone can't express being *used up*.
+
+    /// <summary>Calendar/exclusivity for CategoryDiscountRule. Null (the default) means always active, no group.</summary>
+    public PromotionWindow? CategoryDiscountWindow { get; init; }
+
+    /// <summary>Calendar/exclusivity for BulkQuantityRule.</summary>
+    public PromotionWindow? BulkDiscountWindow { get; init; }
+
+    /// <summary>Calendar/exclusivity for LoyaltyTierRule.</summary>
+    public PromotionWindow? TierDiscountWindow { get; init; }
+
+    /// <summary>Calendar/exclusivity for FreeShippingRule.</summary>
+    public PromotionWindow? FreeShippingWindow { get; init; }
 
     /// <summary>Category slug to percentage off that category's lines.</summary>
     public Dictionary<string, decimal> CategoryDiscounts { get; init; } = new(StringComparer.OrdinalIgnoreCase)

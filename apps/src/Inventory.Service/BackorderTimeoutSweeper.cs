@@ -4,6 +4,8 @@ using BuildingBlocks;
 using Inventory.Service.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Polly;
+using Polly.Registry;
 
 namespace Inventory.Service;
 
@@ -31,13 +33,17 @@ public sealed class BackorderTimeoutSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<BackorderOptions> options,
     TimeProvider timeProvider,
-    ILogger<BackorderTimeoutSweeper> logger) : BackgroundService
+    ILogger<BackorderTimeoutSweeper> logger,
+    ResiliencePipelineProvider<string> pipelineProvider) : BackgroundService
 {
     /// <summary>Kept numerically distinct from Payments' SweepLockKey so a grep for either value is unambiguous about which service it belongs to.</summary>
     private const long SweepLockKey = 7400_0001;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly BackorderOptions _options = options.Value;
+    // No-retry transactional pipeline, not the retrying PostgresPipeline -
+    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
+    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -68,88 +74,91 @@ public sealed class BackorderTimeoutSweeper(
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-
-        var isSweeper = await dbContext.Database
-            .SqlQuery<bool>($"SELECT pg_try_advisory_xact_lock({SweepLockKey}) AS \"Value\"")
-            .SingleAsync(cancellationToken);
-
-        if (!isSweeper)
+        await _pipeline.ExecuteAsync(async ct =>
         {
-            await transaction.RollbackAsync(cancellationToken);
-            return;
-        }
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-        var now = timeProvider.GetUtcNow();
-        var cutoff = now - TimeSpan.FromMinutes(_options.TimeoutMinutes);
+            var isSweeper = await dbContext.Database
+                .SqlQuery<bool>($"SELECT pg_try_advisory_xact_lock({SweepLockKey}) AS \"Value\"")
+                .SingleAsync(ct);
 
-        // A candidates pass only, not the authoritative read - each SKU's
-        // rows are re-read for real immediately below, after that SKU's own
-        // advisory lock is held, so this cannot act on a row a concurrent
-        // restock already claimed.
-        var candidateSkus = await dbContext.Backorders
-            .Where(backorder => backorder.RequestedAt <= cutoff)
-            .Select(backorder => backorder.Sku)
-            .Distinct()
-            .OrderBy(sku => sku)
-            .Take(_options.TimeoutSweepBatchSize)
-            .ToListAsync(cancellationToken);
-
-        if (candidateSkus.Count == 0)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            return;
-        }
-
-        var timedOut = 0;
-        foreach (var sku in candidateSkus)
-        {
-            // Blocks here until any in-flight reserve/commit/release/restock
-            // for this SKU (including ReleaseBackordersAsync's own delete of
-            // the same rows) has committed or rolled back - see this
-            // class's own comment for why that is what makes the re-read
-            // below trustworthy.
-            await SkuAdvisoryLock.AcquireAsync(dbContext, sku, cancellationToken);
-
-            var pending = await dbContext.Backorders
-                .Where(backorder => backorder.Sku == sku && backorder.RequestedAt <= cutoff)
-                .ToListAsync(cancellationToken);
-
-            foreach (var backorder in pending)
+            if (!isSweeper)
             {
-                dbContext.Backorders.Remove(backorder);
-
-                var reply = new InventoryReservationReplied(
-                    backorder.ReservationId,
-                    backorder.OrderId,
-                    backorder.Sku,
-                    backorder.Quantity,
-                    Reserved: false,
-                    Reason: "backorder timed out without restock",
-                    backorder.CorrelationId,
-                    now,
-                    Backordered: false);
-
-                dbContext.OutboxMessages.Add(OutboxMessage.Create(
-                    Guid.NewGuid(),
-                    nameof(InventoryReservationReplied),
-                    JsonSerializer.Serialize(reply, SerializerOptions),
-                    now,
-                    backorder.CorrelationId,
-                    Activity.Current?.Id,
-                    Activity.Current?.TraceStateString));
-
-                timedOut++;
+                await transaction.RollbackAsync(ct);
+                return;
             }
-        }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            var now = timeProvider.GetUtcNow();
+            var cutoff = now - TimeSpan.FromMinutes(_options.TimeoutMinutes);
 
-        if (timedOut > 0)
-        {
-            BackorderSweeperLog.TimedOut(logger, timedOut);
-        }
+            // A candidates pass only, not the authoritative read - each SKU's
+            // rows are re-read for real immediately below, after that SKU's own
+            // advisory lock is held, so this cannot act on a row a concurrent
+            // restock already claimed.
+            var candidateSkus = await dbContext.Backorders
+                .Where(backorder => backorder.RequestedAt <= cutoff)
+                .Select(backorder => backorder.Sku)
+                .Distinct()
+                .OrderBy(sku => sku)
+                .Take(_options.TimeoutSweepBatchSize)
+                .ToListAsync(ct);
+
+            if (candidateSkus.Count == 0)
+            {
+                await transaction.RollbackAsync(ct);
+                return;
+            }
+
+            var timedOut = 0;
+            foreach (var sku in candidateSkus)
+            {
+                // Blocks here until any in-flight reserve/commit/release/restock
+                // for this SKU (including ReleaseBackordersAsync's own delete of
+                // the same rows) has committed or rolled back - see this
+                // class's own comment for why that is what makes the re-read
+                // below trustworthy.
+                await SkuAdvisoryLock.AcquireAsync(dbContext, sku, ct);
+
+                var pending = await dbContext.Backorders
+                    .Where(backorder => backorder.Sku == sku && backorder.RequestedAt <= cutoff)
+                    .ToListAsync(ct);
+
+                foreach (var backorder in pending)
+                {
+                    dbContext.Backorders.Remove(backorder);
+
+                    var reply = new InventoryReservationReplied(
+                        backorder.ReservationId,
+                        backorder.OrderId,
+                        backorder.Sku,
+                        backorder.Quantity,
+                        Reserved: false,
+                        Reason: "backorder timed out without restock",
+                        backorder.CorrelationId,
+                        now,
+                        Backordered: false);
+
+                    dbContext.OutboxMessages.Add(OutboxMessage.Create(
+                        Guid.NewGuid(),
+                        nameof(InventoryReservationReplied),
+                        JsonSerializer.Serialize(reply, SerializerOptions),
+                        now,
+                        backorder.CorrelationId,
+                        Activity.Current?.Id,
+                        Activity.Current?.TraceStateString));
+
+                    timedOut++;
+                }
+            }
+
+            await dbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            if (timedOut > 0)
+            {
+                BackorderSweeperLog.TimedOut(logger, timedOut);
+            }
+        }, cancellationToken);
     }
 }
 

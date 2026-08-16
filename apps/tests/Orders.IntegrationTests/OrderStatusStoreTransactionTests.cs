@@ -33,6 +33,7 @@ public sealed class OrderStatusStoreTransactionTests(PostgresFixture fixture) : 
         _store = new OrderStatusStore(
             _dataSource,
             new CouponRedemptionStore(),
+            new PromotionCampaignStore(),
             new PaymentSettlementRequester(),
             new CustomerTierStore(),
             pipelineProvider);

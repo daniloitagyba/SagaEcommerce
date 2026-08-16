@@ -1,34 +1,53 @@
 ---
 k3s_version: v1.36.2+k3s1
 
+# chart_version pins below matter for the same reason k3s_version above
+# does - "an unpinned install script is not a reproducible one." Before
+# this, every playbook run installed/upgraded to whatever was newest in
+# each chart repo at that moment; two lab rebuilds months apart could
+# silently land different major versions of Kyverno, Argo CD or KEDA.
+#
+# These are the latest published versions as of 2026-08-16 (kyverno
+# pinned to its latest *stable* release, 3.8.2 - the newer 3.9.0-rc.x
+# entries are release candidates, not something to pin a lab cluster to).
+# They were looked up from each chart repo's own index, not read off the
+# live cluster - run `helm list -A` on the lab machine and reconcile
+# before the next `ansible-playbook` apply, so this pin describes what is
+# actually running rather than silently upgrading it on the next run.
 helm_releases:
   - name: sealed-secrets
     chart_ref: sealed-secrets/sealed-secrets
+    chart_version: 2.19.1
     release_namespace: kube-system
     repo_name: sealed-secrets
     repo_url: https://bitnami.github.io/sealed-secrets
   - name: argo-rollouts
     chart_ref: argo/argo-rollouts
+    chart_version: 2.41.1
     release_namespace: argo-rollouts
     repo_name: argo
     repo_url: https://argoproj.github.io/argo-helm
   - name: argocd
     chart_ref: argo/argo-cd
+    chart_version: 10.3.3
     release_namespace: argocd
     repo_name: argo
     repo_url: https://argoproj.github.io/argo-helm
   - name: keda
     chart_ref: kedacore/keda
+    chart_version: 2.20.2
     release_namespace: keda
     repo_name: kedacore
     repo_url: https://kedacore.github.io/charts
   - name: kyverno
     chart_ref: kyverno/kyverno
+    chart_version: 3.8.2
     release_namespace: kyverno
     repo_name: kyverno
     repo_url: https://kyverno.github.io/kyverno/
   - name: cnpg
     chart_ref: cnpg/cloudnative-pg
+    chart_version: 0.29.0
     release_namespace: cnpg-system
     repo_name: cnpg
     repo_url: https://cloudnative-pg.github.io/charts

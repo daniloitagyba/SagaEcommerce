@@ -225,10 +225,11 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
     /// backorder cancellation - anything that gives committed stock back)
     /// reduces the oldest still-open ledger entries for the same order and
     /// sku first, deleting one once it reaches zero. Quantity, not a
-    /// specific warehouse or reservation, is what's reconciled - a restock
-    /// command carries neither (TryRestockAsync itself picks whichever
-    /// warehouse has the most room, not necessarily the one commit drew
-    /// from), and the anti-entropy check this feeds only ever asks "does
+    /// specific warehouse or reservation, is what's reconciled here - the
+    /// ledger tracks what a customer order still owes, and a return's
+    /// restock may land in a different warehouse than commit drew from even
+    /// though TryRestockAsync now honours a warehouse code when one is
+    /// given - and the anti-entropy check this feeds only ever asks "does
     /// this order still have committed stock outstanding," not "which shelf."
     /// A restock whose order id was never a real customer order (the
     /// replenishment loop's restocks carry a purchase order's own id) simply
@@ -262,28 +263,43 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
     }
 
     /// <summary>
-    /// Returned units go back to the warehouse with the most room, which in
-    /// this lab is a stand-in for "wherever the returns depot routes them" -
-    /// a real network decides from the return label, not the stock levels.
+    /// Restocks the warehouse the caller names, when it names one - the
+    /// replenishment loop always does, since its purchase order was raised
+    /// against the exact warehouse that crossed its reorder point, and
+    /// landing the stock anywhere else leaves that warehouse silently
+    /// under-stocked (the reorder signal is edge-triggered, so it does not
+    /// fire again). When no warehouse is named - a customer return, where
+    /// nothing upstream knows which depot the parcel will land at - falls
+    /// back to the warehouse with the most room, which in this lab is a
+    /// stand-in for "wherever the returns depot routes them"; a real
+    /// network would decide from the return label, not the stock levels.
     /// </summary>
     public async Task<bool> TryRestockAsync(
         string sku,
         int quantity,
         DateTimeOffset now,
+        string? warehouseCode,
         CancellationToken cancellationToken)
     {
         var stocks = await dbContext.WarehouseStocks
             .Where(item => item.Sku == sku)
-            .OrderBy(item => item.AvailableQuantity)
+            .OrderByDescending(item => item.AvailableQuantity)
             .ToListAsync(cancellationToken);
 
         var item = await dbContext.InventoryItems.SingleOrDefaultAsync(entity => entity.Sku == sku, cancellationToken);
-        if (stocks.Count == 0 || item is null || quantity <= 0)
+        if (item is null || quantity <= 0)
         {
             return false;
         }
 
-        var stock = stocks[0];
+        var stock = string.IsNullOrEmpty(warehouseCode)
+            ? stocks.Count > 0 ? stocks[0] : null
+            : stocks.SingleOrDefault(candidate => candidate.WarehouseCode == warehouseCode);
+        if (stock is null)
+        {
+            return false;
+        }
+
         stock.Restock(quantity, now);
         item.SynchronizeFromWarehouses(
             stocks.Sum(candidate => candidate.AvailableQuantity),

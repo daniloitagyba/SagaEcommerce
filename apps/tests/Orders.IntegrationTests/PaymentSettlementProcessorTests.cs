@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Payments.Service;
 using Payments.Service.Data;
 using Payments.Service.Domain;
+using Polly.Registry;
 
 namespace Orders.IntegrationTests;
 
@@ -32,6 +33,7 @@ public sealed class PaymentSettlementProcessorTests(PostgresFixture fixture) : I
 
         var services = new ServiceCollection();
         services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddOrdersResilience();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -262,7 +264,8 @@ public sealed class PaymentSettlementProcessorTests(PostgresFixture fixture) : I
         new(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new PaymentSettlementOptions()),
-            NullLogger<PaymentSettlementProcessor>.Instance);
+            NullLogger<PaymentSettlementProcessor>.Instance,
+            _serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>());
 
     private static ConsumeResult<string, string> CaptureConsumeResult(Guid orderId)
     {

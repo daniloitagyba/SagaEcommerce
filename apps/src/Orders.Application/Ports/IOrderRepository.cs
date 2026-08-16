@@ -17,16 +17,18 @@ public interface IOrderCreationRepository : IOrderRepository
 {
     /// <summary>
     /// Persists the order, its outbox event and - when the checkout used a
-    /// coupon - its redemption claim, in one transaction. See
-    /// <see cref="CouponReservation"/> for why the claim cannot be a
-    /// separate call.
+    /// coupon and/or qualified for a budget-limited campaign - their
+    /// redemption/budget claims, in one transaction. See
+    /// <see cref="CouponReservation"/> and <see cref="CampaignReservation"/>
+    /// for why neither claim can be a separate call.
     /// </summary>
     Task<OrderWriteResult> AddAsync(
         Order order,
         OutboxMessage outboxMessage,
         CouponReservation? couponReservation,
         OrderIdempotencyClaim? idempotencyClaim,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        CampaignReservation? campaignReservation = null);
 
     Task<OrderIdempotencyEntry?> FindIdempotencyAsync(
         string customerId,

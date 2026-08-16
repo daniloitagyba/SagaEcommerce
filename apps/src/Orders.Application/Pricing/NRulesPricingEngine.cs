@@ -53,6 +53,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
             .Where(discount => discount.Amount > zero)
             .OrderBy(discount => discount.Code, StringComparer.Ordinal)
             .ToList();
+        discounts = ResolveExclusivity(discounts);
         var freeShipping = session.Query<FreeShippingGranted>().Any();
 
         var rawDiscountTotal = discounts.Aggregate(zero, (running, discount) => running + discount.Amount);
@@ -127,6 +128,33 @@ public sealed class NRulesPricingEngine : IPricingEngine
         }
 
         return _options.TaxRatePercentage;
+    }
+
+    /// <summary>
+    /// Milestone 90's "exclusivity groups" - promotions sharing a group do
+    /// not stack; the best-value one for this order wins and the rest are
+    /// dropped entirely (not truncated, the way CapDiscounts truncates a
+    /// survivor - a losing discount in a group was never eligible here, it
+    /// is not a rounding remainder). Runs before CapDiscounts deliberately:
+    /// exclusivity is a business rule about which discounts are even in
+    /// play, the subtotal cap is a last-resort safety net on whichever
+    /// discounts survive that decision - the two must not be conflated by
+    /// running them in the other order, or a group's winner could be
+    /// truncated to zero by a stack the loser would never have contributed
+    /// to anyway.
+    /// </summary>
+    private static List<AppliedDiscount> ResolveExclusivity(List<AppliedDiscount> discounts)
+    {
+        var ungrouped = discounts.Where(discount => discount.ExclusivityGroup is null);
+        var winners = discounts
+            .Where(discount => discount.ExclusivityGroup is not null)
+            .GroupBy(discount => discount.ExclusivityGroup, StringComparer.Ordinal)
+            .Select(group => group
+                .OrderByDescending(discount => discount.Amount)
+                .ThenBy(discount => discount.Code, StringComparer.Ordinal)
+                .First());
+
+        return [.. ungrouped.Concat(winners).OrderBy(discount => discount.Code, StringComparer.Ordinal)];
     }
 
     /// <summary>

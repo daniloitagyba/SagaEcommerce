@@ -44,7 +44,8 @@ public sealed record OrderPricingResponse(
     decimal ShippingTotal,
     decimal TaxTotal,
     string? CouponCode,
-    IReadOnlyList<OrderLineResponse> Lines);
+    IReadOnlyList<OrderLineResponse> Lines,
+    string? CampaignCode = null);
 
 public sealed record OrderResponse(
     Guid Id,

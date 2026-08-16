@@ -158,10 +158,27 @@ public static class ProxyEndpoints
         await WriteResponseAsync(request.HttpContext, response, cancellationToken);
     }
 
-    private static void CopyForwardedRequestHeaders(HttpRequest request, HttpRequestMessage upstreamRequest)
+    /// <summary>
+    /// Internal, not private: StorefrontEndpoints.CheckoutAsync - the one
+    /// route that actually creates orders and moves money, not a generic
+    /// passthrough - builds its own outbound requests by hand rather than
+    /// going through ForwardRequestAsync/ForwardOrderAsync above, and needs
+    /// this same allowlist so a caller-supplied X-Correlation-ID survives
+    /// the checkout path exactly as it does every other proxied route.
+    /// <paramref name="excludeHeaderName"/> lets a caller that computes its
+    /// own value for one header (CheckoutAsync's deterministic
+    /// Idempotency-Key) skip copying the client-supplied one, instead of
+    /// ending up with two values for the same header.
+    /// </summary>
+    internal static void CopyForwardedRequestHeaders(HttpRequest request, HttpRequestMessage upstreamRequest, string? excludeHeaderName = null)
     {
         foreach (var headerName in ForwardedRequestHeaders)
         {
+            if (string.Equals(headerName, excludeHeaderName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             var value = request.Headers[headerName].ToString();
             if (!string.IsNullOrWhiteSpace(value))
             {

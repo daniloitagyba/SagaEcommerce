@@ -59,6 +59,7 @@ public sealed class SagaTimeoutSweeperTests(PostgresFixture fixture) : IAsyncLif
         _orderStatusStore = new OrderStatusStore(
             _dataSource,
             new CouponRedemptionStore(),
+            new PromotionCampaignStore(),
             new PaymentSettlementRequester(),
             new CustomerTierStore(),
             pipelineProvider);

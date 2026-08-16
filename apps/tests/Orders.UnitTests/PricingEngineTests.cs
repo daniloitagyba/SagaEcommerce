@@ -280,4 +280,138 @@ public class PricingEngineTests
         Assert.Equal(new Money(0m, Brl), breakdown.TaxTotal);
         Assert.Equal(new Money(0m, Brl), Assert.Single(breakdown.LineTaxes));
     }
+
+    // Milestone 90: validity windows, exclusivity groups, and campaigns.
+
+    [Fact]
+    public void ACategoryPromotionOutsideItsWindowDoesNotFire()
+    {
+        var now = new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero);
+        var options = new PricingOptions
+        {
+            FlatShippingAmount = 0m,
+            CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["electronics"] = 10m },
+            // The campaign already ended a month before "now".
+            CategoryDiscountWindow = new PromotionWindow(now.AddMonths(-3), now.AddMonths(-1))
+        };
+
+        var breakdown = BuildEngine(options).Price(new PricingRequest(
+            "customer-1", Brl, [Line("SKU-ELEC", "electronics", 1, 100m)], EvaluatedAt: now));
+
+        Assert.Empty(breakdown.Discounts);
+    }
+
+    [Fact]
+    public void ACategoryPromotionInsideItsWindowFires()
+    {
+        var now = new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero);
+        var options = new PricingOptions
+        {
+            FlatShippingAmount = 0m,
+            CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["electronics"] = 10m },
+            CategoryDiscountWindow = new PromotionWindow(now.AddDays(-1), now.AddDays(1))
+        };
+
+        var breakdown = BuildEngine(options).Price(new PricingRequest(
+            "customer-1", Brl, [Line("SKU-ELEC", "electronics", 1, 100m)], EvaluatedAt: now));
+
+        var discount = Assert.Single(breakdown.Discounts);
+        Assert.Equal("CATEGORY-ELECTRONICS", discount.Code);
+        Assert.Equal(new Money(10m, Brl), discount.Amount);
+    }
+
+    [Fact]
+    public void TwoDiscountsInTheSameExclusivityGroupOnlyTheBiggerSurvives()
+    {
+        // Category (10% of 100 = 10) and bulk (20% of 100 = 20) both fire on
+        // the same line and share a group - only the bulk discount, the
+        // larger one, should survive into the breakdown.
+        var options = new PricingOptions
+        {
+            FlatShippingAmount = 0m,
+            CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["electronics"] = 10m },
+            CategoryDiscountWindow = new PromotionWindow(null, null, "SEASONAL"),
+            BulkQuantityThreshold = 1,
+            BulkDiscountPercentage = 20m,
+            BulkDiscountWindow = new PromotionWindow(null, null, "SEASONAL")
+        };
+
+        var breakdown = BuildEngine(options).Price(Request(null, Line("SKU-ELEC", "electronics", 1, 100m)));
+
+        var discount = Assert.Single(breakdown.Discounts);
+        Assert.Equal("BULK-SKU-ELEC", discount.Code);
+        Assert.Equal(new Money(20m, Brl), discount.Amount);
+        Assert.Equal(new Money(20m, Brl), breakdown.DiscountTotal);
+    }
+
+    [Fact]
+    public void DiscountsInDifferentGroupsOrWithNoGroupAllStack()
+    {
+        // Tier (ungrouped) always stacks with everything - exclusivity only
+        // ever removes discounts that share a group with another.
+        var options = new PricingOptions
+        {
+            FlatShippingAmount = 0m,
+            CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["electronics"] = 10m },
+            CategoryDiscountWindow = new PromotionWindow(null, null, "GROUP-A")
+        };
+        var request = new PricingRequest(
+            "customer-1", Brl, [Line("SKU-ELEC", "electronics", 1, 100m)],
+            Customer: new PricingCustomer("customer-1", "Gold", DateTimeOffset.UtcNow.AddYears(-1)));
+
+        var breakdown = BuildEngine(options).Price(request);
+
+        Assert.Equal(2, breakdown.Discounts.Count);
+        Assert.Contains(breakdown.Discounts, d => d.Code == "CATEGORY-ELECTRONICS");
+        Assert.Contains(breakdown.Discounts, d => d.Code.StartsWith("TIER-", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnActiveCampaignAppliesAsAFlatAmountDiscount()
+    {
+        var options = new PricingOptions { FlatShippingAmount = 0m };
+        var request = new PricingRequest(
+            "customer-1", Brl, [Line("SKU-A", "books", 1, 100m)],
+            Campaign: new ResolvedCampaign("FLASH20", "R$20 off", 20m, null));
+
+        var breakdown = BuildEngine(options).Price(request);
+
+        var discount = Assert.Single(breakdown.Discounts);
+        Assert.Equal("FLASH20", discount.Code);
+        Assert.Equal(new Money(20m, Brl), discount.Amount);
+        Assert.Equal(new Money(20m, Brl), breakdown.DiscountTotal);
+        Assert.Equal(new Money(80m, Brl), breakdown.GrandTotal);
+    }
+
+    [Fact]
+    public void ACampaignNeverDiscountsBelowZero()
+    {
+        // A flat R$20 campaign on a R$5 order must not send the total negative.
+        var options = new PricingOptions { FlatShippingAmount = 0m };
+        var request = new PricingRequest(
+            "customer-1", Brl, [Line("SKU-A", "books", 1, 5m)],
+            Campaign: new ResolvedCampaign("FLASH20", "R$20 off", 20m, null));
+
+        var breakdown = BuildEngine(options).Price(request);
+
+        var discount = Assert.Single(breakdown.Discounts);
+        Assert.Equal(new Money(5m, Brl), discount.Amount);
+        Assert.Equal(new Money(0m, Brl), breakdown.GrandTotal);
+    }
+
+    [Fact]
+    public void ACampaignAndACouponInTheSameGroupOnlyTheBiggerSurvives()
+    {
+        // 15% of 200 = 30, bigger than the flat 20 campaign - the coupon should win.
+        var request = new PricingRequest(
+            "customer-1", Brl, [Line("SKU-A", "books", 1, 200m)],
+            Coupon: new ResolvedCoupon("SAVE15", "15% off", 15m, "SITEWIDE"),
+            Campaign: new ResolvedCampaign("FLASH20", "R$20 off", 20m, "SITEWIDE"));
+
+        var breakdown = BuildEngine().Price(request);
+
+        var discount = Assert.Single(breakdown.Discounts);
+        Assert.Equal("SAVE15", discount.Code);
+        Assert.Equal(new Money(30m, Brl), discount.Amount);
+    }
 }

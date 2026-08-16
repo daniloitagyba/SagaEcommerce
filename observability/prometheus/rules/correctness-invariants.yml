@@ -16,7 +16,9 @@
 # proven to actually fire using the drill/chaos script noted per alert
 # before being trusted as a real page, per
 # docs/architecture/audit-2026-08-15-architecture-and-cross-cutting-review.md's
-# Phase 4.
+# Phase 4. Whether that provocation has actually happened for each
+# severity: page alert is tracked in
+# docs/resilience/alert-provocation-runbook.md, not just asserted here.
 groups:
   - name: correctness-invariant-alerts
     rules:

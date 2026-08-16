@@ -68,6 +68,18 @@ public static class OrderEndpoints
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Coupon Unavailable");
         }
+        catch (CampaignBudgetUnavailableException exception)
+        {
+            // Same reasoning as CouponRedemptionUnavailableException above -
+            // a campaign a shopper never asked for lost its budget to a
+            // concurrent checkout between the advisory check and the claim.
+            // A retry simply prices without it, the same automatic way it
+            // was applied in the first place.
+            return Results.Problem(
+                detail: exception.Message,
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Campaign Unavailable");
+        }
 
         // Distinct from a validation error - nothing about
         // the request is malformed, the catalog moved under it. 409, the
@@ -183,7 +195,8 @@ public static class OrderEndpoints
                 line.UnitPrice,
                 line.LineSubtotal,
                 line.LineDiscount,
-                line.LineTotal))]);
+                line.LineTotal))],
+            order.CampaignCode);
     }
 
     private static OrderResponse ToResponse(

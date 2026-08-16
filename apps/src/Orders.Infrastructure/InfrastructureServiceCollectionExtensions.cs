@@ -94,6 +94,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IOrderCreationRepository>(serviceProvider =>
             serviceProvider.GetRequiredService<Persistence.EfOrderRepository>());
         services.AddScoped<ICouponRepository, Persistence.EfCouponRepository>();
+        services.AddScoped<ICampaignRepository, Persistence.EfCampaignRepository>();
         services.AddScoped<ICustomerRepository, Persistence.EfCustomerRepository>();
         services.AddScoped<IOrderStatusRepository, Persistence.EfOrderStatusRepository>();
         services.AddScoped<IOrderReturnRepository, Persistence.EfOrderReturnRepository>();

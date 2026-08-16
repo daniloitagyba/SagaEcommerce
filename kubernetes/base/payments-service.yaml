@@ -1,3 +1,9 @@
+# No PodDisruptionBudget for this Deployment, deliberately - unlike
+# cart-service/catalog-service/inventory-service/orders-api/storefront-
+# service, which all define one. With replicas: 1 and strategy: Recreate
+# below, a PDB with minAvailable: 1 would report 0 disruptions allowed at
+# all times and block every voluntary node drain (cluster upgrades,
+# node pool scale-down) indefinitely. Don't "fix" this by adding one back.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

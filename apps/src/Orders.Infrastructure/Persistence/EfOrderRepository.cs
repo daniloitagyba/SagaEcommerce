@@ -20,13 +20,16 @@ public sealed class EfOrderRepository(
         OutboxMessage outboxMessage,
         CouponReservation? couponReservation,
         OrderIdempotencyClaim? idempotencyClaim,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CampaignReservation? campaignReservation = null)
     {
-        // A lost redemption race is reported as a value, not thrown - the
-        // Postgres pipeline retries every exception with no ShouldHandle
-        // predicate, so throwing here would retry an exhausted coupon for
-        // nothing and could trip the breaker for every other caller.
+        // A lost redemption/claim race is reported as a value, not thrown -
+        // the Postgres pipeline retries every exception with no ShouldHandle
+        // predicate, so throwing here would retry an exhausted coupon or
+        // campaign for nothing and could trip the breaker for every other
+        // caller.
         string? redemptionFailure = null;
+        string? campaignFailure = null;
         OrderWriteResult? writeResult = null;
 
         try
@@ -34,6 +37,7 @@ public sealed class EfOrderRepository(
             await _pipeline.ExecuteAsync(async ct =>
             {
                 redemptionFailure = null;
+                campaignFailure = null;
                 writeResult = null;
                 await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
@@ -95,6 +99,16 @@ public sealed class EfOrderRepository(
                     }
                 }
 
+                if (campaignReservation is not null)
+                {
+                    campaignFailure = await TryReserveCampaignAsync(campaignReservation, ct);
+                    if (campaignFailure is not null)
+                    {
+                        await transaction.RollbackAsync(ct);
+                        return;
+                    }
+                }
+
                 dbContext.Orders.Add(order);
                 dbContext.OutboxMessages.Add(outboxMessage);
                 await dbContext.SaveChangesAsync(ct);
@@ -110,6 +124,11 @@ public sealed class EfOrderRepository(
         if (redemptionFailure is not null)
         {
             throw new CouponRedemptionUnavailableException(couponReservation!.Code, redemptionFailure);
+        }
+
+        if (campaignFailure is not null)
+        {
+            throw new CampaignBudgetUnavailableException(campaignReservation!.Code, campaignFailure);
         }
 
         return writeResult
@@ -168,6 +187,41 @@ public sealed class EfOrderRepository(
             $"""
             INSERT INTO coupon_redemptions (id, code, order_id, customer_id, state, reserved_at)
             VALUES ({Guid.NewGuid()}, {reservation.Code}, {reservation.OrderId}, {reservation.CustomerId}, {CouponRedemptionState.Reserved}, {reservation.ReservedAt})
+            """,
+            cancellationToken);
+
+        return null;
+    }
+
+    /// <summary>
+    /// Claims a slice of a campaign's budget atomically - the same guarded
+    /// UPDATE shape as TryReserveCouponAsync, decrementing a decimal budget
+    /// instead of an int count. No per-customer limit: a campaign is not
+    /// customer-scoped the way a coupon can be.
+    /// </summary>
+    /// <returns>Null when the budget was claimed; otherwise why it could not be.</returns>
+    private async Task<string?> TryReserveCampaignAsync(CampaignReservation reservation, CancellationToken cancellationToken)
+    {
+        var claimed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE promotion_campaigns
+            SET budget_remaining = budget_remaining - {reservation.Amount}
+            WHERE code = {reservation.Code}
+              AND valid_from <= {reservation.ReservedAt}
+              AND valid_until > {reservation.ReservedAt}
+              AND budget_remaining >= {reservation.Amount}
+            """,
+            cancellationToken);
+
+        if (claimed == 0)
+        {
+            return "it is no longer valid or its budget has been exhausted";
+        }
+
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO promotion_campaign_claims (id, code, order_id, amount, state, reserved_at)
+            VALUES ({Guid.NewGuid()}, {reservation.Code}, {reservation.OrderId}, {reservation.Amount}, {PromotionCampaignClaimState.Reserved}, {reservation.ReservedAt})
             """,
             cancellationToken);
 

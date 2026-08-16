@@ -59,7 +59,7 @@ public sealed class OrderStatusChangedProjectionTests(PostgresFixture fixture) :
 
         _dataSource = NpgsqlDataSource.Create(connectionString);
         _orderStatusStore = new OrderStatusStore(
-            _dataSource, new CouponRedemptionStore(), new PaymentSettlementRequester(), new CustomerTierStore(), pipelineProvider);
+            _dataSource, new CouponRedemptionStore(), new PromotionCampaignStore(), new PaymentSettlementRequester(), new CustomerTierStore(), pipelineProvider);
         _projectionStore = new OrderProjectionStore(_dataSource, pipelineProvider);
         _inboxStore = new InboxStore(_dataSource, pipelineProvider);
         _eventStoreAppender = new OrderEventStoreAppender(_dataSource, pipelineProvider);

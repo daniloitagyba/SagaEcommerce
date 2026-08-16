@@ -44,7 +44,39 @@ public sealed class CouponPercentageRule : Rule
         return new AppliedDiscount(
             coupon.Code,
             $"{coupon.Percentage:0.##}% coupon {coupon.Code}",
-            amount);
+            amount,
+            coupon.ExclusivityGroup);
+    }
+}
+
+/// <summary>
+/// The automatic, budget-limited counterpart to CouponPercentageRule
+/// (Milestone 90) - fires whenever OrderPricingService resolved a still-
+/// funded campaign, exactly the way a shopper-typed coupon fires. A flat
+/// amount, not a percentage: the amount was fixed the moment the campaign
+/// was resolved, since the atomic budget claim that follows checkout needs
+/// to know exactly how much it is claiming.
+/// </summary>
+public sealed class CampaignDiscountRule : Rule
+{
+    public override void Define()
+    {
+        PricingRequest request = null!;
+
+        When()
+            .Match(() => request, r => r.Campaign != null);
+
+        Then()
+            .Do(ctx => ctx.Insert(BuildDiscount(request)));
+    }
+
+    private static AppliedDiscount BuildDiscount(PricingRequest request)
+    {
+        var campaign = request.Campaign!;
+        var amount = campaign.Amount > request.Subtotal.Amount
+            ? request.Subtotal
+            : new Money(campaign.Amount, request.Currency);
+        return new AppliedDiscount(campaign.Code, campaign.Description, amount, campaign.ExclusivityGroup);
     }
 }
 
@@ -62,7 +94,7 @@ public sealed class CategoryDiscountRule : Rule
 
         When()
             .Match(() => policy)
-            .Match(() => request)
+            .Match(() => request, r => policy.Options.CategoryDiscountWindow == null || policy.Options.CategoryDiscountWindow.IsActive(r.EffectiveEvaluatedAt))
             .Query(() => discountedLines, query => query
                 .Match<PricingLine>()
                 .Where(line => policy.Options.CategoryDiscounts.ContainsKey(line.CategorySlug))
@@ -80,19 +112,21 @@ public sealed class CategoryDiscountRule : Rule
         IEnumerable<PricingLine> discountedLines)
     {
         var byCategory = discountedLines.GroupBy(line => line.CategorySlug, StringComparer.OrdinalIgnoreCase);
+        var exclusivityGroup = policy.Options.CategoryDiscountWindow?.ExclusivityGroup;
 
-        foreach (var group in byCategory)
+        foreach (var categoryGroup in byCategory)
         {
-            var percentage = policy.Options.CategoryDiscounts[group.Key];
-            var categorySubtotal = group.Aggregate(
+            var percentage = policy.Options.CategoryDiscounts[categoryGroup.Key];
+            var categorySubtotal = categoryGroup.Aggregate(
                 new Money(0m, request.Currency),
                 (running, line) => running + line.LineSubtotal);
             var amount = new Money(categorySubtotal.Amount * percentage / 100m, request.Currency);
 
             context.Insert(new AppliedDiscount(
-                $"CATEGORY-{group.Key.ToUpperInvariant()}",
-                $"{percentage:0.##}% off {group.Key}",
-                amount));
+                $"CATEGORY-{categoryGroup.Key.ToUpperInvariant()}",
+                $"{percentage:0.##}% off {categoryGroup.Key}",
+                amount,
+                exclusivityGroup));
         }
     }
 }
@@ -111,7 +145,7 @@ public sealed class BulkQuantityRule : Rule
 
         When()
             .Match(() => policy)
-            .Match(() => request)
+            .Match(() => request, r => policy.Options.BulkDiscountWindow == null || policy.Options.BulkDiscountWindow.IsActive(r.EffectiveEvaluatedAt))
             .Match(() => line, candidate => candidate.Quantity >= policy.Options.BulkQuantityThreshold);
 
         Then()
@@ -125,7 +159,8 @@ public sealed class BulkQuantityRule : Rule
         return new AppliedDiscount(
             $"BULK-{line.Sku}",
             $"{percentage:0.##}% volume discount on {line.Quantity}x {line.Sku}",
-            amount);
+            amount,
+            policy.Options.BulkDiscountWindow?.ExclusivityGroup);
     }
 }
 
@@ -139,15 +174,19 @@ public sealed class LoyaltyTierRule : Rule
     public override void Define()
     {
         PricingRequest request = null!;
+        PromotionPolicy policy = null!;
 
         When()
-            .Match(() => request, r => r.Customer != null && CustomerTiers.DiscountPercentageFor(r.Customer.Tier) > 0m);
+            .Match(() => policy)
+            .Match(() => request, r =>
+                r.Customer != null && CustomerTiers.DiscountPercentageFor(r.Customer.Tier) > 0m
+                && (policy.Options.TierDiscountWindow == null || policy.Options.TierDiscountWindow.IsActive(r.EffectiveEvaluatedAt)));
 
         Then()
-            .Do(ctx => ctx.Insert(BuildDiscount(request)));
+            .Do(ctx => ctx.Insert(BuildDiscount(request, policy)));
     }
 
-    private static AppliedDiscount BuildDiscount(PricingRequest request)
+    private static AppliedDiscount BuildDiscount(PricingRequest request, PromotionPolicy policy)
     {
         var tier = request.Customer!.Tier;
         var percentage = CustomerTiers.DiscountPercentageFor(tier);
@@ -156,7 +195,8 @@ public sealed class LoyaltyTierRule : Rule
         return new AppliedDiscount(
             $"TIER-{tier.ToUpperInvariant()}",
             $"{percentage:0.##}% {tier} member discount",
-            amount);
+            amount,
+            policy.Options.TierDiscountWindow?.ExclusivityGroup);
     }
 }
 
@@ -175,7 +215,9 @@ public sealed class FreeShippingRule : Rule
 
         When()
             .Match(() => policy)
-            .Match(() => request, r => r.Subtotal.Amount >= policy.Options.FreeShippingThreshold);
+            .Match(() => request, r =>
+                r.Subtotal.Amount >= policy.Options.FreeShippingThreshold
+                && (policy.Options.FreeShippingWindow == null || policy.Options.FreeShippingWindow.IsActive(r.EffectiveEvaluatedAt)));
 
         Then()
             .Do(ctx => ctx.Insert(new FreeShippingGranted(

@@ -19,6 +19,10 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
 
     public DbSet<CouponRedemption> CouponRedemptions => Set<CouponRedemption>();
 
+    public DbSet<PromotionCampaign> PromotionCampaigns => Set<PromotionCampaign>();
+
+    public DbSet<PromotionCampaignClaim> PromotionCampaignClaims => Set<PromotionCampaignClaim>();
+
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     public DbSet<InboxMessage> InboxMessages => Set<InboxMessage>();
@@ -40,6 +44,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         ConfigureCustomer(modelBuilder);
         ConfigureOrderReturn(modelBuilder);
         ConfigureCoupon(modelBuilder);
+        ConfigurePromotionCampaign(modelBuilder);
         ConfigureOutbox(modelBuilder);
         ConfigureInbox(modelBuilder);
         ConfigureOrderIdempotency(modelBuilder);
@@ -81,6 +86,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         order.Property(item => item.ShippingTotal).HasColumnName("shipping_total").HasPrecision(18, 2).IsRequired();
         order.Property(item => item.TaxTotal).HasColumnName("tax_total").HasPrecision(18, 2).IsRequired();
         order.Property(item => item.CouponCode).HasColumnName("coupon_code").HasMaxLength(64);
+        order.Property(item => item.CampaignCode).HasColumnName("campaign_code").HasMaxLength(64);
         order.Property(item => item.PaymentMethod).HasColumnName("payment_method").HasMaxLength(16).IsRequired();
 
         // Owned rather than a separate table: an address belongs to the
@@ -199,6 +205,7 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         coupon.Property(item => item.MaxTotalRedemptions).HasColumnName("max_total_redemptions");
         coupon.Property(item => item.MaxPerCustomer).HasColumnName("max_per_customer");
         coupon.Property(item => item.RedemptionCount).HasColumnName("redemption_count").IsRequired();
+        coupon.Property(item => item.ExclusivityGroup).HasColumnName("exclusivity_group").HasMaxLength(64);
 
         var redemption = modelBuilder.Entity<CouponRedemption>();
 
@@ -223,6 +230,41 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         // hot path inside the reservation transaction.
         redemption.HasIndex(item => new { item.Code, item.CustomerId, item.State })
             .HasDatabaseName("ix_coupon_redemptions_customer");
+    }
+
+    private static void ConfigurePromotionCampaign(ModelBuilder modelBuilder)
+    {
+        var campaign = modelBuilder.Entity<PromotionCampaign>();
+
+        campaign.ToTable("promotion_campaigns");
+        campaign.HasKey(item => item.Code);
+        campaign.Property(item => item.Code).HasColumnName("code").HasMaxLength(64).ValueGeneratedNever();
+        campaign.Property(item => item.Description).HasColumnName("description").HasMaxLength(256).IsRequired();
+        campaign.Property(item => item.DiscountAmount).HasColumnName("discount_amount").HasPrecision(18, 2).IsRequired();
+        campaign.Property(item => item.ValidFrom).HasColumnName("valid_from").IsRequired();
+        campaign.Property(item => item.ValidUntil).HasColumnName("valid_until").IsRequired();
+        campaign.Property(item => item.MinimumOrderAmount).HasColumnName("minimum_order_amount").HasPrecision(18, 2).IsRequired();
+        campaign.Property(item => item.ExclusivityGroup).HasColumnName("exclusivity_group").HasMaxLength(64);
+        campaign.Property(item => item.TotalBudget).HasColumnName("total_budget").HasPrecision(18, 2).IsRequired();
+        campaign.Property(item => item.BudgetRemaining).HasColumnName("budget_remaining").HasPrecision(18, 2).IsRequired();
+
+        var claim = modelBuilder.Entity<PromotionCampaignClaim>();
+
+        claim.ToTable("promotion_campaign_claims");
+        claim.HasKey(item => item.Id);
+        claim.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
+        claim.Property(item => item.Code).HasColumnName("code").HasMaxLength(64).IsRequired();
+        claim.Property(item => item.OrderId).HasColumnName("order_id").IsRequired();
+        claim.Property(item => item.Amount).HasColumnName("amount").HasPrecision(18, 2).IsRequired();
+        claim.Property(item => item.State).HasColumnName("state").HasMaxLength(16).IsRequired();
+        claim.Property(item => item.ReservedAt).HasColumnName("reserved_at").IsRequired();
+        claim.Property(item => item.SettledAt).HasColumnName("settled_at");
+
+        // One order claims a given campaign's budget at most once - same
+        // reasoning as coupon_redemptions' equivalent index.
+        claim.HasIndex(item => new { item.Code, item.OrderId })
+            .IsUnique()
+            .HasDatabaseName("ux_promotion_campaign_claims_code_order");
     }
 
     private static void ConfigureOutbox(ModelBuilder modelBuilder)

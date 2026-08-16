@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Polly.Registry;
 
 namespace Inventory.IntegrationTests;
 
@@ -35,6 +36,7 @@ public sealed class ReplenishmentTests(PostgresFixture fixture) : IAsyncLifetime
 
         var services = new ServiceCollection();
         services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddOrdersResilience();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -136,6 +138,9 @@ public sealed class ReplenishmentTests(PostgresFixture fixture) : IAsyncLifetime
         Assert.Equal(12, request.Quantity);
         // The purchase order's own id stands in for OrderId - there is no real customer order behind a replenishment restock.
         Assert.Equal(purchaseOrderId, request.OrderId);
+        // The whole point of the loop: the restock names the warehouse the
+        // purchase order was actually raised for, so it cannot land anywhere else.
+        Assert.Equal("WH-SP", request.WarehouseCode);
     }
 
     private ReplenishmentRequestProcessor CreateRequestProcessor() =>
@@ -143,14 +148,16 @@ public sealed class ReplenishmentTests(PostgresFixture fixture) : IAsyncLifetime
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new InventoryKafkaOptions()),
             Options.Create(new ReplenishmentOptions { TargetMultiplier = 3 }),
-            NullLogger<ReplenishmentRequestProcessor>.Instance);
+            NullLogger<ReplenishmentRequestProcessor>.Instance,
+            _serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>());
 
     private PurchaseOrderReceivingSweeper CreateReceivingSweeper(int leadTimeSeconds) =>
         new(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new ReplenishmentOptions { LeadTimeSeconds = leadTimeSeconds }),
             TimeProvider.System,
-            NullLogger<PurchaseOrderReceivingSweeper>.Instance);
+            NullLogger<PurchaseOrderReceivingSweeper>.Instance,
+            _serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>());
 
     private static ConsumeResult<string, string> CreateSignalConsumeResult(
         Guid eventId, string sku, string warehouseCode, int available, int reorderPoint)

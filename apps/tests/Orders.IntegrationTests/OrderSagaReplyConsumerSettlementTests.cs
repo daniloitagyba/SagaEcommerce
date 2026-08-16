@@ -63,7 +63,7 @@ public sealed class OrderSagaReplyConsumerSettlementTests(PostgresFixture fixtur
     public void Dispose() => _producer.Dispose();
 
     private OrderStatusStore CreateOrderStatusStore(ResiliencePipelineProvider<string> pipelineProvider) =>
-        new(_dataSource, new CouponRedemptionStore(), new PaymentSettlementRequester(), new CustomerTierStore(), pipelineProvider);
+        new(_dataSource, new CouponRedemptionStore(), new PromotionCampaignStore(), new PaymentSettlementRequester(), new CustomerTierStore(), pipelineProvider);
 
     [Fact]
     public async Task AShippedOrderMovesToFulfillmentHoldWhenSettlementComesBackExpiredInsteadOfCaptured()

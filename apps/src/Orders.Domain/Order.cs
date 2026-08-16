@@ -55,6 +55,9 @@ public sealed class Order
     /// <summary>The coupon the shopper presented, if any - kept so DiscountTotal stays auditable.</summary>
     public string? CouponCode { get; private set; }
 
+    /// <summary>The automatic campaign applied, if any - same auditability reasoning as CouponCode.</summary>
+    public string? CampaignCode { get; private set; }
+
     /// <summary>
     /// "Card", "Pix" or "Boleto", deciding whether Payments holds an
     /// authorization to capture at shipment or charges outright. A plain
@@ -210,7 +213,8 @@ public sealed class Order
         decimal shippingTotal,
         decimal taxTotal,
         string paymentMethod,
-        ShippingAddress? shippingAddress)
+        ShippingAddress? shippingAddress,
+        string? campaignCode = null)
     {
         ArgumentNullException.ThrowIfNull(lines);
 
@@ -247,6 +251,7 @@ public sealed class Order
             Status = OrderStatusNames.Created,
             CreatedAt = createdAt,
             CouponCode = couponCode,
+            CampaignCode = campaignCode,
             PaymentMethod = paymentMethod,
             ShippingAddress = shippingAddress
         };

@@ -12,7 +12,10 @@ public sealed record PricedCheckout(
     IReadOnlyList<OrderLineDraft> Lines,
     PricingBreakdown Breakdown,
     /// <summary>Set only when a coupon was resolved and found eligible - the checkout must then claim a redemption slot for it.</summary>
-    string? CouponCode);
+    string? CouponCode,
+    /// <summary>Set only when a campaign was resolved and found eligible - the checkout must then claim its budget.</summary>
+    string? CampaignCode = null,
+    decimal CampaignAmount = 0m);
 
 /// <summary>
 /// Turns "SKU + quantity" into a priced order. The catalog
@@ -24,6 +27,7 @@ public sealed class OrderPricingService(
     ICatalogClient catalogClient,
     ICouponRepository couponRepository,
     ICustomerRepository customerRepository,
+    ICampaignRepository campaignRepository,
     IPricingEngine pricingEngine,
     TimeProvider timeProvider)
 {
@@ -99,14 +103,15 @@ public sealed class OrderPricingService(
                 new Money(entry.Product.Price, currency)))
             .ToList();
 
+        var subtotal = pricingLines.Aggregate(
+            new Money(0m, currency),
+            (running, line) => running + line.LineSubtotal);
+        var evaluatedAt = timeProvider.GetUtcNow();
+
         // Resolve the coupon before pricing, never during - keeps the rules engine free of I/O.
         ResolvedCoupon? resolvedCoupon = null;
         if (!string.IsNullOrWhiteSpace(command.CouponCode))
         {
-            var subtotal = pricingLines.Aggregate(
-                new Money(0m, currency),
-                (running, line) => running + line.LineSubtotal);
-
             var (rejection, coupon) = await ResolveCouponAsync(
                 command.CouponCode, command.CustomerId!, subtotal.Amount, cancellationToken);
 
@@ -121,6 +126,12 @@ public sealed class OrderPricingService(
             resolvedCoupon = coupon;
         }
 
+        // Unlike a coupon, nobody typed a campaign code - it's resolved the
+        // same automatic way as customer tier, so a campaign that no longer
+        // qualifies (expired, budget spent) is simply absent, not a
+        // checkout-failing error.
+        var resolvedCampaign = await ResolveCampaignAsync(subtotal.Amount, evaluatedAt, cancellationToken);
+
         // Customer standing and destination resolved here too, so the rules stay pure functions of facts, never a repository lookup.
         var customer = await customerRepository.GetOrCreateAsync(command.CustomerId!, cancellationToken);
         var destination = command.ShippingAddress is { IsComplete: true } address
@@ -133,7 +144,9 @@ public sealed class OrderPricingService(
             pricingLines,
             resolvedCoupon,
             new PricingCustomer(customer.Id, customer.Tier, customer.CreatedAt),
-            destination));
+            destination,
+            resolvedCampaign,
+            evaluatedAt));
 
         var drafts = pricingLines
             .Select((line, index) => new OrderLineDraft(
@@ -146,7 +159,36 @@ public sealed class OrderPricingService(
                 breakdown.LineTaxes[index].Amount))
             .ToList();
 
-        return (new PricedCheckout(currencyCode, drafts, breakdown, resolvedCoupon?.Code), errors);
+        // The budget is claimed for what the order actually received, not
+        // the campaign's nominal amount - if the exclusivity reduction or
+        // the subtotal cap dropped or shrank it, claiming the nominal
+        // amount would debit budget for a discount nobody got.
+        var appliedCampaign = resolvedCampaign is null
+            ? null
+            : breakdown.Discounts.FirstOrDefault(discount => discount.Code == resolvedCampaign.Code);
+
+        return (new PricedCheckout(
+            currencyCode,
+            drafts,
+            breakdown,
+            resolvedCoupon?.Code,
+            appliedCampaign?.Code,
+            appliedCampaign?.Amount.Amount ?? 0m), errors);
+    }
+
+    private async Task<ResolvedCampaign?> ResolveCampaignAsync(
+        decimal subtotal, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var campaign = await campaignRepository.FindBestActiveAsync(subtotal, now, cancellationToken);
+        if (campaign is null)
+        {
+            return null;
+        }
+
+        var rejection = CampaignEligibility.Evaluate(campaign, subtotal, now);
+        return rejection == CampaignRejectionReason.None
+            ? new ResolvedCampaign(campaign.Code, campaign.Description, campaign.DiscountAmount, campaign.ExclusivityGroup)
+            : null;
     }
 
     private async Task<(CouponRejectionReason Rejection, ResolvedCoupon? Coupon)> ResolveCouponAsync(

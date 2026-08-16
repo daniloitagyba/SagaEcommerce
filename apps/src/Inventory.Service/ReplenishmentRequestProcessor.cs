@@ -6,6 +6,8 @@ using Inventory.Service.Data;
 using Inventory.Service.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Polly;
+using Polly.Registry;
 
 namespace Inventory.Service;
 
@@ -19,11 +21,15 @@ public sealed class ReplenishmentRequestProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<InventoryKafkaOptions> kafkaOptions,
     IOptions<ReplenishmentOptions> replenishmentOptions,
-    ILogger<ReplenishmentRequestProcessor> logger)
+    ILogger<ReplenishmentRequestProcessor> logger,
+    ResiliencePipelineProvider<string> pipelineProvider)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly InventoryKafkaOptions _kafkaOptions = kafkaOptions.Value;
     private readonly ReplenishmentOptions _replenishmentOptions = replenishmentOptions.Value;
+    // No-retry transactional pipeline, not the retrying PostgresPipeline -
+    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
+    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, string> consumeResult,
@@ -59,39 +65,42 @@ public sealed class ReplenishmentRequestProcessor(
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-
-        var processedAt = DateTimeOffset.UtcNow;
-        var inboxConsumerName = $"{_kafkaOptions.ConsumerGroup}-replenishment";
-        var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
-            dbContext.Database, inboxConsumerName, signal.EventId,
-            consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
-            signal.CorrelationId, processedAt, cancellationToken);
-
-        if (insertedRows == 0)
+        return await _pipeline.ExecuteAsync(async ct =>
         {
-            await transaction.RollbackAsync(cancellationToken);
-            OrdersTelemetry.RecordProcessed("duplicate");
-            InventoryLog.Duplicate(logger, signal.EventId, inboxConsumerName);
-            return MessageProcessingResult.Duplicate;
-        }
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-        // Restocks to a multiple of the reorder point, not merely back to
-        // it - see ReplenishmentOptions.TargetMultiplier.
-        var target = signal.ReorderPoint * _replenishmentOptions.TargetMultiplier;
-        var quantity = Math.Max(target - signal.AvailableQuantity, signal.ReorderPoint);
+            var processedAt = DateTimeOffset.UtcNow;
+            var inboxConsumerName = $"{_kafkaOptions.ConsumerGroup}-replenishment";
+            var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
+                dbContext.Database, inboxConsumerName, signal.EventId,
+                consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,
+                signal.CorrelationId, processedAt, ct);
 
-        var purchaseOrder = PurchaseOrder.Create(signal.Sku, signal.WarehouseCode, quantity, signal.CorrelationId, processedAt);
-        dbContext.PurchaseOrders.Add(purchaseOrder);
+            if (insertedRows == 0)
+            {
+                await transaction.RollbackAsync(ct);
+                OrdersTelemetry.RecordProcessed("duplicate");
+                InventoryLog.Duplicate(logger, signal.EventId, inboxConsumerName);
+                return MessageProcessingResult.Duplicate;
+            }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            // Restocks to a multiple of the reorder point, not merely back to
+            // it - see ReplenishmentOptions.TargetMultiplier.
+            var target = signal.ReorderPoint * _replenishmentOptions.TargetMultiplier;
+            var quantity = Math.Max(target - signal.AvailableQuantity, signal.ReorderPoint);
 
-        activity?.SetTag("inventory.purchase_order_id", purchaseOrder.Id);
-        activity?.SetTag("inventory.purchase_order_quantity", quantity);
-        OrdersTelemetry.RecordProcessed("success");
-        ReplenishmentLog.Requested(logger, purchaseOrder.Id, signal.Sku, signal.WarehouseCode, quantity, signal.CorrelationId);
-        return MessageProcessingResult.Processed;
+            var purchaseOrder = PurchaseOrder.Create(signal.Sku, signal.WarehouseCode, quantity, signal.CorrelationId, processedAt);
+            dbContext.PurchaseOrders.Add(purchaseOrder);
+
+            await dbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            activity?.SetTag("inventory.purchase_order_id", purchaseOrder.Id);
+            activity?.SetTag("inventory.purchase_order_quantity", quantity);
+            OrdersTelemetry.RecordProcessed("success");
+            ReplenishmentLog.Requested(logger, purchaseOrder.Id, signal.Sku, signal.WarehouseCode, quantity, signal.CorrelationId);
+            return MessageProcessingResult.Processed;
+        }, cancellationToken);
     }
 
     private static string? GetHeader(Headers headers, string key)

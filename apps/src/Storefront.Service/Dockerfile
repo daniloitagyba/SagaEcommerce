@@ -40,7 +40,9 @@ RUN dotnet publish apps/src/Storefront.Service/Storefront.Service.csproj \
     --output /app/publish \
     /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+# Pinned to a specific patch, not the floating 10.0 tag - matches the SDK
+# pin above and the runtime this repo's CI actually tests against.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.11 AS runtime
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*

@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Polly.Registry;
 using System.Text.Json;
 
 namespace Inventory.IntegrationTests;
@@ -34,6 +35,7 @@ public sealed class InventoryReservationLedgerTests(PostgresFixture fixture) : I
         var services = new ServiceCollection();
         services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<WarehouseAllocationStore>();
+        services.AddOrdersResilience();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -146,7 +148,8 @@ public sealed class InventoryReservationLedgerTests(PostgresFixture fixture) : I
         return new InventoryReservationMessageProcessor(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             kafkaOptions,
-            NullLogger<InventoryReservationMessageProcessor>.Instance);
+            NullLogger<InventoryReservationMessageProcessor>.Instance,
+            _serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>());
     }
 
     private static ConsumeResult<string, string> ReserveConsumeResult(Guid reservationId, Guid orderId, string sku, int quantity)

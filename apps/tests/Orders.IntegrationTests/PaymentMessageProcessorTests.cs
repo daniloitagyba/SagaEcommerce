@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using Payments.Service;
 using Payments.Service.Data;
 using Payments.Service.Risk;
+using Polly.Registry;
 using System.Text.Json;
 using Testcontainers.Redpanda;
 
@@ -43,6 +44,7 @@ public sealed class PaymentMessageProcessorTests(PostgresFixture fixture) : IAsy
         services.Configure<PaymentRiskOptions>(_ => { });
         services.AddScoped<PaymentRiskEvaluator>();
         services.AddScoped<PaymentDecisionCoordinator>();
+        services.AddOrdersResilience();
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -189,14 +191,16 @@ public sealed class PaymentMessageProcessorTests(PostgresFixture fixture) : IAsy
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _schemaRegistryClient,
             Options.Create(new PaymentsKafkaOptions()),
-            NullLogger<PaymentMessageProcessor>.Instance);
+            NullLogger<PaymentMessageProcessor>.Instance,
+            _serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>());
     }
 
     private PaymentDecisionRequestProcessor CreateDecisionProcessor() =>
         new(
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new PaymentDecisionRequestOptions()),
-            NullLogger<PaymentDecisionRequestProcessor>.Instance);
+            NullLogger<PaymentDecisionRequestProcessor>.Instance,
+            _serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>());
 
     private async Task<ConsumeResult<string, byte[]>> CreateConsumeResultAsync(Guid eventId, Guid orderId, decimal amount)
     {

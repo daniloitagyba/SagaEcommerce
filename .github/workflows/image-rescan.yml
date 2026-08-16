@@ -1,0 +1,45 @@
+name: image-rescan
+
+# ci.yml's Trivy scan only runs when a push touches main - a CRITICAL/HIGH
+# CVE disclosed against a base-image layer already baked into a published
+# :latest tag goes uncaught until the next code change happens to touch
+# that service. codeql.yml already runs on a weekly cron for the identical
+# reason ("catch new query-pack rules against unchanged code"); this closes
+# the same gap for container images. Re-scans the already-published
+# :latest digest rather than rebuilding - cheaper, and it is the exact
+# artifact a cluster would pull, not a fresh build that could quietly
+# differ from it.
+on:
+  schedule:
+    - cron: "0 6 * * 2"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  rescan:
+    name: rescan (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - orders-api
+          - orders-worker
+          - payments-service
+          - catalog-service
+          - inventory-service
+          - cart-service
+          - storefront-service
+    env:
+      IMAGE: ghcr.io/daniloitagyba/saga-ecommerce/${{ matrix.service }}
+    steps:
+      - name: scan for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:latest
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true

@@ -4,6 +4,8 @@ using BuildingBlocks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Payments.Service.Data;
+using Polly;
+using Polly.Registry;
 
 namespace Payments.Service;
 
@@ -26,7 +28,8 @@ public sealed class PaymentAuthorizationSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<PaymentSettlementOptions> options,
     TimeProvider timeProvider,
-    ILogger<PaymentAuthorizationSweeper> logger) : BackgroundService
+    ILogger<PaymentAuthorizationSweeper> logger,
+    ResiliencePipelineProvider<string> pipelineProvider) : BackgroundService
 {
     /// <summary>
     /// Arbitrary but fixed - advisory locks share one namespace per
@@ -37,6 +40,9 @@ public sealed class PaymentAuthorizationSweeper(
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentSettlementOptions _options = options.Value;
+    // No-retry transactional pipeline, not the retrying PostgresPipeline -
+    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
+    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -67,91 +73,94 @@ public sealed class PaymentAuthorizationSweeper(
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<PaymentsDbContext>();
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-
-        // pg_try_advisory_xact_lock never waits: a replica that does not get
-        // the lock skips this tick entirely instead of queueing behind the
-        // one that did. Transaction-scoped, so it is released on commit or
-        // rollback - including the rollback in the catch above - and there
-        // is no unlock call that can be missed.
-        var isSweeper = await dbContext.Database
-            .SqlQuery<bool>($"SELECT pg_try_advisory_xact_lock({SweepLockKey}) AS \"Value\"")
-            .SingleAsync(cancellationToken);
-
-        if (!isSweeper)
+        await _pipeline.ExecuteAsync(async ct =>
         {
-            await transaction.RollbackAsync(cancellationToken);
-            return;
-        }
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-        var now = timeProvider.GetUtcNow();
+            // pg_try_advisory_xact_lock never waits: a replica that does not get
+            // the lock skips this tick entirely instead of queueing behind the
+            // one that did. Transaction-scoped, so it is released on commit or
+            // rollback - including the rollback in the catch above - and there
+            // is no unlock call that can be missed.
+            var isSweeper = await dbContext.Database
+                .SqlQuery<bool>($"SELECT pg_try_advisory_xact_lock({SweepLockKey}) AS \"Value\"")
+                .SingleAsync(ct);
 
-        // SKIP LOCKED is what makes running this on every replica safe:
-        // each one claims a disjoint batch instead of contending for the
-        // same rows, and none of them waits on another's lock.
-        var claimedIds = await dbContext.Database
-            .SqlQuery<Guid>($"""
-                SELECT id AS "Value"
-                FROM payments
-                WHERE is_primary
-                  AND state IN ({PaymentStates.Authorized}, {PaymentStates.AwaitingPayment})
-                  AND authorization_expires_at IS NOT NULL
-                  AND authorization_expires_at <= {now}
-                ORDER BY authorization_expires_at
-                LIMIT {_options.ExpirySweepBatchSize}
-                FOR UPDATE SKIP LOCKED
-                """)
-            .ToListAsync(cancellationToken);
-
-        if (claimedIds.Count == 0)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            return;
-        }
-
-        var payments = await dbContext.Payments
-            .Where(payment => claimedIds.Contains(payment.Id))
-            .ToListAsync(cancellationToken);
-
-        var expired = 0;
-        foreach (var payment in payments)
-        {
-            // Goes through the domain guard rather than a bulk UPDATE, so a
-            // payment captured between the claim and here is left alone.
-            if (!payment.TrySettleWithoutCapture(PaymentStates.Expired, "payment window elapsed without settlement", now))
+            if (!isSweeper)
             {
-                continue;
+                await transaction.RollbackAsync(ct);
+                return;
             }
 
-            expired++;
+            var now = timeProvider.GetUtcNow();
 
-            var reply = new PaymentSettlementReplied(
-                payment.OrderId,
-                payment.Id,
-                payment.State,
-                payment.Amount,
-                payment.Currency,
-                payment.CorrelationId,
-                now,
-                RequiresReconciliation: true);
+            // SKIP LOCKED is what makes running this on every replica safe:
+            // each one claims a disjoint batch instead of contending for the
+            // same rows, and none of them waits on another's lock.
+            var claimedIds = await dbContext.Database
+                .SqlQuery<Guid>($"""
+                    SELECT id AS "Value"
+                    FROM payments
+                    WHERE is_primary
+                      AND state IN ({PaymentStates.Authorized}, {PaymentStates.AwaitingPayment})
+                      AND authorization_expires_at IS NOT NULL
+                      AND authorization_expires_at <= {now}
+                    ORDER BY authorization_expires_at
+                    LIMIT {_options.ExpirySweepBatchSize}
+                    FOR UPDATE SKIP LOCKED
+                    """)
+                .ToListAsync(ct);
 
-            dbContext.OutboxMessages.Add(OutboxMessage.Create(
-                Guid.NewGuid(),
-                nameof(PaymentSettlementReplied),
-                JsonSerializer.Serialize(reply, SerializerOptions),
-                now,
-                payment.CorrelationId,
-                Activity.Current?.Id,
-                Activity.Current?.TraceStateString));
-        }
+            if (claimedIds.Count == 0)
+            {
+                await transaction.RollbackAsync(ct);
+                return;
+            }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            var payments = await dbContext.Payments
+                .Where(payment => claimedIds.Contains(payment.Id))
+                .ToListAsync(ct);
 
-        if (expired > 0)
-        {
-            PaymentSettlementLog.ExpiredAuthorizations(logger, expired);
-        }
+            var expired = 0;
+            foreach (var payment in payments)
+            {
+                // Goes through the domain guard rather than a bulk UPDATE, so a
+                // payment captured between the claim and here is left alone.
+                if (!payment.TrySettleWithoutCapture(PaymentStates.Expired, "payment window elapsed without settlement", now))
+                {
+                    continue;
+                }
+
+                expired++;
+
+                var reply = new PaymentSettlementReplied(
+                    payment.OrderId,
+                    payment.Id,
+                    payment.State,
+                    payment.Amount,
+                    payment.Currency,
+                    payment.CorrelationId,
+                    now,
+                    RequiresReconciliation: true);
+
+                dbContext.OutboxMessages.Add(OutboxMessage.Create(
+                    Guid.NewGuid(),
+                    nameof(PaymentSettlementReplied),
+                    JsonSerializer.Serialize(reply, SerializerOptions),
+                    now,
+                    payment.CorrelationId,
+                    Activity.Current?.Id,
+                    Activity.Current?.TraceStateString));
+            }
+
+            await dbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            if (expired > 0)
+            {
+                PaymentSettlementLog.ExpiredAuthorizations(logger, expired);
+            }
+        }, cancellationToken);
     }
 }
 
