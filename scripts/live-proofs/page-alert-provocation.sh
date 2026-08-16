@@ -126,16 +126,24 @@ case "$scenario" in
     }
     trap restore_redis EXIT
 
-    compose stop --timeout 20 redis >/dev/null
-    redis_stopped=true
-    for _ in $(seq 1 4); do
-      order_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
-      curl --silent --show-error --max-time 15 --output /dev/null \
-        --header "Authorization: Bearer $access_token" \
-        "$orders_url/orders/$order_id" || true
+    # As with the settlement counter, the first exported sample establishes
+    # the Prometheus baseline. Exercise two batches across a scrape boundary
+    # so a clean lab with no pre-existing bypass series proves increase() too.
+    for batch in 1 2; do
+      compose stop --timeout 20 redis >/dev/null
+      redis_stopped=true
+      for _ in $(seq 1 4); do
+        order_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
+        curl --silent --show-error --max-time 15 --output /dev/null \
+          --header "Authorization: Bearer $access_token" \
+          "$orders_url/orders/$order_id" || true
+      done
+      compose start redis >/dev/null
+      redis_stopped=false
+      if [[ "$batch" -eq 1 ]]; then
+        sleep 20
+      fi
     done
-    compose start redis >/dev/null
-    redis_stopped=false
 
     wait_for_alert "$alert_name" 24
     curl --fail --silent --show-error "$orders_url/health/ready" >/dev/null
