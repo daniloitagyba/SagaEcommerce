@@ -88,6 +88,18 @@ spec:
   policyTypes:
     - Egress
   egress:
+    # A meshed workload must obtain identity and policy before its application
+    # container starts. Without this cross-namespace exception, default-deny
+    # preserved old proxy connections but every newly scheduled pod stalled
+    # forever in the Linkerd native sidecar init phase.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+      ports:
+        - { protocol: TCP, port: 8080 } # identity
+        - { protocol: TCP, port: 8086 } # destination
+        - { protocol: TCP, port: 8090 } # policy
     # East-west HTTP stays inside this application boundary. Both the app
     # port and Linkerd's redirected inbound port are explicit.
     - to:
