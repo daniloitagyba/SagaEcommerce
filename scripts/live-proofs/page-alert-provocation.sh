@@ -33,8 +33,13 @@ mkdir -p "$test_directory"
 
 query_alert_count() {
   local alert_name=$1
+  local check_name=${2:-}
+  local selector="alertname=\"$alert_name\",alertstate=\"firing\""
+  if [[ -n "$check_name" ]]; then
+    selector+=",check=\"$check_name\""
+  fi
   curl --fail --silent --show-error --get \
-    --data-urlencode "query=ALERTS{alertname=\"$alert_name\",alertstate=\"firing\"}" \
+    --data-urlencode "query=ALERTS{$selector}" \
     "$prometheus_url/api/v1/query" |
     jq --raw-output '.data.result | length'
 }
@@ -42,8 +47,9 @@ query_alert_count() {
 wait_for_alert() {
   local alert_name=$1
   local attempts=$2
+  local check_name=${3:-}
   for _ in $(seq 1 "$attempts"); do
-    if [[ "$(query_alert_count "$alert_name")" -gt 0 ]]; then
+    if [[ "$(query_alert_count "$alert_name" "$check_name")" -gt 0 ]]; then
       return 0
     fi
     sleep 5
@@ -67,11 +73,13 @@ require_alert_rule() {
 
 record_result() {
   local alert_name=$1
+  local check_name=${2:-}
   jq --null-input \
     --arg scenario "$scenario" \
     --arg alert "$alert_name" \
+    --arg check "$check_name" \
     --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{scenario:$scenario,alert:$alert,completed_at:$completedAt,result:"success"}' |
+    '{scenario:$scenario,alert:$alert,check:(if $check == "" then null else $check end),completed_at:$completedAt,result:"success"}' |
     tee "$test_directory/result.json"
 }
 
@@ -152,6 +160,7 @@ case "$scenario" in
 
   anti-entropy)
     alert_name=AntiEntropyDivergenceDetected
+    check_name=backorder_on_dead_order
     require_alert_rule "$alert_name"
     reservation_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
     order_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
@@ -174,9 +183,9 @@ case "$scenario" in
     # The normal lab sweep interval is five minutes. Waiting for the real
     # scheduled sweep proves the deployed loop and its cross-service reads,
     # not just the pure invariant function covered by unit tests.
-    wait_for_alert "$alert_name" 72
+    wait_for_alert "$alert_name" 72 "$check_name"
     remove_marker
     marker_inserted=false
-    record_result "$alert_name"
+    record_result "$alert_name" "$check_name"
     ;;
 esac
