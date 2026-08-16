@@ -6,8 +6,11 @@ metadata:
     app.kubernetes.io/name: orders-migrations
     app.kubernetes.io/component: migration
   annotations:
-    argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # A normal negative sync wave lets ConfigMaps, the SealedSecret and
+    # infrastructure Services reconcile first. A PreSync hook ran before
+    # those dependencies existed on a clean namespace.
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   backoffLimit: 3
   activeDeadlineSeconds: 180
