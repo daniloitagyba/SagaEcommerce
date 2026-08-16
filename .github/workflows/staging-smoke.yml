@@ -89,7 +89,9 @@ jobs:
       - name: run the critical staging smoke test
         env:
           KUBERNETES_NAMESPACE: ${{ inputs.namespace }}
-        run: bash scripts/infra/k3s-smoke-test.sh | tee staging-evidence/smoke.log
+        run: |
+          set -o pipefail
+          bash scripts/infra/k3s-smoke-test.sh | tee staging-evidence/smoke.log
 
       - name: record staging evidence
         if: always()

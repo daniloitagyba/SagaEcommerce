@@ -58,6 +58,27 @@ wait_for_alert() {
   return 1
 }
 
+query_counter_count() {
+  local check_name=$1
+  curl --fail --silent --show-error --get \
+    --data-urlencode "query=anti_entropy_divergences_total{check=\"$check_name\"}" \
+    "$prometheus_url/api/v1/query" |
+    jq --raw-output '.data.result | length'
+}
+
+wait_for_counter() {
+  local check_name=$1
+  local attempts=$2
+  for _ in $(seq 1 "$attempts"); do
+    if [[ "$(query_counter_count "$check_name")" -gt 0 ]]; then
+      return 0
+    fi
+    sleep 5
+  done
+  printf 'Counter for anti-entropy check %s was not exported.\n' "$check_name" >&2
+  return 1
+}
+
 require_alert_rule() {
   local alert_name=$1
   curl --fail --silent --show-error --request POST "$prometheus_url/-/reload" >/dev/null
@@ -166,6 +187,12 @@ case "$scenario" in
     order_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
     marker_sku="ALERT-DRILL-$run_id"
     marker_inserted=false
+    insert_marker() {
+      compose exec -T postgres \
+        psql --username orders --dbname inventory --quiet \
+        --command "INSERT INTO backorders (reservation_id, order_id, sku, quantity, correlation_id, requested_at) VALUES ('$reservation_id', '$order_id', '$marker_sku', 1, 'alert-drill-$run_id', now());" >/dev/null
+      marker_inserted=true
+    }
     remove_marker() {
       if [[ "$marker_inserted" == true ]]; then
         compose exec -T postgres \
@@ -175,10 +202,23 @@ case "$scenario" in
     }
     trap remove_marker EXIT
 
-    compose exec -T postgres \
-      psql --username orders --dbname inventory --quiet \
-      --command "INSERT INTO backorders (reservation_id, order_id, sku, quantity, correlation_id, requested_at) VALUES ('$reservation_id', '$order_id', '$marker_sku', 1, 'alert-drill-$run_id', now());" >/dev/null
-    marker_inserted=true
+    counter_already_exported=$(query_counter_count "$check_name")
+    insert_marker
+
+    # On a clean lab, the first detected divergence creates this labelled
+    # counter series and therefore establishes only the Prometheus baseline.
+    # Wait for that real sweep and scrape, then provoke a second scheduled
+    # sweep so increase() has two samples to compare. Existing labs need only
+    # the single marker above.
+    if [[ "$counter_already_exported" -eq 0 ]]; then
+      wait_for_counter "$check_name" 72
+      remove_marker
+      marker_inserted=false
+      reservation_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
+      order_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
+      marker_sku="ALERT-DRILL-$run_id-SECOND"
+      insert_marker
+    fi
 
     # The normal lab sweep interval is five minutes. Waiting for the real
     # scheduled sweep proves the deployed loop and its cross-service reads,

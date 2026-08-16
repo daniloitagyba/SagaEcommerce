@@ -53,10 +53,14 @@ jobs:
         run: mkdir -p drill-evidence
 
       - name: MongoDB backup/restore drill
-        run: bash scripts/backup-drills/mongodb-backup-restore-drill.sh | tee drill-evidence/mongodb-backup-restore.log
+        run: |
+          set -o pipefail
+          bash scripts/backup-drills/mongodb-backup-restore-drill.sh | tee drill-evidence/mongodb-backup-restore.log
 
       - name: Redis backup/restore drill
-        run: bash scripts/backup-drills/redis-backup-restore-drill.sh | tee drill-evidence/redis-backup-restore.log
+        run: |
+          set -o pipefail
+          bash scripts/backup-drills/redis-backup-restore-drill.sh | tee drill-evidence/redis-backup-restore.log
 
       - name: record drill result
         if: always()
@@ -97,7 +101,9 @@ jobs:
         run: kubectl get deployment/orders-worker --namespace orders-lab
 
       - name: run the Chaos Mesh pod-kill game day
-        run: bash scripts/chaos/chaos-mesh-gameday.sh | tee drill-evidence/chaos-gameday.log
+        run: |
+          set -o pipefail
+          bash scripts/chaos/chaos-mesh-gameday.sh | tee drill-evidence/chaos-gameday.log
 
       - name: record game-day result
         if: always()

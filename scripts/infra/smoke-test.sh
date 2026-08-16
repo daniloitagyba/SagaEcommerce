@@ -39,7 +39,7 @@ for index in $(seq 1 6); do
     --header 'Content-Type: application/json' \
     --header "$auth_header" \
     --header "X-Correlation-ID: $correlation_id" \
-    --data "{\"customerId\":\"smoke-customer-$index\",\"amount\":$index.50,\"currency\":\"brl\"}" \
+    --data "{\"customerId\":\"smoke-customer-$index\",\"items\":[{\"sku\":\"SKU-BOOK-002\",\"quantity\":1}],\"paymentMethod\":\"Pix\"}" \
     "$orders_url/orders"
 
   instance_id=$(awk 'BEGIN { IGNORECASE=1 } /^x-instance-id:/ { gsub("\\r", "", $2); print $2 }' "$headers_file")
@@ -64,6 +64,28 @@ fi
 for order_id in "${order_ids[@]}"; do
   curl --fail --silent --show-error --header "$auth_header" "$orders_url/orders/$order_id" >/dev/null
 done
+
+# This is a critical-flow smoke test, so consuming OrderCreated is not enough:
+# every valid line-item order must actually finish its inventory/payment saga.
+converged=0
+for _ in $(seq 1 60); do
+  converged=0
+  for order_id in "${order_ids[@]}"; do
+    status=$(curl --fail --silent --show-error --header "$auth_header" "$orders_url/orders/$order_id" |
+      jq --raw-output '.status')
+    if [[ "$status" == "Confirmed" || "$status" == "Cancelled" ]]; then
+      converged=$((converged + 1))
+    fi
+  done
+  if [[ "$converged" -eq "${#order_ids[@]}" ]]; then
+    break
+  fi
+  sleep 2
+done
+if [[ "$converged" -ne "${#order_ids[@]}" ]]; then
+  printf 'Only %s/%s smoke orders reached a terminal state.\n' "$converged" "${#order_ids[@]}" >&2
+  exit 1
+fi
 
 worker_logged=false
 for _ in $(seq 1 15); do
