@@ -10,7 +10,7 @@ metadata:
     # infrastructure Services reconcile first. A PreSync hook ran before
     # those dependencies existed on a clean namespace.
     argocd.argoproj.io/sync-wave: "-1"
-    argocd.argoproj.io/sync-options: Replace=true
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   backoffLimit: 3
   activeDeadlineSeconds: 180
