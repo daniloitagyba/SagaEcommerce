@@ -77,7 +77,7 @@ jobs:
         run: |
           mapfile -d '' scripts < <(find scripts compose -type f -name "*.sh" -print0)
           docker run --rm -v "$PWD:/repo" -w /repo koalaman/shellcheck-alpine:v0.10.0 \
-            --severity=warning "${scripts[@]}"
+            shellcheck --severity=warning "${scripts[@]}"
 
       - name: Dockerfile static analysis (Hadolint)
         run: |
