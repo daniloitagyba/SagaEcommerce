@@ -59,4 +59,4 @@ EXPECTED_API_INSTANCES=1 \
 ORDERS_URL="http://127.0.0.1:$local_port" \
   "$script_directory/smoke-test.sh"
 
-printf 'K3s smoke test verified two ready Orders API replicas.\n'
+printf 'K3s smoke test verified all %s desired Orders API replicas are ready.\n' "$desired_replicas"

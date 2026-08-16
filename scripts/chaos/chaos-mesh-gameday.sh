@@ -17,6 +17,13 @@ namespace=${KUBERNETES_NAMESPACE:-orders-lab}
 order_count=${1:-20}
 kill_after=${2:-10}
 results_root=${K6_RESULTS_DIRECTORY:-"$project_directory/artifacts/k6"}
+convergence_timeout_seconds=${CHAOS_CONVERGENCE_TIMEOUT_SECONDS:-600}
+poll_interval_seconds=2
+
+if (( convergence_timeout_seconds < poll_interval_seconds )); then
+  echo "CHAOS_CONVERGENCE_TIMEOUT_SECONDS must be at least $poll_interval_seconds." >&2
+  exit 1
+fi
 
 for command_name in curl jq kubectl; do
   command -v "$command_name" >/dev/null
@@ -75,10 +82,16 @@ printf 'orders-worker ready again after %ss\n' "$((recovered_at - kill_started_a
 printf '\nPolling until every order reaches a terminal state (Confirmed/Cancelled)...\n'
 pending=$(wc -l <"$order_ids_file" | tr -d ' ')
 converged=0
-for _ in $(seq 1 60); do
+poll_attempts=$((convergence_timeout_seconds / poll_interval_seconds))
+declare -A status_counts=()
+for _ in $(seq 1 "$poll_attempts"); do
   converged=0
+  status_counts=()
   while read -r order_id; do
-    status=$(curl --silent --header "$auth_header" "$orders_url/orders/$order_id" | jq --raw-output '.status')
+    status=$(curl --fail-with-body --silent --show-error \
+      --header "$auth_header" "$orders_url/orders/$order_id" |
+      jq --raw-output '.status')
+    status_counts["$status"]=$(( ${status_counts["$status"]:-0} + 1 ))
     if [[ "$status" == "Confirmed" || "$status" == "Cancelled" ]]; then
       converged=$((converged + 1))
     fi
@@ -86,7 +99,7 @@ for _ in $(seq 1 60); do
   if [[ "$converged" -eq "$pending" ]]; then
     break
   fi
-  sleep 2
+  sleep "$poll_interval_seconds"
 done
 converged_at=$(date +%s)
 
@@ -94,6 +107,11 @@ printf '\n=== Results ===\n'
 printf 'Orders created: %s\n' "$pending"
 printf 'Orders converged to a terminal state: %s\n' "$converged"
 printf 'Data loss: %s order(s)\n' "$((pending - converged))"
+printf 'Final status distribution:'
+for status in "${!status_counts[@]}"; do
+  printf ' %s=%s' "$status" "${status_counts[$status]}"
+done
+printf '\n'
 printf 'Recovery time (kill to orders-worker ready): %ss\n' "$((recovered_at - kill_started_at))"
 printf 'Total time (kill to full convergence): %ss\n' "$((converged_at - kill_started_at))"
 
