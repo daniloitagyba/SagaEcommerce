@@ -61,7 +61,7 @@
         linkerd install-cni \
           --dest-cni-bin-dir=/var/lib/rancher/k3s/data/cni \
           --dest-cni-net-dir=/var/lib/rancher/k3s/agent/etc/cni/net.d \
-          --set iptablesMode=legacy 2>/dev/null | kubectl apply -f -
+          --set iptablesMode=nft 2>/dev/null | kubectl apply -f -
       args:
         executable: /bin/bash
       changed_when: true

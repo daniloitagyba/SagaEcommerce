@@ -105,12 +105,19 @@ jobs:
         run: |
           overlay="kubernetes/overlays/${TARGET_ENVIRONMENT}"
           mkdir -p "$overlay"
+          resource_base="../../base"
+          if [[ "$TARGET_ENVIRONMENT" == "staging" ]]; then
+            # The staging target is the K3s lab. Reuse its external-infra
+            # EndpointSlices and connectivity proof while replacing every
+            # locally built application tag with the promoted CI digest.
+            resource_base="../local"
+          fi
           # shellcheck disable=SC1091
           source promotion/images.env
           {
             printf 'apiVersion: kustomize.config.k8s.io/v1beta1\n'
             printf 'kind: Kustomization\n'
-            printf 'resources:\n  - ../../base\n'
+            printf 'resources:\n  - %s\n' "$resource_base"
             printf 'images:\n'
             for entry in \
               "saga-ecommerce/orders-api|${orders_api}" \
