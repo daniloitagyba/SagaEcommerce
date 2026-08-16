@@ -14,10 +14,16 @@ public sealed class AntiEntropyOptions
     public int SweepIntervalSeconds { get; init; } = 300;
 
     /// <summary>
-    /// How many of the most recently transitioned candidate rows each
-    /// check examines per tick. Bounded, not paginated across the whole
-    /// table - see the design docs for why a full-table sweep was judged
-    /// out of scope for this pass.
+    /// How many candidate rows each check examines per tick. Bounded per
+    /// tick, but no longer bounded overall: as of Milestone 91, the two
+    /// Orders-database-local checks (payment-accounted, write/read-model)
+    /// walk the table via a durable cursor (anti_entropy_progress) that
+    /// advances every tick and wraps back to the start once it reaches the
+    /// end, instead of always re-examining the newest BatchSize rows -
+    /// which, before this, meant a store with more than BatchSize eligible
+    /// orders per sweep interval could never have its older rows checked
+    /// at all. See docs/roadmap-milestones-91-99.md, "the anti-entropy
+    /// sweep can only ever see the newest rows".
     /// </summary>
     public int BatchSize { get; init; } = 200;
 
@@ -33,4 +39,16 @@ public sealed class AntiEntropyOptions
     /// longer than the outbox's own poll interval plus a Kafka round trip.
     /// </summary>
     public int ProjectionLagThresholdSeconds { get; init; } = 120;
+
+    /// <summary>
+    /// How old a Created or Backordered order has to be, with no
+    /// saga_orchestration_states row at all, before CheckOrdersStuckWithoutASagaRowAsync
+    /// counts it as a divergence rather than a saga simply not having
+    /// started or finished yet. Comfortably longer than
+    /// SagaOrchestration:TimeoutSeconds (the saga's own timeout, 90s by
+    /// default as of Milestone 91) - this check exists for the row that
+    /// timeout can no longer resolve because it is already gone, not to
+    /// duplicate the timeout itself.
+    /// </summary>
+    public int StuckOrderThresholdSeconds { get; init; } = 600;
 }

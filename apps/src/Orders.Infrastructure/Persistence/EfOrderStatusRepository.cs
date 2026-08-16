@@ -82,11 +82,12 @@ public sealed class EfOrderStatusRepository(
                 // (not just until the next projection tick - no event meant
                 // no update would ever arrive).
                 var now = DateTimeOffset.UtcNow;
+                var version = await NextEventVersionAsync(ct);
                 dbContext.OutboxMessages.Add(OutboxMessage.Create(
                     Guid.NewGuid(),
                     nameof(OrderStatusChanged),
                     JsonSerializer.Serialize(
-                        new OrderStatusChanged(Guid.NewGuid(), orderId, targetStatus, now, correlationId),
+                        new OrderStatusChanged(Guid.NewGuid(), orderId, targetStatus, now, correlationId, version),
                         SerializerOptions),
                     now,
                     correlationId,
@@ -217,6 +218,25 @@ public sealed class EfOrderStatusRepository(
             await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2),
             await reader.IsDBNullAsync(3, cancellationToken) ? null : reader.GetString(3),
             reader.GetInt64(4) / 100m);
+    }
+
+    /// <summary>
+    /// Allocates the next value from order_event_version_seq, the same
+    /// cross-process monotonic counter Orders.Worker's OrderStatusStore
+    /// and EfOrderReturnRepository allocate from - see OrderStatusChanged's
+    /// own class comment for why this replaced a wall-clock comparison as
+    /// the projection's ordering guard. Same raw-ADO pattern
+    /// TryTransitionRowAsync already uses for this same connection/transaction.
+    /// </summary>
+    private async Task<long> NextEventVersionAsync(CancellationToken cancellationToken)
+    {
+        var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+        var dbTransaction = (NpgsqlTransaction)dbContext.Database.CurrentTransaction!.GetDbTransaction();
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = dbTransaction;
+        command.CommandText = "SELECT nextval('order_event_version_seq')";
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
     private sealed record TransitionRow(

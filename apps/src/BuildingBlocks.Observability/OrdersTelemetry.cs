@@ -14,6 +14,13 @@ public static class OrdersTelemetry
     private static readonly Counter<long> ProcessedCounter = Meter.CreateCounter<long>("orders.processed");
     private static readonly Counter<long> OutboxPublishedCounter = Meter.CreateCounter<long>("outbox.messages.published");
     private static readonly Counter<long> OutboxRetryCounter = Meter.CreateCounter<long>("outbox.publish.retries");
+    // A row that exhausted OutboxOptions.MaximumAttempts (or the saga
+    // outbox's own OutboxMaximumAttempts) and was moved to a dead-letter
+    // table instead of retried again - distinct from outbox.publish.retries
+    // so a dashboard can tell "still retrying" apart from "gave up," the
+    // gap that used to let a poison row inflate the pending-backlog gauge
+    // forever with nothing ever alerting on the real cause.
+    private static readonly Counter<long> OutboxDeadLetteredCounter = Meter.CreateCounter<long>("outbox.dead_lettered");
     // A real backlog gauge, not inferred from the published
     // rate - OutboxPublisher records this once per poll cycle with a COUNT
     // of unprocessed rows, the same predicate its own polling query filters on.
@@ -86,6 +93,11 @@ public static class OrdersTelemetry
     public static void RecordOutboxPending(long count)
     {
         OutboxPendingGauge.Record(count);
+    }
+
+    public static void RecordOutboxDeadLettered(string eventType)
+    {
+        OutboxDeadLetteredCounter.Add(1, new KeyValuePair<string, object?>("event.type", eventType));
     }
 
     public static void RecordInboxDuplicate(string consumerName)

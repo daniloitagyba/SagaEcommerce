@@ -74,6 +74,21 @@ builder.Services.AddOptions<SagaOrchestrationOptions>()
     .Validate(options => options.OutboxBatchSize is > 0 and <= 100, "Saga outbox batch size must be between 1 and 100.")
     .Validate(options => options.OutboxPollIntervalMilliseconds >= 100, "Saga outbox poll interval must be at least 100 milliseconds.")
     .Validate(options => options.OutboxMaximumRetryDelaySeconds > 0, "Saga outbox maximum retry delay must be positive.")
+    .Validate(options => options.OutboxClaimWindowSeconds > 0, "Saga outbox claim window must be positive.")
+    .Validate(options => options.OutboxMaximumAttempts > 0, "Saga outbox maximum attempts must be positive.")
+    // Ties the saga's own timeout to the retry budget a single reservation
+    // round trip can legitimately consume downstream - see
+    // docs/roadmap-milestones-91-99.md, "the saga timeout is shorter than
+    // the system's own retry budget". Without this, a future change to
+    // either option (raising MessageProcessing:MaximumAttempts to ride out
+    // a flakier dependency, say) can silently reopen the exact gap
+    // Milestone 91 closed: SagaTimeoutSweeper firing while the target
+    // consumer is still legitimately retrying, not stuck.
+    .Validate<MessageProcessingOptions>(
+        (sagaOptions, processingOptions) =>
+            sagaOptions.TimeoutSeconds * 1000L
+                >= processingOptions.MaximumAttempts * (long)processingOptions.MaximumRetryDelayMilliseconds,
+        "Saga timeout must exceed the target consumer's own retry budget (MessageProcessing:MaximumAttempts * MessageProcessing:MaximumRetryDelayMilliseconds), or the timeout sweeper can fire while a reply is still legitimately in flight.")
     .ValidateOnStart();
 builder.Services.AddOptions<OrderEventStoreOptions>()
     .Bind(builder.Configuration.GetSection(OrderEventStoreOptions.SectionName))
@@ -150,6 +165,8 @@ builder.Services.AddOptions<AntiEntropyOptions>()
     .Validate(options => options.BatchSize > 0, "Anti-entropy batch size must be positive.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.PaymentsBaseUrl), "Payments base URL is required.")
     .Validate(options => !string.IsNullOrWhiteSpace(options.InventoryBaseUrl), "Inventory base URL is required.")
+    .Validate(options => options.ProjectionLagThresholdSeconds > 0, "Anti-entropy projection lag threshold must be positive.")
+    .Validate(options => options.StuckOrderThresholdSeconds > 0, "Anti-entropy stuck-order threshold must be positive.")
     .ValidateOnStart();
 builder.Services.AddHttpClient("anti-entropy-payments", (serviceProvider, client) =>
 {
@@ -331,6 +348,13 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         [options.OrderCreatedTopic, options.PaymentResultTopic, options.OrderStatusChangedTopic], options.DeadLetterTopic,
         processingOptions, processor.AppendAsync, deadLetterPublisher.PublishAsync, logger);
 });
+// KafkaHealthCheck must be a singleton, not the transient default
+// AddCheck<T> would otherwise register - see that class's own comment.
+// Kafka stays gated on "ready" here (unlike Orders.Api/Payments.Service/
+// Inventory.Service - see docs/roadmap-milestones-91-99.md): this worker's
+// entire job is consuming Kafka, so "not ready without it" is the correct
+// readiness signal, not a self-inflicted one.
+builder.Services.AddSingleton<KafkaHealthCheck>();
 builder.Services.AddHealthChecks()
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"])
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Orders"])

@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using BuildingBlocks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 using Orders.Application.Exceptions;
 using Orders.Application.Ports;
 using Orders.Domain;
@@ -73,7 +75,7 @@ public sealed class EfOrderReturnRepository(
                     // never told either of them anything.
                     if (rowsAffected > 0)
                     {
-                        QueueStatusChangedEvent(order.Id, correlationId, orderReturn.RequestedAt);
+                        await QueueStatusChangedEventAsync(order.Id, correlationId, orderReturn.RequestedAt, ct);
 
                         // Same guard as the event above, for the same
                         // reason: only the call that actually won the
@@ -141,9 +143,11 @@ public sealed class EfOrderReturnRepository(
             cancellationToken);
     }
 
-    private void QueueStatusChangedEvent(Guid orderId, string correlationId, DateTimeOffset occurredAt)
+    private async Task QueueStatusChangedEventAsync(
+        Guid orderId, string correlationId, DateTimeOffset occurredAt, CancellationToken cancellationToken)
     {
-        var statusChanged = new OrderStatusChanged(Guid.NewGuid(), orderId, OrderStatuses.Returned, occurredAt, correlationId);
+        var version = await NextEventVersionAsync(cancellationToken);
+        var statusChanged = new OrderStatusChanged(Guid.NewGuid(), orderId, OrderStatuses.Returned, occurredAt, correlationId, version);
 
         dbContext.OutboxMessages.Add(OutboxMessage.Create(
             statusChanged.EventId,
@@ -153,6 +157,23 @@ public sealed class EfOrderReturnRepository(
             correlationId,
             Activity.Current?.Id,
             Activity.Current?.TraceStateString));
+    }
+
+    /// <summary>
+    /// Allocates the next value from order_event_version_seq, the same
+    /// cross-process monotonic counter Orders.Worker's OrderStatusStore and
+    /// EfOrderStatusRepository allocate from - see OrderStatusChanged's own
+    /// class comment.
+    /// </summary>
+    private async Task<long> NextEventVersionAsync(CancellationToken cancellationToken)
+    {
+        var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+        var dbTransaction = (NpgsqlTransaction)dbContext.Database.CurrentTransaction!.GetDbTransaction();
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = dbTransaction;
+        command.CommandText = "SELECT nextval('order_event_version_seq')";
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
     private void QueueRefundCommand(OrderReturn orderReturn, string correlationId)

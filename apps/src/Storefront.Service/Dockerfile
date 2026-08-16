@@ -13,7 +13,7 @@ ARG VITE_KEYCLOAK_REALM=orders-lab
 ARG VITE_KEYCLOAK_CLIENT_ID=orders-storefront
 RUN npm run build
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0.302 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.400 AS build
 WORKDIR /src
 
 COPY Directory.Build.props global.json ./

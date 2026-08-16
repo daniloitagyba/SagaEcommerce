@@ -29,8 +29,20 @@ namespace Orders.Worker;
 /// bug class this happens to have already been built for) decides what to
 /// do about a divergence; this sweep's job stops at making sure one is
 /// never silent.
+///
+/// Split across two files to stay under the 500-line module-size budget,
+/// the same physical-split-not-different-concern pattern
+/// SagaOrchestrationStore uses for its own split: this file owns the loop,
+/// the two Inventory-sourced checks (backorder, committed-inventory -
+/// already paginated through Inventory.Service's own endpoints, so they
+/// need no cursor of their own) and the shared order-status lookup;
+/// AntiEntropySweeper.Cursor.cs owns the three Orders-database-local
+/// checks that walk their table via the durable cursor in
+/// anti_entropy_progress - see that file's own comment and
+/// docs/roadmap-milestones-91-99.md, "the anti-entropy sweep can only ever
+/// see the newest rows".
 /// </summary>
-public sealed class AntiEntropySweeper(
+public sealed partial class AntiEntropySweeper(
     NpgsqlDataSource dataSource,
     IHttpClientFactory httpClientFactory,
     IOptions<AntiEntropyOptions> options,
@@ -40,6 +52,17 @@ public sealed class AntiEntropySweeper(
 {
     private static readonly string[] PaymentAccountedStatuses =
         [OrderStatuses.Confirmed, OrderStatuses.Picking, OrderStatuses.Shipped, OrderStatuses.FulfillmentHold];
+
+    // The two statuses a saga is ever mid-flight for - Created while any
+    // of the four steps is in progress, Backordered while parked waiting
+    // on a restock (SagaOrchestrationState.ParkedAt keeps the row present,
+    // not deleted, for that whole wait - see SagaTimeoutSweeper's own
+    // comment). Every other status is one the saga has already finished
+    // with and correctly has no row left for.
+    private static readonly string[] StuckCandidateStatuses = [OrderStatuses.Created, OrderStatuses.Backordered];
+
+    private const string PaymentCheckName = "payment-accounted";
+    private const string WriteReadModelCheckName = "write-read-model";
 
     private readonly AntiEntropyOptions _options = options.Value;
 
@@ -72,59 +95,18 @@ public sealed class AntiEntropySweeper(
         }
     }
 
-    /// <summary>Public so it can be driven directly, the same testable seam SagaTimeoutSweeper's own ResolveAsync already gives integration tests.</summary>
+    /// <summary>Public so it can be driven directly, the same testable seam SagaTimeoutSweeper's own SweepOnceAsync already gives integration tests.</summary>
     public async Task SweepAsync(CancellationToken cancellationToken)
     {
         var paymentDivergences = await CheckOrdersHaveAccountedPaymentsAsync(cancellationToken);
         var backorderDivergences = await CheckBackordersBelongToWaitingOrdersAsync(cancellationToken);
         var committedInventoryDivergences = await CheckCommittedInventoryBelongsToLiveOrdersAsync(cancellationToken);
         var writeReadModelDivergences = await CheckWriteModelMatchesReadModelAsync(cancellationToken);
+        var stuckOrderDivergences = await CheckOrdersStuckWithoutASagaRowAsync(cancellationToken);
 
         AntiEntropyLog.SweepCompleted(
-            logger, paymentDivergences, backorderDivergences, committedInventoryDivergences, writeReadModelDivergences);
-    }
-
-    private async Task<int> CheckOrdersHaveAccountedPaymentsAsync(CancellationToken cancellationToken)
-    {
-        var candidates = await GetPaymentCandidateOrdersAsync(cancellationToken);
-        var paymentsClient = httpClientFactory.CreateClient("anti-entropy-payments");
-        var divergences = 0;
-
-        foreach (var (orderId, orderStatus) in candidates)
-        {
-            string? paymentState;
-            try
-            {
-                using var response = await paymentsClient.GetAsync($"/payments/by-order/{orderId:N}", cancellationToken);
-                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-                {
-                    paymentState = null;
-                }
-                else
-                {
-                    response.EnsureSuccessStatusCode();
-                    var payload = await response.Content.ReadFromJsonAsync<PaymentLookupResponse>(cancellationToken);
-                    paymentState = payload?.State;
-                }
-            }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-            {
-                // Payments unreachable this tick is not evidence of a
-                // divergence - it is evidence the sweep needs to try again
-                // later, which the next tick already does.
-                AntiEntropyLog.DependencyUnavailable(logger, "payments-service", exception);
-                continue;
-            }
-
-            if (AntiEntropyChecks.OrderIsMissingAnAccountedPayment(paymentState))
-            {
-                divergences++;
-                OrdersTelemetry.RecordAntiEntropyDivergence("order_missing_accounted_payment");
-                AntiEntropyLog.PaymentDivergence(logger, orderId, orderStatus, paymentState ?? "none");
-            }
-        }
-
-        return divergences;
+            logger, paymentDivergences, backorderDivergences, committedInventoryDivergences,
+            writeReadModelDivergences, stuckOrderDivergences);
     }
 
     private async Task<int> CheckBackordersBelongToWaitingOrdersAsync(CancellationToken cancellationToken)
@@ -229,77 +211,6 @@ public sealed class AntiEntropySweeper(
         return divergences;
     }
 
-    /// <summary>
-    /// The check finding 12 of the audit above asked for - Orders compared
-    /// against itself, not another service. No HTTP call: orders and
-    /// order_summaries live in the same database, so this is one query.
-    /// Gated on order_summaries.projected_at rather than orders' own status
-    /// (orders has no column recording when status last changed) - a
-    /// mismatch whose projection is recent is ordinary in-flight lag; one
-    /// whose projection has gone stale for AntiEntropy:ProjectionLagThresholdSeconds
-    /// despite the mismatch means nothing has projected for that order
-    /// since, and never will without a human looking.
-    /// </summary>
-    private async Task<int> CheckWriteModelMatchesReadModelAsync(CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT o.id, o.status, s.status
-            FROM orders o
-            LEFT JOIN order_summaries s ON s.order_id = o.id
-            WHERE (s.order_id IS NULL AND o.created_at <= @cutoff)
-               OR (s.order_id IS NOT NULL AND o.status <> s.status AND s.projected_at <= @cutoff)
-            ORDER BY o.created_at DESC
-            LIMIT @batch_size
-            """;
-
-        var cutoff = timeProvider.GetUtcNow() - TimeSpan.FromSeconds(_options.ProjectionLagThresholdSeconds);
-
-        await using var command = dataSource.CreateCommand(sql);
-        command.Parameters.AddWithValue("cutoff", NpgsqlDbType.TimestampTz, cutoff);
-        command.Parameters.AddWithValue("batch_size", NpgsqlDbType.Integer, _options.BatchSize);
-
-        var divergences = 0;
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            var orderId = reader.GetGuid(0);
-            var orderStatus = reader.GetString(1);
-            var summaryStatus = await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2);
-
-            if (AntiEntropyChecks.WriteModelDivergesFromReadModel(orderStatus, summaryStatus))
-            {
-                divergences++;
-                OrdersTelemetry.RecordAntiEntropyDivergence("order_write_model_diverges_from_read_model");
-                AntiEntropyLog.WriteReadModelDivergence(logger, orderId, orderStatus, summaryStatus ?? "no summary row");
-            }
-        }
-
-        return divergences;
-    }
-
-    private async Task<IReadOnlyList<(Guid OrderId, string Status)>> GetPaymentCandidateOrdersAsync(CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT id, status FROM orders
-            WHERE status = ANY(@statuses) AND payment_method IS NOT NULL
-            ORDER BY created_at DESC
-            LIMIT @batch_size
-            """;
-
-        await using var command = dataSource.CreateCommand(sql);
-        command.Parameters.AddWithValue("statuses", NpgsqlDbType.Array | NpgsqlDbType.Varchar, PaymentAccountedStatuses);
-        command.Parameters.AddWithValue("batch_size", NpgsqlDbType.Integer, _options.BatchSize);
-
-        var results = new List<(Guid, string)>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            results.Add((reader.GetGuid(0), reader.GetString(1)));
-        }
-
-        return results;
-    }
-
     private async Task<IReadOnlyDictionary<Guid, string>> GetOrderStatusesAsync(List<Guid> orderIds, CancellationToken cancellationToken)
     {
         if (orderIds.Count == 0)
@@ -322,8 +233,6 @@ public sealed class AntiEntropySweeper(
         return results;
     }
 
-    private sealed record PaymentLookupResponse(Guid OrderId, string State, decimal Amount, string Currency);
-
     private sealed record BackorderResponse(Guid ReservationId, Guid OrderId, string Sku, int Quantity, DateTimeOffset RequestedAt);
 
     private sealed record CommittedReservationResponse(Guid ReservationId, Guid OrderId, string Sku, int Quantity, DateTimeOffset CommittedAt);
@@ -340,8 +249,8 @@ public sealed partial class AntiEntropyLog
     [LoggerMessage(EventId = 9301, Level = LogLevel.Warning, Message = "Anti-entropy: backorder for sku {Sku} references order {OrderId}, whose status is {OrderStatus} - not Backordered")]
     public static partial void BackorderDivergence(ILogger logger, Guid orderId, string sku, string orderStatus);
 
-    [LoggerMessage(EventId = 9302, Level = LogLevel.Information, Message = "Anti-entropy sweep completed: {PaymentDivergences} payment divergence(s), {BackorderDivergences} backorder divergence(s), {CommittedInventoryDivergences} committed-inventory divergence(s), {WriteReadModelDivergences} write/read-model divergence(s)")]
-    public static partial void SweepCompleted(ILogger logger, int paymentDivergences, int backorderDivergences, int committedInventoryDivergences, int writeReadModelDivergences);
+    [LoggerMessage(EventId = 9302, Level = LogLevel.Information, Message = "Anti-entropy sweep completed: {PaymentDivergences} payment divergence(s), {BackorderDivergences} backorder divergence(s), {CommittedInventoryDivergences} committed-inventory divergence(s), {WriteReadModelDivergences} write/read-model divergence(s), {StuckOrderDivergences} stuck-order divergence(s)")]
+    public static partial void SweepCompleted(ILogger logger, int paymentDivergences, int backorderDivergences, int committedInventoryDivergences, int writeReadModelDivergences, int stuckOrderDivergences);
 
     [LoggerMessage(EventId = 9303, Level = LogLevel.Error, Message = "Anti-entropy sweep failed; will retry next tick")]
     public static partial void SweepFailed(ILogger logger, Exception exception);
@@ -354,4 +263,7 @@ public sealed partial class AntiEntropyLog
 
     [LoggerMessage(EventId = 9306, Level = LogLevel.Warning, Message = "Anti-entropy: order {OrderId} write model reports {OrderStatus} but the read model (order_summaries) still reports {SummaryStatus}")]
     public static partial void WriteReadModelDivergence(ILogger logger, Guid orderId, string orderStatus, string summaryStatus);
+
+    [LoggerMessage(EventId = 9307, Level = LogLevel.Warning, Message = "Anti-entropy: order {OrderId} (status {OrderStatus}) has no saga_orchestration_states row - likely stranded by a crash between saga completion and status resolution")]
+    public static partial void StuckOrderDivergence(ILogger logger, Guid orderId, string orderStatus);
 }

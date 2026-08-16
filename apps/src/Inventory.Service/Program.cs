@@ -60,6 +60,8 @@ builder.Services.AddOptions<OutboxOptions>()
     .Validate(options => options.BatchSize is > 0 and <= 100, "Outbox batch size must be between 1 and 100.")
     .Validate(options => options.PollIntervalMilliseconds >= 100, "Outbox poll interval must be at least 100 milliseconds.")
     .Validate(options => options.MaximumRetryDelaySeconds > 0, "Outbox maximum retry delay must be positive.")
+    .Validate(options => options.MaximumAttempts > 0, "Outbox maximum attempts must be positive.")
+    .Validate(options => options.MaxConcurrentPublishes > 0, "Outbox max concurrent publishes must be positive.")
     .ValidateOnStart();
 builder.Services.AddOptions<BackorderOptions>()
     .Bind(builder.Configuration.GetSection(BackorderOptions.SectionName))
@@ -237,9 +239,18 @@ builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "inventor
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("inventory:read", policy => policy.RequireRole("inventory:read"));
 
+// KafkaHealthCheck must be a singleton, not the transient default
+// AddCheck<T> would otherwise register - see that class's own comment.
+builder.Services.AddSingleton<KafkaHealthCheck>();
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Inventory"])
-    .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"]);
+    // Not "ready" - this service also serves GET /inventory/backorders and
+    // GET /inventory/committed-reservations over plain HTTP for Orders.Worker's
+    // anti-entropy sweep, reads that have nothing to do with Kafka. See
+    // Payments.Service's identical reasoning and
+    // docs/roadmap-milestones-91-99.md, "readiness is gated on
+    // dependencies the code deliberately treats as optional".
+    .AddCheck<KafkaHealthCheck>("kafka", tags: ["live-dependencies"]);
 
 var app = builder.Build();
 
@@ -270,6 +281,10 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = registration => registration.Tags.Contains("ready")
+});
+app.MapHealthChecks("/health/dependencies", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("live-dependencies")
 });
 app.MapGet("/", () => Results.Ok(new { service = "Inventory.Service", instanceId }));
 app.MapInventoryEndpoints();

@@ -45,7 +45,19 @@ public sealed class SagaOrchestrationOptions
     // pattern InventoryKafkaOptions already uses.
     public string DeadLetterTopic { get; init; } = "orders.saga.dlq.v1";
 
-    public int TimeoutSeconds { get; init; } = 5;
+    // Was 5s until Milestone 91 - shorter than this system's own retry
+    // budget for a single reservation round trip (saga outbox poll + Kafka
+    // produce/retry + the target consumer's own in-process and
+    // infrastructure retries; see docs/roadmap-milestones-91-99.md, "the
+    // saga timeout is shorter than the system's own retry budget"). A
+    // timeout this short cannot tell a slow-but-healthy dependency apart
+    // from a genuinely stuck one, so SagaTimeoutSweeper used to fire while
+    // a reservation was still legitimately in flight - releasing stock
+    // Inventory was about to (or just did) commit for real. 90s is a floor
+    // comfortably above the worst-case chain above; Program.cs's
+    // ValidateOnStart keeps it from drifting back below that chain if any
+    // of the pieces it's built from changes.
+    public int TimeoutSeconds { get; init; } = 90;
 
     public int SweepIntervalMilliseconds { get; init; } = 1_000;
 
@@ -54,4 +66,30 @@ public sealed class SagaOrchestrationOptions
     public int OutboxPollIntervalMilliseconds { get; init; } = 250;
 
     public int OutboxMaximumRetryDelaySeconds { get; init; } = 60;
+
+    /// <summary>
+    /// How long a claimed saga-outbox batch's next_attempt_at is pushed
+    /// forward while this instance carries it to Kafka outside any open
+    /// transaction - the same claim-then-publish-then-mark shape
+    /// BuildingBlocks' own OutboxOptions.ClaimWindowSeconds already uses
+    /// (see OutboxPublisher.ClaimBatchAsync). Introduced at Milestone 91:
+    /// SagaOutboxPublisher previously held these rows' FOR UPDATE locks
+    /// (and the open transaction they imply) for as long as the Kafka
+    /// publish loop took, which is exactly what OutboxPublisher's own
+    /// class comment says never to do - see
+    /// docs/roadmap-milestones-91-99.md, "the saga outbox holds Postgres
+    /// row locks across the Kafka round trip".
+    /// </summary>
+    public int OutboxClaimWindowSeconds { get; init; } = 30;
+
+    /// <summary>
+    /// After this many failed attempts, a saga command is moved to
+    /// saga_outbox_dead_letters instead of retried again - see
+    /// SagaOutboxPublisher.MoveToDeadLetterAsync. Without a ceiling, a
+    /// command whose payload can never be delivered (a broker rejecting a
+    /// dropped topic, a serialization break) retried forever, permanently
+    /// inflating the pending backlog and hiding behind the same
+    /// OutboxBacklogGrowing alert a real backlog would trip.
+    /// </summary>
+    public int OutboxMaximumAttempts { get; init; } = 20;
 }

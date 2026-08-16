@@ -56,13 +56,46 @@ public sealed partial class SagaOrchestrationStore
         DateTimeOffset now,
         int batchSize,
         CancellationToken cancellationToken) =>
-        ClaimTimedOutAndQueueAsync(timeout, now, batchSize, (_, _) => [], cancellationToken);
+        ClaimTimedOutCoreAsync(timeout, now, batchSize, (_, _) => [], null, cancellationToken);
 
     public Task<IReadOnlyList<(Guid OrderId, SagaOrchestrationRecord Saga)>> ClaimTimedOutAndQueueAsync(
         TimeSpan timeout,
         DateTimeOffset now,
         int batchSize,
         Func<Guid, SagaOrchestrationRecord, IReadOnlyList<SagaOutboxCommand>> commandFactory,
+        CancellationToken cancellationToken) =>
+        ClaimTimedOutCoreAsync(timeout, now, batchSize, commandFactory, null, cancellationToken);
+
+    /// <summary>
+    /// Same as ClaimTimedOutAndQueueAsync, but also resolves each claimed
+    /// order's own status (cancel, confirm, or park at FulfillmentHold -
+    /// whatever SagaTimeoutSweeper.ResolveAsync used to decide after the
+    /// fact) inside the very transaction that deletes its saga row.
+    ///
+    /// Introduced at Milestone 91: SweepOnceAsync used to call this
+    /// method's undecorated sibling to delete the timed-out rows and queue
+    /// their inventory releases atomically, then loop over the results and
+    /// call SagaTimeoutSweeper.ResolveAsync - a second, separate
+    /// transaction per order - afterwards. A crash between the two (or
+    /// simply losing the leader lease mid-loop) left the order stuck
+    /// non-terminal with no saga row left to time out again; see
+    /// docs/roadmap-milestones-91-99.md, "durable claim, non-durable act".
+    /// </summary>
+    public Task<IReadOnlyList<(Guid OrderId, SagaOrchestrationRecord Saga)>> ClaimTimedOutAndResolveAsync(
+        TimeSpan timeout,
+        DateTimeOffset now,
+        int batchSize,
+        Func<Guid, SagaOrchestrationRecord, IReadOnlyList<SagaOutboxCommand>> commandFactory,
+        Func<Guid, SagaOrchestrationRecord, NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> applyResolutionAsync,
+        CancellationToken cancellationToken) =>
+        ClaimTimedOutCoreAsync(timeout, now, batchSize, commandFactory, applyResolutionAsync, cancellationToken);
+
+    private Task<IReadOnlyList<(Guid OrderId, SagaOrchestrationRecord Saga)>> ClaimTimedOutCoreAsync(
+        TimeSpan timeout,
+        DateTimeOffset now,
+        int batchSize,
+        Func<Guid, SagaOrchestrationRecord, IReadOnlyList<SagaOutboxCommand>> commandFactory,
+        Func<Guid, SagaOrchestrationRecord, NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? applyResolutionAsync,
         CancellationToken cancellationToken)
     {
         return _pipeline.ExecuteAsync(async ct =>
@@ -154,6 +187,11 @@ public sealed partial class SagaOrchestrationStore
                     transaction,
                     commandFactory(orderId, saga),
                     ct);
+
+                if (applyResolutionAsync is not null)
+                {
+                    await applyResolutionAsync(orderId, saga, connection, transaction, ct);
+                }
             }
 
             await using (var command = new NpgsqlCommand(DeleteByIdsSql, connection, transaction))

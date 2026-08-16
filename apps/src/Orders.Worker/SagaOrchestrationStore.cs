@@ -78,7 +78,15 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
         ORDER BY order_id, line_index;
         """;
 
-    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
+    // Writes (CAS-guarded transactions and single-statement guarded
+    // updates) use the no-retry transactional pipeline - see
+    // ResilienceExtensions.PostgresTransactionPipeline's own comment for
+    // why blindly retrying a whole transaction can mask a successful
+    // commit's own caller-visible side effects. Pure reads below
+    // (SelectLinesAsync/GetLinesAsync) keep the retrying PostgresPipeline
+    // instead - a read has no masking risk, and benefits from the retry.
+    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
+    private readonly ResiliencePipeline _readPipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
 
     public Task TrackReserveRequestedAsync(
         Guid orderId,
@@ -222,12 +230,47 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
         Guid orderId,
         string expectedCurrentStep,
         CancellationToken cancellationToken) =>
-        TryCompleteAndQueueAsync(orderId, expectedCurrentStep, _ => [], cancellationToken);
+        TryCompleteCoreAsync(orderId, expectedCurrentStep, _ => [], null, cancellationToken);
 
     public Task<SagaOrchestrationRecord?> TryCompleteAndQueueAsync(
         Guid orderId,
         string expectedCurrentStep,
         Func<SagaOrchestrationRecord, IReadOnlyList<SagaOutboxCommand>> commandFactory,
+        CancellationToken cancellationToken) =>
+        TryCompleteCoreAsync(orderId, expectedCurrentStep, commandFactory, null, cancellationToken);
+
+    /// <summary>
+    /// Same as TryCompleteAndQueueAsync, but also applies an order-status
+    /// transition (or several - see OrderSagaReplyConsumer's own commit
+    /// callback for CommitInventory, which needs up to two) inside the
+    /// very transaction that deletes the saga row, via
+    /// OrderStatusStore.TryTransitionWithinTransactionAsync.
+    ///
+    /// Introduced at Milestone 91: before this, callers deleted the saga
+    /// row in one transaction (committed here) and then called
+    /// OrderStatusStore.TryCancelAsync/TryConfirmAsync/TryTransitionAsync
+    /// afterwards, in a second, separate transaction. A crash between the
+    /// two left the order stuck in a non-terminal status with no saga row
+    /// left to time out again - see
+    /// docs/roadmap-milestones-91-99.md, "durable claim, non-durable act".
+    /// Worse, a Kafka redelivery of the very reply that would have driven
+    /// the second call landed on `parent is null` (the saga row was
+    /// already gone) and silently dropped the status transition instead of
+    /// retrying it - the exact case a redelivery is supposed to make safe.
+    /// </summary>
+    public Task<SagaOrchestrationRecord?> TryCompleteAndResolveAsync(
+        Guid orderId,
+        string expectedCurrentStep,
+        Func<SagaOrchestrationRecord, IReadOnlyList<SagaOutboxCommand>> commandFactory,
+        Func<SagaOrchestrationRecord, NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> applyStatusTransitionAsync,
+        CancellationToken cancellationToken) =>
+        TryCompleteCoreAsync(orderId, expectedCurrentStep, commandFactory, applyStatusTransitionAsync, cancellationToken);
+
+    private Task<SagaOrchestrationRecord?> TryCompleteCoreAsync(
+        Guid orderId,
+        string expectedCurrentStep,
+        Func<SagaOrchestrationRecord, IReadOnlyList<SagaOutboxCommand>> commandFactory,
+        Func<SagaOrchestrationRecord, NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task>? applyStatusTransitionAsync,
         CancellationToken cancellationToken)
     {
         return _pipeline.ExecuteAsync(async ct =>
@@ -257,6 +300,12 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
 
             var result = parent with { Lines = lines };
             await SagaOutboxWriter.EnqueueAsync(connection, transaction, commandFactory(result), ct);
+
+            if (applyStatusTransitionAsync is not null)
+            {
+                await applyStatusTransitionAsync(result, connection, transaction, ct);
+            }
+
             await transaction.CommitAsync(ct);
             return result;
         }, cancellationToken).AsTask();
@@ -311,7 +360,7 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
 
     private async Task<IReadOnlyList<SagaLineRecord>> SelectLinesAsync(Guid orderId, CancellationToken cancellationToken)
     {
-        return await _pipeline.ExecuteAsync(async ct =>
+        return await _readPipeline.ExecuteAsync(async ct =>
         {
             await using var command = dataSource.CreateCommand(SelectLinesSql);
             command.Parameters.AddWithValue("order_id", NpgsqlDbType.Uuid, orderId);

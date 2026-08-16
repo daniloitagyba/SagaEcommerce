@@ -123,10 +123,26 @@ builder.Services.AddAuthorizationBuilder()
     .AddPolicy(OrdersAuthorizationPolicies.Read, policy => policy.RequireRole("orders:read", "orders:write", OrdersAuthorizationPolicies.Admin))
     .AddPolicy(OrdersAuthorizationPolicies.Write, policy => policy.RequireRole("orders:write", OrdersAuthorizationPolicies.Admin))
     .AddPolicy(OrdersAuthorizationPolicies.Admin, policy => policy.RequireRole(OrdersAuthorizationPolicies.Admin));
+// KafkaHealthCheck must be a singleton, not the transient default
+// AddCheck<T> would otherwise register - see that class's own comment.
+builder.Services.AddSingleton<KafkaHealthCheck>();
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Orders"])
-    .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"])
-    .AddCheck<RedisHealthCheck>("redis", tags: ["ready"]);
+    // Kafka and Redis are deliberately NOT tagged "ready" - the
+    // application layer already treats both as optional and survives
+    // their absence (RedisOrderCache/RedisSlidingWindowRateLimiter fail
+    // open, and POST /orders only ever writes to the transactional
+    // outbox, never to Kafka directly), so gating this pod's Service
+    // membership on either used to turn a Redis blip into a
+    // self-inflicted 100% outage: Kubernetes removed every replica from
+    // the Service at once for a dependency the code was already built to
+    // survive without. They're still probed and exposed - see
+    // /health/dependencies below - just not load-bearing for whether this
+    // pod keeps receiving traffic. See
+    // docs/roadmap-milestones-91-99.md, "readiness is gated on
+    // dependencies the code deliberately treats as optional".
+    .AddCheck<KafkaHealthCheck>("kafka", tags: ["live-dependencies"])
+    .AddCheck<RedisHealthCheck>("redis", tags: ["live-dependencies"]);
 
 var app = builder.Build();
 
@@ -163,6 +179,14 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = registration => registration.Tags.Contains("ready")
+});
+// Informational only - never gates this pod's Service membership. Scraped
+// for alerting (RateLimitingFailedOpen/OrderCacheFailingOpen already cover
+// the consequence; this covers the cause) rather than driving Kubernetes'
+// own routing decisions.
+app.MapHealthChecks("/health/dependencies", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("live-dependencies")
 });
 
 app.MapGet("/", () => Results.Ok(new { service = "Orders.Api", instanceId }));

@@ -55,6 +55,8 @@ builder.Services.AddOptions<OutboxOptions>()
     .Validate(options => options.BatchSize is > 0 and <= 100, "Outbox batch size must be between 1 and 100.")
     .Validate(options => options.PollIntervalMilliseconds >= 100, "Outbox poll interval must be at least 100 milliseconds.")
     .Validate(options => options.MaximumRetryDelaySeconds > 0, "Outbox maximum retry delay must be positive.")
+    .Validate(options => options.MaximumAttempts > 0, "Outbox maximum attempts must be positive.")
+    .Validate(options => options.MaxConcurrentPublishes > 0, "Outbox max concurrent publishes must be positive.")
     .ValidateOnStart();
 // Replaces PaymentDecisionOptions' single amount threshold
 // with a scored risk policy - see PaymentRiskEvaluator.
@@ -217,9 +219,20 @@ builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "payments
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("payments:read", policy => policy.RequireRole("payments:read"));
 
+// KafkaHealthCheck must be a singleton, not the transient default
+// AddCheck<T> would otherwise register - see that class's own comment.
+builder.Services.AddSingleton<KafkaHealthCheck>();
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Payments"])
-    .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"]);
+    // Not "ready" - this service also serves GET /payments/by-order/{id}
+    // over plain HTTP for Orders.Worker's anti-entropy sweep, a read that
+    // has nothing to do with Kafka. Gating readiness on Kafka used to
+    // remove this pod from the Service the moment Kafka had a blip -
+    // taking the one read anti-entropy needs to detect a payment
+    // divergence out with it, right when the sweep needed it most. See
+    // docs/roadmap-milestones-91-99.md, "readiness is gated on
+    // dependencies the code deliberately treats as optional".
+    .AddCheck<KafkaHealthCheck>("kafka", tags: ["live-dependencies"]);
 
 var app = builder.Build();
 
@@ -243,6 +256,10 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = registration => registration.Tags.Contains("ready")
 });
+app.MapHealthChecks("/health/dependencies", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("live-dependencies")
+});
 app.MapGet("/", () => Results.Ok(new { service = "Payments.Service", instanceId }));
 
 // The one read this service otherwise has no reason to
@@ -262,6 +279,36 @@ app.MapGet("/payments/by-order/{orderId:guid}", async (Guid orderId, PaymentsDbC
     return payment is null
         ? Results.NotFound()
         : Results.Ok(new { payment.OrderId, payment.State, payment.Amount, payment.Currency, payment.DecidedAt });
+}).WithTags("Payments").RequireAuthorization("payments:read");
+
+// The batch counterpart of the single-order lookup above - introduced at
+// Milestone 91 for Orders.Worker's anti-entropy sweep, which used to issue
+// one GET per candidate order (up to AntiEntropy:BatchSize of them,
+// sequentially) every tick just to check whether each one has an
+// accounted payment. One query here replaces that whole loop. Capped at
+// 500 ids per call, matching AntiEntropyOptions.BatchSize's own upper
+// bound in practice - this is an internal, service-to-service endpoint,
+// not a public one, so the cap exists to bound one query's own cost, not
+// to defend against an untrusted caller.
+app.MapPost("/payments/by-orders", async (IReadOnlyList<Guid> orderIds, PaymentsDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    if (orderIds.Count == 0)
+    {
+        return Results.Ok(Array.Empty<object>());
+    }
+
+    if (orderIds.Count > 500)
+    {
+        return Results.BadRequest(new { detail = "At most 500 order ids are allowed per request." });
+    }
+
+    var payments = await dbContext.Payments
+        .AsNoTracking()
+        .Where(item => item.IsPrimary && orderIds.Contains(item.OrderId))
+        .Select(item => new { item.OrderId, item.State, item.Amount, item.Currency, item.DecidedAt })
+        .ToListAsync(cancellationToken);
+
+    return Results.Ok(payments);
 }).WithTags("Payments").RequireAuthorization("payments:read");
 
 await app.RunAsync();

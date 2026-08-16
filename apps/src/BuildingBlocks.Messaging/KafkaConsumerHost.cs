@@ -24,6 +24,14 @@ public sealed class KafkaConsumerHost<TValue>(
     Func<ConsumeResult<string, TValue>, Exception, int, CancellationToken, Task> publishDeadLetterAsync,
     ILogger logger) : BackgroundService
 {
+    // How often librdkafka's own background thread flushes stored offsets
+    // to the broker - see the class comment below for why this replaced a
+    // synchronous per-message Commit() call. On a crash, at most this
+    // window's worth of already-processed messages gets redelivered - the
+    // same at-least-once contract this codebase's inbox pattern already
+    // absorbs everywhere, not a new failure mode.
+    private const int AutoCommitIntervalMilliseconds = 5_000;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var config = new ConsumerConfig
@@ -32,13 +40,38 @@ public sealed class KafkaConsumerHost<TValue>(
             GroupId = consumerGroup,
             ClientId = clientId,
             AutoOffsetReset = AutoOffsetReset.Earliest,
-            EnableAutoCommit = false,
+            // EnableAutoCommit=true + EnableAutoOffsetStore=false: librdkafka's
+            // own background thread commits whatever this loop has
+            // explicitly StoreOffset'd, on AutoCommitIntervalMilliseconds -
+            // not a blocking round trip to the group coordinator on this
+            // loop's own thread once per message, which is what every
+            // consumer in this codebase did before Milestone 91. That
+            // synchronous per-message Commit() capped one consumer
+            // instance's throughput at roughly
+            // 1 / (processing_latency + commit_round_trip) messages/sec,
+            // and it ran on the exact thread that has to get back to
+            // Consume() to keep this consumer's session alive - see
+            // docs/roadmap-milestones-91-99.md, "the Kafka consumer commits
+            // synchronously, one message at a time".
+            EnableAutoCommit = true,
             EnableAutoOffsetStore = false,
+            AutoCommitIntervalMs = AutoCommitIntervalMilliseconds,
             AllowAutoCreateTopics = false,
             SessionTimeoutMs = 10_000
         };
 
-        using var consumer = new ConsumerBuilder<string, TValue>(config).Build();
+        using var consumer = new ConsumerBuilder<string, TValue>(config)
+            // Explicit, not incidental - before this, a rebalance
+            // mid-processing surfaced only as a generic KafkaException from
+            // the old Commit() call, indistinguishable from an ordinary
+            // connectivity blip. Logging only: StoreOffset-based offset
+            // management needs no compensating action here the way a
+            // revoked-partition Commit() failure used to.
+            .SetPartitionsAssignedHandler((_, partitions) =>
+                KafkaConsumerHostLog.PartitionsAssigned(logger, partitions.Count, consumerGroup))
+            .SetPartitionsRevokedHandler((_, partitions) =>
+                KafkaConsumerHostLog.PartitionsRevoked(logger, partitions.Count, consumerGroup))
+            .Build();
         consumer.Subscribe(subscribeTopics);
         // CA1873 flags string.Join as a potentially-expensive log argument,
         // but this runs exactly once per consumer's lifetime at startup,
@@ -72,7 +105,10 @@ public sealed class KafkaConsumerHost<TValue>(
 
                 try
                 {
-                    consumer.Commit(consumeResult);
+                    // In-memory only, no broker round trip - the actual
+                    // commit happens on librdkafka's own timer, see
+                    // AutoCommitIntervalMilliseconds above.
+                    consumer.StoreOffset(consumeResult);
                 }
                 catch (KafkaException exception)
                 {
@@ -87,6 +123,11 @@ public sealed class KafkaConsumerHost<TValue>(
         }
         finally
         {
+            // Close() commits whatever is currently stored as part of a
+            // clean group-membership departure (standard librdkafka
+            // behavior under EnableAutoCommit=true) - a graceful shutdown
+            // does not lose the AutoCommitIntervalMilliseconds window the
+            // way a crash does.
             consumer.Close();
         }
     }
@@ -191,4 +232,10 @@ public sealed partial class KafkaConsumerHostLog
 
     [LoggerMessage(EventId = 2507, Level = LogLevel.Warning, Message = "Failed to commit Kafka offset {Offset}; Inbox will prevent duplicate processing")]
     public static partial void CommitFailed(ILogger logger, string offset, Exception exception);
+
+    [LoggerMessage(EventId = 2508, Level = LogLevel.Information, Message = "Partitions assigned: {PartitionCount} for consumer group {GroupId}")]
+    public static partial void PartitionsAssigned(ILogger logger, int partitionCount, string groupId);
+
+    [LoggerMessage(EventId = 2509, Level = LogLevel.Information, Message = "Partitions revoked: {PartitionCount} for consumer group {GroupId}")]
+    public static partial void PartitionsRevoked(ILogger logger, int partitionCount, string groupId);
 }

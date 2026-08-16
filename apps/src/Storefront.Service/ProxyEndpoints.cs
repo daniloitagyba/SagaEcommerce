@@ -1,4 +1,4 @@
-using System.Text;
+using System.Net.Http.Headers;
 
 namespace Storefront.Service;
 
@@ -13,9 +13,46 @@ namespace Storefront.Service;
 /// caller's own Authorization header instead of minting a service-account
 /// one - it used to authenticate as Storefront itself and simply relay
 /// whatever customerId the body asserted, the same gap CheckoutAsync had.
+///
+/// Both directions stream rather than buffer the whole body into memory
+/// (StreamContent/CopyToAsync, not ReadToEndAsync/ReadAsByteArrayAsync),
+/// and both forward an explicit header allowlist rather than only
+/// Authorization - see ForwardedRequestHeaders/ForwardedResponseHeaders'
+/// own comments and docs/roadmap-milestones-91-99.md, "the BFF proxy
+/// loses headers, and buffers every body in memory".
 /// </summary>
 public static class ProxyEndpoints
 {
+    // Everything a downstream service's own response might carry that the
+    // browser genuinely needs to see: Idempotency-Key so
+    // Orders.Api's durable idempotency actually applies through this
+    // proxy (it was silently dropped before, on the one route - the
+    // direct /api/orders passthrough - that doesn't already set it
+    // itself); X-Correlation-ID so a caller-supplied trace id survives the
+    // hop instead of Orders.Api's CorrelationIdMiddleware always minting a
+    // fresh one; Accept so content negotiation isn't silently forced to
+    // whatever the upstream client defaults to.
+    private static readonly string[] ForwardedRequestHeaders = ["Authorization", "Idempotency-Key", "X-Correlation-ID", "Accept"];
+
+    // Retry-After (DistributedRateLimitingMiddleware's 429s),
+    // Idempotency-Replayed (OrderEndpoints' idempotent-replay signal),
+    // X-Correlation-ID (echoed back by CorrelationIdMiddleware),
+    // X-RateLimit-* (both the per-pod and cluster-wide limiters' own
+    // headers) - all silently dropped before, since the old
+    // WriteResponseAsync only ever copied Content-Type and the raw body.
+    private static readonly string[] ForwardedResponseHeaders =
+    [
+        "Retry-After", "Location", "ETag", "X-Correlation-ID", "Idempotency-Replayed",
+        "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Distributed-Limit", "X-RateLimit-Distributed-Count"
+    ];
+
+    // Bounds one forwarded request's memory/stream cost - generous for
+    // this lab's JSON payloads (an order with dozens of lines, a cart
+    // merge with an offline queue of operations), small enough that a
+    // misbehaving or malicious client can't turn this BFF into an
+    // unbounded memory sink through it.
+    private const long MaxForwardedBodyBytes = 5 * 1024 * 1024;
+
     public static IEndpointRouteBuilder MapProxyEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/catalog/{**path}", (string path, HttpRequest request, IHttpClientFactory factory, CancellationToken cancellationToken)
@@ -78,20 +115,23 @@ public static class ProxyEndpoints
 
         if ((HttpMethods.IsPut(request.Method) || HttpMethods.IsPost(request.Method)) && request.ContentLength is > 0)
         {
-            using var reader = new StreamReader(request.Body);
-            var body = await reader.ReadToEndAsync(cancellationToken);
-            upstreamRequest.Content = new StringContent(body, Encoding.UTF8, "application/json");
+            if (request.ContentLength > MaxForwardedBodyBytes)
+            {
+                request.HttpContext.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+                return;
+            }
+
+            // Streamed straight through, not buffered into a string first -
+            // this request's body never has to fit in memory twice (once
+            // as the incoming stream, once as the copied string) just to
+            // be relayed unchanged.
+            upstreamRequest.Content = new StreamContent(request.Body);
+            upstreamRequest.Content.Headers.ContentType = ParseContentType(request.ContentType) ?? new MediaTypeHeaderValue("application/json");
         }
 
-        // Cart.Service now requires the caller's own token
-        // (catalog stays anonymous for GETs, so this is a no-op there).
-        var authorization = request.Headers.Authorization.FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(authorization))
-        {
-            upstreamRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
-        }
+        CopyForwardedRequestHeaders(request, upstreamRequest);
 
-        using var response = await client.SendAsync(upstreamRequest, cancellationToken);
+        using var response = await client.SendAsync(upstreamRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         await WriteResponseAsync(request.HttpContext, response, cancellationToken);
     }
 
@@ -100,36 +140,63 @@ public static class ProxyEndpoints
         HttpRequest request,
         CancellationToken cancellationToken)
     {
-        using var reader = new StreamReader(request.Body);
-        var body = await reader.ReadToEndAsync(cancellationToken);
+        if (request.ContentLength > MaxForwardedBodyBytes)
+        {
+            request.HttpContext.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            return;
+        }
 
         using var upstreamRequest = new HttpRequestMessage(HttpMethod.Post, "/orders")
         {
-            Content = new StringContent(body, Encoding.UTF8, "application/json")
+            Content = new StreamContent(request.Body)
         };
+        upstreamRequest.Content.Headers.ContentType = ParseContentType(request.ContentType) ?? new MediaTypeHeaderValue("application/json");
 
-        var authorization = request.Headers.Authorization.FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(authorization))
-        {
-            upstreamRequest.Headers.TryAddWithoutValidation("Authorization", authorization);
-        }
+        CopyForwardedRequestHeaders(request, upstreamRequest);
 
-        using var response = await client.SendAsync(upstreamRequest, cancellationToken);
+        using var response = await client.SendAsync(upstreamRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         await WriteResponseAsync(request.HttpContext, response, cancellationToken);
     }
+
+    private static void CopyForwardedRequestHeaders(HttpRequest request, HttpRequestMessage upstreamRequest)
+    {
+        foreach (var headerName in ForwardedRequestHeaders)
+        {
+            var value = request.Headers[headerName].ToString();
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                upstreamRequest.Headers.TryAddWithoutValidation(headerName, value);
+            }
+        }
+    }
+
+    private static MediaTypeHeaderValue? ParseContentType(string? contentType) =>
+        !string.IsNullOrWhiteSpace(contentType) && MediaTypeHeaderValue.TryParse(contentType, out var parsed)
+            ? parsed
+            : null;
 
     // Not private: StorefrontEndpoints.CheckoutAsync reuses this to relay
     // Orders.Api's response (success or validation/infra failure) verbatim,
     // the same way every route in this file does.
     internal static async Task WriteResponseAsync(HttpContext context, HttpResponseMessage response, CancellationToken cancellationToken)
     {
-        var responseBody = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-
         context.Response.StatusCode = (int)response.StatusCode;
-        if (responseBody.Length > 0)
+
+        if (response.Content.Headers.ContentType is not null)
         {
-            context.Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
-            await context.Response.Body.WriteAsync(responseBody, cancellationToken);
+            context.Response.ContentType = response.Content.Headers.ContentType.ToString();
         }
+
+        foreach (var headerName in ForwardedResponseHeaders)
+        {
+            if (response.Headers.TryGetValues(headerName, out var values))
+            {
+                context.Response.Headers[headerName] = values.ToArray();
+            }
+        }
+
+        // Streamed straight through, not buffered into a byte array first -
+        // the same reasoning as the request side above.
+        await response.Content.CopyToAsync(context.Response.Body, cancellationToken);
     }
 }

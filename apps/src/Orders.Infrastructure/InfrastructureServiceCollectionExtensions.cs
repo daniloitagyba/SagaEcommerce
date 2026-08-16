@@ -38,6 +38,8 @@ public static class InfrastructureServiceCollectionExtensions
             .Validate(options => options.BatchSize is > 0 and <= 100, "Outbox batch size must be between 1 and 100.")
             .Validate(options => options.PollIntervalMilliseconds >= 100, "Outbox poll interval must be at least 100 milliseconds.")
             .Validate(options => options.MaximumRetryDelaySeconds > 0, "Outbox maximum retry delay must be positive.")
+            .Validate(options => options.MaximumAttempts > 0, "Outbox maximum attempts must be positive.")
+            .Validate(options => options.MaxConcurrentPublishes > 0, "Outbox max concurrent publishes must be positive.")
             .ValidateOnStart();
 
         services.AddDbContext<OrdersDbContext>((serviceProvider, options) =>

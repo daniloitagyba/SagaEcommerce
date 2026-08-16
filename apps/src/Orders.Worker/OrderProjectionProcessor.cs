@@ -179,7 +179,8 @@ public sealed class OrderProjectionProcessor(
             statusChanged.Status,
             statusChanged.OccurredAt,
             projectedAt,
-            cancellationToken);
+            cancellationToken,
+            statusChanged.Version);
 
         OrdersTelemetry.RecordProcessed("success");
         OrdersTelemetry.RecordProjectionLag(nameof(OrderStatusChanged), projectedAt - statusChanged.OccurredAt);

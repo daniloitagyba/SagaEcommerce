@@ -71,7 +71,13 @@ public sealed class OrderStatusStore(
         """;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
-    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
+    // No-retry transactional pipeline, not the retrying PostgresPipeline -
+    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
+    // TransitionAsync's single write is exactly the shape that pipeline
+    // exists for: a lost commit ack retried blindly would mask a genuinely
+    // successful transition as a NotApplicable result to this store's own
+    // caller.
+    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     public Task<bool> TryConfirmAsync(Guid orderId, string correlationId, CancellationToken cancellationToken)
         => TransitionOrFalseAsync(orderId, OrderStatuses.Confirmed, correlationId, cancellationToken);
@@ -100,8 +106,7 @@ public sealed class OrderStatusStore(
         string correlationId,
         CancellationToken cancellationToken)
     {
-        var allowedFrom = OrderStatuses.PredecessorsOf(targetStatus);
-        if (allowedFrom.Count == 0)
+        if (OrderStatuses.PredecessorsOf(targetStatus).Count == 0)
         {
             return StatusTransitionResult.IllegalTransition;
         }
@@ -111,39 +116,66 @@ public sealed class OrderStatusStore(
             await using var connection = await dataSource.OpenConnectionAsync(ct);
             await using var transaction = await connection.BeginTransactionAsync(ct);
 
-            var transition = await TryTransitionRowAsync(
-                connection,
-                transaction,
-                orderId,
-                targetStatus,
-                allowedFrom,
-                ct);
+            var result = await TryTransitionWithinTransactionAsync(
+                connection, transaction, orderId, targetStatus, correlationId, ct);
 
-            if (!transition.Transitioned)
+            if (!result)
             {
                 await transaction.RollbackAsync(ct);
                 return false;
             }
 
-            await ApplySideEffectsAsync(
-                connection,
-                transaction,
-                orderId,
-                targetStatus,
-                correlationId,
-                transition,
-                ct);
-
             await transaction.CommitAsync(ct);
             return true;
         }, cancellationToken);
 
-        if (!transitioned)
+        return transitioned ? StatusTransitionResult.Transitioned : StatusTransitionResult.NotApplicable;
+    }
+
+    /// <summary>
+    /// The same CAS-guarded transition TransitionAsync performs, but
+    /// against a connection/transaction the caller already owns rather
+    /// than one this store opens and commits itself - so a status change
+    /// can be folded into the same commit as whatever durable state made
+    /// it necessary in the first place.
+    ///
+    /// Introduced at Milestone 91 for
+    /// SagaOrchestrationStore.ClaimTimedOutAndQueueAsync and
+    /// TryCompleteAndQueueAsync: before this, a saga row's deletion (the
+    /// durable claim that inventory has been released) committed in one
+    /// transaction, and the order's own status transition ran afterwards
+    /// in a second, separate one. A crash between the two left the saga
+    /// row permanently gone - so the order could never time out again -
+    /// with the order itself stuck in whatever non-terminal status it was
+    /// already in. See docs/roadmap-milestones-91-99.md, "durable claim,
+    /// non-durable act".
+    /// </summary>
+    public async Task<bool> TryTransitionWithinTransactionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid orderId,
+        string targetStatus,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var allowedFrom = OrderStatuses.PredecessorsOf(targetStatus);
+        if (allowedFrom.Count == 0)
         {
-            return StatusTransitionResult.NotApplicable;
+            return false;
         }
 
-        return StatusTransitionResult.Transitioned;
+        var transition = await TryTransitionRowAsync(
+            connection, transaction, orderId, targetStatus, allowedFrom, cancellationToken);
+
+        if (!transition.Transitioned)
+        {
+            return false;
+        }
+
+        await ApplySideEffectsAsync(
+            connection, transaction, orderId, targetStatus, correlationId, transition, cancellationToken);
+
+        return true;
     }
 
     /// <summary>
@@ -253,7 +285,8 @@ public sealed class OrderStatusStore(
         DateTimeOffset occurredAt,
         CancellationToken cancellationToken)
     {
-        var statusChanged = new OrderStatusChanged(Guid.NewGuid(), orderId, targetStatus, occurredAt, correlationId);
+        var version = await NextEventVersionAsync(connection, transaction, cancellationToken);
+        var statusChanged = new OrderStatusChanged(Guid.NewGuid(), orderId, targetStatus, occurredAt, correlationId, version);
         var payload = JsonSerializer.Serialize(statusChanged, SerializerOptions);
 
         await using var command = connection.CreateCommand();
@@ -267,6 +300,25 @@ public sealed class OrderStatusStore(
         command.Parameters.AddWithValue("trace_parent", NpgsqlDbType.Varchar, (object?)Activity.Current?.Id ?? DBNull.Value);
         command.Parameters.AddWithValue("trace_state", NpgsqlDbType.Varchar, (object?)Activity.Current?.TraceStateString ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Allocates the next value from order_event_version_seq - a single
+    /// Postgres sequence shared with EfOrderStatusRepository/
+    /// EfOrderReturnRepository's identical calls in Orders.Infrastructure,
+    /// which is what makes it a cross-process monotonic counter for
+    /// OrderStatusChanged rather than just a per-store one. nextval() is
+    /// atomic and takes no lock a concurrent writer could contend on, so
+    /// calling it from inside this same transaction costs nothing beyond
+    /// the round trip. See OrderStatusChanged's own class comment.
+    /// </summary>
+    private static async Task<long> NextEventVersionAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT nextval('order_event_version_seq')";
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
     private static async Task<TransitionContext> TryTransitionRowAsync(

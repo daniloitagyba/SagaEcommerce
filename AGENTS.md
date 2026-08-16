@@ -16,3 +16,11 @@
 Do not use `sudo`, delete files or volumes, prune Docker, delete Kubernetes resources, alter SSH/firewall/systemd/host settings, or commit/push without explicit approval.
 
 Run Compose commands from `compose/` so Docker Compose loads the untracked `.env` file automatically.
+
+## Local vs. remote environment
+
+See [`ENVIRONMENT.md`](ENVIRONMENT.md): Docker, Docker Compose, and every
+Testcontainers-backed integration test run on the remote/lab machine, not in a
+local sandbox. Locally, stick to `dotnet build` and the `*.UnitTests`/
+`*.ArchitectureTests` projects - do not start a local Docker daemon or run
+`*.IntegrationTests` here.

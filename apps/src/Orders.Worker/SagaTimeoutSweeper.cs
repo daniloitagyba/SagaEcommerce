@@ -1,5 +1,6 @@
 using BuildingBlocks;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Orders.Worker;
 
@@ -9,7 +10,12 @@ namespace Orders.Worker;
 /// Inventory.Service never replies, the orchestrator itself notices and
 /// resolves the order instead of leaving it parked at "Created" forever.
 /// Gated on LeaderElectionService.IsLeader, so every replica
-/// runs this loop but only the leader acts. Resolving now
+/// runs this loop but only the leader acts - an optimization, not the
+/// correctness mechanism: ClaimTimedOutAndResolveAsync's own FOR UPDATE
+/// SKIP LOCKED is what actually makes a double-sweep (two replicas acting
+/// during a brief leadership handoff, since IsLeader carries no fencing
+/// token) safe, by construction, the same way SKIP LOCKED already lets a
+/// second outbox poller safely coexist with the first. Resolving now
 /// also releases the coupon redemption and voids any card hold, since
 /// those hang off the transition.
 ///
@@ -71,37 +77,45 @@ public sealed class SagaTimeoutSweeper(
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var timedOut = await store.ClaimTimedOutAndQueueAsync(
+        // ClaimTimedOutAndResolveAsync (not the undecorated
+        // ClaimTimedOutAndQueueAsync this used to call) folds each order's
+        // status resolution into the very transaction that deletes its
+        // saga row - see that method's own comment for why a separate,
+        // later call used to leave orders permanently stranded on a crash.
+        var timedOut = await store.ClaimTimedOutAndResolveAsync(
                 timeout,
                 now,
                 SweepBatchSize,
                 (orderId, saga) => CreateTimeoutCommands(orderId, saga, now),
+                ResolveWithinTransactionAsync,
                 cancellationToken);
         foreach (var (orderId, saga) in timedOut)
         {
             SagaOrchestratorLog.SagaTimedOut(logger, orderId, saga.Step, _options.TimeoutSeconds, saga.CorrelationId);
-            await ResolveAsync(orderId, saga, cancellationToken);
         }
 
         return timedOut.Count;
     }
 
-    /// <summary>Public so integration tests can drive it directly, the same shape as the other saga classes' testable seams.</summary>
-    public async Task ResolveAsync(Guid orderId, SagaOrchestrationRecord saga, CancellationToken cancellationToken)
+    /// <summary>
+    /// Resolves a single timed-out order's own status, against the exact
+    /// connection/transaction ClaimTimedOutAndResolveAsync is about to
+    /// commit alongside the saga row's deletion - see that method's class
+    /// comment. Same decision table this class always used (Public so
+    /// integration tests can drive it directly - see
+    /// SagaOrchestrationStoreTests/SagaTimeoutSweeperTests for the
+    /// per-step assertions), just applied atomically now instead of after
+    /// the fact.
+    /// </summary>
+    private Task ResolveWithinTransactionAsync(
+        Guid orderId,
+        SagaOrchestrationRecord saga,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
     {
         switch (saga.Step)
         {
-            case SagaStep.DecidePayment:
-            case SagaStep.ReleaseInventory:
-                // Every line's reservation certainly exists and certainly
-                // hasn't been committed - DecidePayment is only reached
-                // once every line replied Reserved, and
-                // ReleaseInventory means a release was already requested
-                // once for every line, so resending is a safe redelivery,
-                // not a guess.
-                await orderStatusStore.TryCancelAsync(orderId, saga.CorrelationId, cancellationToken);
-                break;
-
             case SagaStep.CommitInventory:
                 // Payment was approved to reach this step, so the order is
                 // real - but whether the commit landed is unknown, so this
@@ -109,16 +123,34 @@ public sealed class SagaTimeoutSweeper(
                 // human" state HandleCommitRepliedAsync reaches on an
                 // explicit Committed:false reply; a timeout is just a
                 // reply that never arrived to say either way.
-                await orderStatusStore.TryConfirmAsync(orderId, saga.CorrelationId, cancellationToken);
-                await orderStatusStore.TryTransitionAsync(orderId, OrderStatuses.FulfillmentHold, saga.CorrelationId, cancellationToken);
-                break;
+                return ResolveCommitInventoryWithinTransactionAsync(orderId, saga, connection, transaction, cancellationToken);
 
             default:
-                // ReserveInventory is cancelled after the durable release
-                // command was queued while claiming the timeout.
-                await orderStatusStore.TryCancelAsync(orderId, saga.CorrelationId, cancellationToken);
-                break;
+                // DecidePayment and ReleaseInventory: every line's
+                // reservation certainly exists and certainly hasn't been
+                // committed - DecidePayment is only reached once every
+                // line replied Reserved, and ReleaseInventory means a
+                // release was already requested once for every line, so
+                // resending is a safe redelivery, not a guess.
+                // ReserveInventory (the fallthrough default): cancelled
+                // after the durable release command was queued while
+                // claiming the timeout, same transaction.
+                return orderStatusStore.TryTransitionWithinTransactionAsync(
+                    connection, transaction, orderId, OrderStatuses.Cancelled, saga.CorrelationId, cancellationToken);
         }
+    }
+
+    private async Task ResolveCommitInventoryWithinTransactionAsync(
+        Guid orderId,
+        SagaOrchestrationRecord saga,
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await orderStatusStore.TryTransitionWithinTransactionAsync(
+            connection, transaction, orderId, OrderStatuses.Confirmed, saga.CorrelationId, cancellationToken);
+        await orderStatusStore.TryTransitionWithinTransactionAsync(
+            connection, transaction, orderId, OrderStatuses.FulfillmentHold, saga.CorrelationId, cancellationToken);
     }
 
     private List<SagaOutboxCommand> CreateTimeoutCommands(

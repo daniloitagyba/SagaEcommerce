@@ -110,9 +110,25 @@ public sealed class OutboxPublisher<TDbContext>(
         // transaction they imply) for as long as Kafka takes to answer;
         // see ClaimBatchAsync's own comment for what stops a second
         // poller from picking up the same rows in the meantime.
-        foreach (var message in messages)
+        //
+        // The Kafka-side attempt for each message runs concurrently,
+        // bounded by Outbox:MaxConcurrentPublishes - IOutboxEventDispatcher's
+        // own contract never touches this method's DbContext (each
+        // implementation only ever calls its own IOrderEventPublisher/
+        // IPaymentEventPublisher/IInventoryEventPublisher), so this is the
+        // one part of a batch that's actually safe to parallelize. Every
+        // DbContext mutation (MarkPublished/MarkFailed/dead-letter) still
+        // happens sequentially, back on this one thread, once every
+        // attempt below has settled - DbContext itself is not thread-safe,
+        // so that part was never a candidate for concurrency. Raising
+        // Outbox:BatchSize without this would just serialize a bigger
+        // batch through the same one-at-a-time Kafka round trip; see
+        // docs/roadmap-milestones-91-99.md, "the shared outbox publishes 5
+        // rows at a time, one await each".
+        var attempts = await PublishAllAsync(messages, dispatcher, cancellationToken);
+        foreach (var (message, attempt) in attempts)
         {
-            await PublishAsync(message, dispatcher, cancellationToken);
+            await ApplyPublishAttemptAsync(dbContext, message, attempt, cancellationToken);
         }
 
         if (messages.Count > 0)
@@ -192,41 +208,136 @@ public sealed class OutboxPublisher<TDbContext>(
         OrdersTelemetry.RecordOutboxPending(pending);
     }
 
-    private async Task PublishAsync(
-        OutboxMessage message,
+    /// <summary>
+    /// Phase one: attempt every message's Kafka publish concurrently,
+    /// bounded by Outbox:MaxConcurrentPublishes - see ProcessBatchAsync's
+    /// own comment for why this is the safe-to-parallelize half. Returns
+    /// each message paired with its outcome; nothing here touches the
+    /// DbContext.
+    /// </summary>
+    private async Task<List<(OutboxMessage Message, PublishAttempt Attempt)>> PublishAllAsync(
+        List<OutboxMessage> messages,
         IOutboxEventDispatcher dispatcher,
         CancellationToken cancellationToken)
+    {
+        using var throttle = new SemaphoreSlim(Math.Max(1, _options.MaxConcurrentPublishes));
+
+        var tasks = messages.Select(async message =>
+        {
+            await throttle.WaitAsync(cancellationToken);
+            try
+            {
+                return (message, await TryPublishAsync(message, dispatcher, cancellationToken));
+            }
+            finally
+            {
+                throttle.Release();
+            }
+        });
+
+        return (await Task.WhenAll(tasks)).ToList();
+    }
+
+    private static async Task<PublishAttempt> TryPublishAsync(
+        OutboxMessage message, IOutboxEventDispatcher dispatcher, CancellationToken cancellationToken)
     {
         using var activity = CreateActivity(message);
 
         try
         {
             var context = await dispatcher.PublishAsync(message, cancellationToken);
+            return PublishAttempt.Success(context, activity?.TraceId.ToString() ?? string.Empty);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return PublishAttempt.Failure(exception);
+        }
+    }
 
-            var scopeState = new Dictionary<string, object?>(context)
+    /// <summary>
+    /// Phase two: apply one message's already-settled publish outcome to
+    /// this method's own DbContext - sequential by construction (called
+    /// once per message, in a plain foreach, back on ProcessBatchAsync's
+    /// single calling thread), since DbContext's change tracker is not
+    /// thread-safe.
+    /// </summary>
+    private async Task ApplyPublishAttemptAsync(
+        TDbContext dbContext, OutboxMessage message, PublishAttempt attempt, CancellationToken cancellationToken)
+    {
+        if (attempt.Succeeded)
+        {
+            var scopeState = new Dictionary<string, object?>(attempt.Context!)
             {
                 ["CorrelationId"] = message.CorrelationId,
                 ["EventId"] = message.Id,
-                ["TraceId"] = activity?.TraceId.ToString() ?? string.Empty
+                ["TraceId"] = attempt.TraceId ?? string.Empty
             };
             using var logScope = logger.BeginScope(scopeState);
 
             message.MarkPublished(DateTimeOffset.UtcNow);
             OrdersTelemetry.RecordOutboxPublished(message.EventType);
             OutboxPublisherLog.Published(logger, message.Id, _instanceId);
+            return;
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+
+        message.MarkFailed(DateTimeOffset.UtcNow, attempt.Exception!.Message, _options.MaximumRetryDelaySeconds);
+        OrdersTelemetry.RecordOutboxRetry(message.EventType);
+
+        if (message.AttemptCount >= _options.MaximumAttempts)
         {
-            message.MarkFailed(DateTimeOffset.UtcNow, exception.Message, _options.MaximumRetryDelaySeconds);
-            OrdersTelemetry.RecordOutboxRetry(message.EventType);
-            OutboxPublisherLog.RetryScheduled(
-                logger,
-                message.Id,
-                message.AttemptCount,
-                message.NextAttemptAt,
-                _instanceId,
-                exception);
+            await DeadLetterAsync(dbContext, message, cancellationToken);
+            OrdersTelemetry.RecordOutboxDeadLettered(message.EventType);
+            OutboxPublisherLog.DeadLettered(logger, message.Id, message.AttemptCount, _instanceId, attempt.Exception);
+            return;
         }
+
+        OutboxPublisherLog.RetryScheduled(
+            logger,
+            message.Id,
+            message.AttemptCount,
+            message.NextAttemptAt,
+            _instanceId,
+            attempt.Exception);
+    }
+
+    private readonly record struct PublishAttempt(
+        bool Succeeded,
+        IReadOnlyDictionary<string, object?>? Context,
+        string? TraceId,
+        Exception? Exception)
+    {
+        public static PublishAttempt Success(IReadOnlyDictionary<string, object?> context, string traceId) =>
+            new(true, context, traceId, null);
+
+        public static PublishAttempt Failure(Exception exception) =>
+            new(false, null, null, exception);
+    }
+
+    /// <summary>
+    /// Moves a row that exhausted OutboxOptions.MaximumAttempts out of the
+    /// pending set for good - see OutboxOptions.MaximumAttempts for why an
+    /// unbounded retry loop was worse than giving up loudly. The INSERT
+    /// happens on this same DbContext's connection but outside its own
+    /// transaction (ProcessBatchAsync's SaveChangesAsync call, further
+    /// down, is what actually removes the row from outbox_messages) - a
+    /// crash between the two leaves the row dead-lettered twice on the
+    /// next attempt at worst, never lost, since Remove() only takes effect
+    /// once SaveChangesAsync commits.
+    /// </summary>
+    private static async Task DeadLetterAsync(TDbContext dbContext, OutboxMessage message, CancellationToken cancellationToken)
+    {
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO outbox_dead_letters
+                (id, event_type, payload, occurred_at, correlation_id, trace_parent, trace_state, attempt_count, last_error, dead_lettered_at)
+            VALUES
+                ({message.Id}, {message.EventType}, {message.Payload}, {message.OccurredAt}, {message.CorrelationId},
+                 {message.TraceParent}, {message.TraceState}, {message.AttemptCount}, {message.LastError}, {DateTimeOffset.UtcNow})
+            ON CONFLICT (id) DO NOTHING
+            """,
+            cancellationToken);
+
+        dbContext.OutboxMessages.Remove(message);
     }
 
     private static Activity? CreateActivity(OutboxMessage message)
@@ -260,4 +371,7 @@ public sealed partial class OutboxPublisherLog
 
     [LoggerMessage(EventId = 3004, Level = LogLevel.Information, Message = "Outbox publisher is stopping gracefully on instance {InstanceId}")]
     public static partial void Stopping(ILogger logger, string instanceId);
+
+    [LoggerMessage(EventId = 3005, Level = LogLevel.Error, Message = "Outbox event {EventId} moved to outbox_dead_letters after {AttemptCount} attempts on instance {InstanceId}")]
+    public static partial void DeadLettered(ILogger logger, Guid eventId, int attemptCount, string instanceId, Exception exception);
 }
