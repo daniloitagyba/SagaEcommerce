@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Mirrors .github/workflows/ci.yml's "cyclomatic complexity and module
+# size" job's static checks, so a violation is caught before push instead
+# of after CI runs and rejects it. These checks are plain file-text
+# scans, not part of `dotnet build` (the compiler has no opinion on line
+# counts or empty catch blocks), so they can only ever be caught by
+# running them explicitly - this hook is that explicit run, wired to fire
+# automatically at the one point it matters.
+#
+# Activate on any clone (including the lab machine) with:
+#   git config core.hooksPath .githooks
+# Git does not auto-discover hooks committed to a repo; this is a
+# one-time, per-clone opt-in, not something a commit alone can turn on.
+#
+# Bypass for a deliberate one-off with `git push --no-verify` - same as
+# any git hook.
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+failed=0
+
+echo "pre-push: module size (max 500 lines per file)"
+overlong=$(find apps/src -name "*.cs" -not -path "*/obj/*" -not -path "*/bin/*" -not -path "*Migrations*" \
+  | xargs wc -l | awk '$1 > 500 && $2 != "total" {print}')
+if [[ -n "$overlong" ]]; then
+  echo "Files over the 500-line module-size budget:"
+  echo "$overlong"
+  failed=1
+else
+  echo "  OK"
+fi
+
+echo "pre-push: no empty catch blocks"
+if ! python3 -c '
+import re, sys, glob
+pattern = re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}")
+files = [f for f in glob.glob("apps/src/**/*.cs", recursive=True) if "/obj/" not in f and "/bin/" not in f]
+offenders = [f for f in files if pattern.search(open(f, encoding="utf-8", errors="ignore").read())]
+if offenders:
+    print("Empty catch block(s) found - handle, log, or rethrow instead of swallowing:")
+    print("\n".join(offenders))
+    sys.exit(1)
+'; then
+  failed=1
+else
+  echo "  OK"
+fi
+
+echo "pre-push: no hand-rolled inbox dedup SQL outside BuildingBlocks.Persistence"
+if ! python3 -c '
+import glob, sys
+files = [
+    f for f in glob.glob("apps/src/**/*.cs", recursive=True)
+    if "/obj/" not in f and "/bin/" not in f
+    and "BuildingBlocks.Persistence" not in f
+]
+offenders = [f for f in files if "INSERT INTO inbox_messages" in open(f, encoding="utf-8", errors="ignore").read()]
+if offenders:
+    print("Hand-rolled inbox dedup SQL found outside BuildingBlocks.Persistence - call InboxStore.TryRecordAsync/TryRecordWithinTransactionAsync instead:")
+    print("\n".join(offenders))
+    sys.exit(1)
+'; then
+  failed=1
+else
+  echo "  OK"
+fi
+
+echo "pre-push: no ambient clock in *Handler/*Sweeper types"
+if ! python3 -c '
+import glob, re, sys
+ALLOWLIST = {"apps/src/BuildingBlocks.Persistence/RetentionSweeper.cs"}
+files = [
+    f for f in glob.glob("apps/src/**/*Handler.cs", recursive=True)
+    + glob.glob("apps/src/**/*Sweeper.cs", recursive=True)
+    if "/obj/" not in f and "/bin/" not in f and f not in ALLOWLIST
+]
+pattern = re.compile(r"DateTime(Offset)?\.UtcNow")
+offenders = [f for f in files if pattern.search(open(f, encoding="utf-8", errors="ignore").read())]
+if offenders:
+    print("Direct DateTime(Offset).UtcNow found in a *Handler/*Sweeper type - inject TimeProvider and call timeProvider.GetUtcNow() instead, or add a justified entry to ALLOWLIST in this check:")
+    print("\n".join(sorted(offenders)))
+    sys.exit(1)
+'; then
+  failed=1
+else
+  echo "  OK"
+fi
+
+echo "pre-push: cyclomatic complexity (lizard, CCN <= 20)"
+if command -v lizard >/dev/null 2>&1; then
+  lizard apps/src --languages csharp --CCN 20 || failed=1
+elif python3 -c "import lizard" >/dev/null 2>&1; then
+  python3 -m lizard apps/src --languages csharp --CCN 20 || failed=1
+else
+  echo "  lizard not installed locally (pip install lizard) - skipping this check; CI will still catch it." >&2
+fi
+
+if [[ "$failed" -ne 0 ]]; then
+  echo ""
+  echo "pre-push: one or more static gates failed - see above. Fix and try again, or 'git push --no-verify' to bypass deliberately."
+  exit 1
+fi
+
+echo ""
+echo "pre-push: all local static gates passed"

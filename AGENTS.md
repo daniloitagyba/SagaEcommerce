@@ -24,3 +24,15 @@ Testcontainers-backed integration test run on the remote/lab machine, not in a
 local sandbox. Locally, stick to `dotnet build` and the `*.UnitTests`/
 `*.ArchitectureTests` projects - do not start a local Docker daemon or run
 `*.IntegrationTests` here.
+
+## Pre-push hook
+
+`.githooks/pre-push` mirrors `ci.yml`'s static-analysis job (module size,
+cyclomatic complexity, empty catch blocks, ambient clock, hand-rolled inbox
+SQL) so a violation is caught before push instead of after CI rejects it.
+Committed to the repo but not auto-active - run once per clone (including the
+lab machine):
+
+```
+git config core.hooksPath .githooks
+```
