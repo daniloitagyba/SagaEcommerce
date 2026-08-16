@@ -1,0 +1,210 @@
+# Linkerd workload authorization for every HTTP workload other than
+# orders-api, whose older, environment-specific policy also preserves the
+# lab's high-throughput host load-test path. Application JWT authorization
+# remains mandatory; these policies narrow which workload identities can
+# reach each port before the request reaches ASP.NET.
+apiVersion: policy.linkerd.io/v1alpha1
+kind: NetworkAuthentication
+metadata:
+  name: lab-node-bridge
+spec:
+  networks:
+    - cidr: 10.42.0.1/32
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: catalog-callers
+spec:
+  identities:
+    - "orders-api.orders-lab.serviceaccount.identity.linkerd.cluster.local"
+    - "orders-worker.orders-lab.serviceaccount.identity.linkerd.cluster.local"
+    - "cart-service.orders-lab.serviceaccount.identity.linkerd.cluster.local"
+    - "storefront-service.orders-lab.serviceaccount.identity.linkerd.cluster.local"
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: cart-callers
+spec:
+  identities:
+    - "storefront-service.orders-lab.serviceaccount.identity.linkerd.cluster.local"
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: inventory-callers
+spec:
+  identities:
+    - "orders-worker.orders-lab.serviceaccount.identity.linkerd.cluster.local"
+    - "storefront-service.orders-lab.serviceaccount.identity.linkerd.cluster.local"
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: payments-callers
+spec:
+  identities:
+    - "orders-worker.orders-lab.serviceaccount.identity.linkerd.cluster.local"
+---
+# Each Server switches that port away from Linkerd's permissive default.
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: catalog-service-http
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: catalog-service
+  port: http
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: cart-service-http
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cart-service
+  port: http
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: inventory-service-http
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: inventory-service
+  port: http
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: payments-service-http
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: payments-service
+  port: http
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: storefront-service-http
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: storefront-service
+  port: http
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: orders-worker-http
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: orders-worker
+  port: http
+  proxyProtocol: HTTP/1
+---
+# A separate policy per authentication source is intentional: Linkerd ORs
+# AuthorizationPolicies targeting a Server, while multiple authentication
+# refs inside one policy are ANDed.
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: catalog-service-allow-callers
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: catalog-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: catalog-callers }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: cart-service-allow-callers
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: cart-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: cart-callers }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: inventory-service-allow-callers
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: inventory-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: inventory-callers }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: payments-service-allow-callers
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: payments-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: payments-callers }
+---
+# Node-originated traffic covers kubelet probes and the lab's ingress/load-test
+# path. It is intentionally the only non-mesh route to Storefront and Worker.
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: catalog-service-allow-lab-node
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: catalog-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: NetworkAuthentication, name: lab-node-bridge }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: cart-service-allow-lab-node
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: cart-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: NetworkAuthentication, name: lab-node-bridge }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: inventory-service-allow-lab-node
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: inventory-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: NetworkAuthentication, name: lab-node-bridge }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: payments-service-allow-lab-node
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: payments-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: NetworkAuthentication, name: lab-node-bridge }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: storefront-service-allow-lab-node
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: storefront-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: NetworkAuthentication, name: lab-node-bridge }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: orders-worker-allow-lab-node
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: orders-worker-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: NetworkAuthentication, name: lab-node-bridge }

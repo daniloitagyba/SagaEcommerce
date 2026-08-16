@@ -68,24 +68,30 @@ groups:
         for: 2m
         labels:
           severity: page
+          owner: orders
         annotations:
           summary: "orders-api is burning its 30-day error budget fast (5m and 1h windows both elevated)"
           description: "5m error ratio {{ $labels.instance }} and 1h error ratio both exceed a 14.4x burn rate against the 99.5% SLO - at this rate the 30-day budget would be exhausted in about 2 hours."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#deployment-rollback"
 
       - alert: OrdersApiErrorBudgetBurnSlow
         expr: orders_api:error_ratio:rate30m > 0.03 and orders_api:error_ratio:rate6h > 0.03
         for: 15m
         labels:
           severity: ticket
+          owner: orders
         annotations:
           summary: "orders-api is burning its 30-day error budget (30m and 6h windows both elevated)"
           description: "30m and 6h error ratios both exceed a 6x burn rate against the 99.5% SLO - at this rate the 30-day budget would be exhausted in about 5 days."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#deployment-rollback"
 
       - alert: OrdersApiErrorBudgetBurnDemo
         expr: orders_api:error_ratio:rate30s > 0.072 and orders_api:error_ratio:rate2m > 0.072
         for: 15s
         labels:
           severity: page
+          owner: orders
         annotations:
           summary: "[DEMO] orders-api burn-rate alert validation (30s/2m windows, not for production use)"
           description: "Same 14.4x burn-rate math as OrdersApiErrorBudgetBurnFast, on short windows so the pipeline can be validated within a short chaos experiment instead of waiting out a real hour."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/resilience/alert-provocation-runbook.md"

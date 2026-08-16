@@ -20,7 +20,7 @@ public class NamingConventionTests
     {
         Assembly[] assemblies =
         [
-            typeof(CorrelationIdMiddleware).Assembly,
+            typeof(CorrelationContext).Assembly,
             typeof(CreateOrderHandler).Assembly,
             typeof(Order).Assembly,
             typeof(RedisOrderCache).Assembly,

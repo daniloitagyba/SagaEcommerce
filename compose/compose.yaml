@@ -414,34 +414,34 @@ services:
       - /bin/bash
       - -ec
       - |
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.created.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.status-changed.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.created.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.status-changed.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.created.dlq.v1 --partitions 3 --replication-factor 1 --config retention.ms=2592000000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.result.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.result.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decisions.dlq.v1 --partitions 3 --replication-factor 1 --config retention.ms=2592000000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.result.dlq.v1 --partitions 3 --replication-factor 1 --config retention.ms=2592000000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.projection.dlq.v1 --partitions 3 --replication-factor 1 --config retention.ms=2592000000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.saga.dlq.v1 --partitions 3 --replication-factor 1 --config retention.ms=2592000000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.event-store.dlq.v1 --partitions 3 --replication-factor 1 --config retention.ms=2592000000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic _schemas --partitions 1 --replication-factor 1 --config cleanup.policy=compact
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.decision-requested.dlq.v1 --partitions 3 --replication-factor 1 --config retention.ms=2592000000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.capture-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.cancellation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.settlement-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.capture-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.cancellation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.settlement-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.settlement.dlq.v1 --partitions 3 --replication-factor 1 --config retention.ms=2592000000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.refund-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.restock-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.backorder-cancellation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.restock-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-commit-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-commit-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-release-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-release-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.replenishment-needed.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic payments.refund-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.restock-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.backorder-cancellation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.restock-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-commit-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-commit-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-release-requested.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation-release-replied.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.replenishment-needed.v1 --partitions 3 --replication-factor 1 --config retention.ms=604800000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic inventory.reservation.dlq.v1 --partitions 3 --replication-factor 1 --config retention.ms=2592000000
     networks:
       - backend
@@ -590,7 +590,7 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic debezium-connect-configs --partitions 1 --replication-factor 1 --config cleanup.policy=compact
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic debezium-connect-offsets --partitions 5 --replication-factor 1 --config cleanup.policy=compact
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic debezium-connect-status --partitions 1 --replication-factor 1 --config cleanup.policy=compact
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders-cdc.public.outbox_messages --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders-cdc.public.outbox_messages --partitions 3 --replication-factor 1 --config retention.ms=604800000
     networks:
       - backend
     mem_limit: 256m
@@ -867,13 +867,11 @@ services:
       # inventory before deciding payment. Both is reserved for isolated
       # comparison runs and is not a deployment default.
       Saga__Mode: *saga-mode
-      # Milestone 88 follow-up: this service's own credentials for the
-      # anti-entropy sweep's two cross-service reads (GET /payments/by-order,
-      # GET /inventory/backorders) - reuses orders-api-clients, the same
-      # confidential client scripts/infra/keycloak-configure-realm.sh already
-      # provisions as this lab's trusted-backend-tooling identity.
+      # Least-privilege service identity for the anti-entropy sweep's two
+      # cross-service reads. It carries only payments:read/inventory:read,
+      # unlike the general backend-tooling client which can mutate orders.
       Keycloak__TokenUrl: http://keycloak:8080/realms/orders-lab/protocol/openid-connect/token
-      Keycloak__ClientId: orders-api-clients
+      Keycloak__ClientId: orders-worker
       Keycloak__ClientSecret: ${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET is required}
       # LeaderElectionService defaults to Kubernetes.InClusterConfig(),
       # which throws outside a real cluster - there's no ServiceAccount

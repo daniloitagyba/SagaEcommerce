@@ -1,0 +1,76 @@
+# Roadmap Phase 5: service-level indicators beyond Orders.Api. The HTTP SLI
+# uses the same OpenTelemetry metric/labels as orders-api-slo.yml. Payments and
+# Inventory use business correctness counters, so a 200 response cannot hide a
+# captured-but-unreconciled payment or committed stock on a cancelled order.
+groups:
+  - name: commerce-slo-recording
+    interval: 30s
+    rules:
+      - record: storefront_checkout:requests:rate5m
+        expr: sum(rate(http_server_request_duration_seconds_count{service_name="storefront-service",http_route="/api/storefront/checkout"}[5m]))
+      - record: storefront_checkout:failed:rate5m
+        expr: sum(rate(http_server_request_duration_seconds_count{service_name="storefront-service",http_route="/api/storefront/checkout",http_response_status_code=~"5.."}[5m]))
+      - record: storefront_checkout:error_ratio:rate5m
+        expr: (storefront_checkout:failed:rate5m or vector(0)) / (storefront_checkout:requests:rate5m or vector(1))
+      - record: storefront_checkout:requests:rate1h
+        expr: sum(rate(http_server_request_duration_seconds_count{service_name="storefront-service",http_route="/api/storefront/checkout"}[1h]))
+      - record: storefront_checkout:failed:rate1h
+        expr: sum(rate(http_server_request_duration_seconds_count{service_name="storefront-service",http_route="/api/storefront/checkout",http_response_status_code=~"5.."}[1h]))
+      - record: storefront_checkout:error_ratio:rate1h
+        expr: (storefront_checkout:failed:rate1h or vector(0)) / (storefront_checkout:requests:rate1h or vector(1))
+
+      - record: payments:decisions:rate5m
+        expr: sum(rate(payments_decided_total[5m]))
+      - record: payments:unresolved:rate5m
+        expr: sum(rate(payments_settlement_reconciliation_unresolved_total[5m]))
+      - record: payments:integrity_error_ratio:rate5m
+        expr: (payments:unresolved:rate5m or vector(0)) / (payments:decisions:rate5m or vector(1))
+      - record: payments:decisions:rate1h
+        expr: sum(rate(payments_decided_total[1h]))
+      - record: payments:unresolved:rate1h
+        expr: sum(rate(payments_settlement_reconciliation_unresolved_total[1h]))
+      - record: payments:integrity_error_ratio:rate1h
+        expr: (payments:unresolved:rate1h or vector(0)) / (payments:decisions:rate1h or vector(1))
+
+      - record: inventory:divergences:increase5m
+        expr: sum(increase(anti_entropy_divergences_total{check=~"backorder_on_dead_order|committed_inventory_on_cancelled_order"}[5m]))
+      - record: inventory:divergences:increase1h
+        expr: sum(increase(anti_entropy_divergences_total{check=~"backorder_on_dead_order|committed_inventory_on_cancelled_order"}[1h]))
+
+  - name: commerce-slo-alerts
+    rules:
+      # 99.5% availability, 14.4x fast burn over both 5m and 1h.
+      - alert: StorefrontCheckoutErrorBudgetBurnFast
+        expr: storefront_checkout:error_ratio:rate5m > 0.072 and storefront_checkout:error_ratio:rate1h > 0.072
+        for: 2m
+        labels:
+          severity: page
+          owner: storefront
+        annotations:
+          summary: "Checkout is burning its availability error budget"
+          description: "Checkout 5m and 1h error ratios both exceed the 14.4x burn threshold for the 99.5% SLO."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#deployment-rollback"
+
+      # Effectively zero tolerance for an unresolved settlement. The paired
+      # windows avoid paging on an exporter reset while retaining a strict SLI.
+      - alert: PaymentIntegrityErrorBudgetBurn
+        expr: payments:integrity_error_ratio:rate5m > 0 and payments:integrity_error_ratio:rate1h > 0
+        for: 2m
+        labels:
+          severity: page
+          owner: payments
+        annotations:
+          summary: "Payment settlements are not reconciling"
+          description: "At least one payment outcome is unresolved in both the 5m and 1h integrity windows."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#stuck-or-failed-saga-compensation"
+
+      - alert: InventoryConsistencyErrorBudgetBurn
+        expr: inventory:divergences:increase5m > 0 and inventory:divergences:increase1h > 0
+        for: 0s
+        labels:
+          severity: page
+          owner: inventory
+        annotations:
+          summary: "Inventory consistency invariant failed"
+          description: "Anti-entropy found backorder or committed-stock state attached to a dead/cancelled order."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#stuck-or-failed-saga-compensation"

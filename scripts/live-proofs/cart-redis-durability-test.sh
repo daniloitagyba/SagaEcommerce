@@ -73,7 +73,8 @@ echo "== Creating ${cart_count} carts directly in Redis (run ${run_id}) =="
 create_one() {
   local i=$1
   local cart_id="cart:${run_id}-${i}"
-  local payload="{\"sku\":\"${sku}\",\"quantity\":1,\"unitPrice\":199.90,\"currency\":\"BRL\",\"productName\":\"durability test item\",\"addedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+  local payload
+  payload="{\"sku\":\"${sku}\",\"quantity\":1,\"unitPrice\":199.90,\"currency\":\"BRL\",\"productName\":\"durability test item\",\"addedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
   docker exec "$redis_container" redis-cli HSET "$cart_id" "$sku" "$payload" __version 1 >/dev/null
   docker exec "$redis_container" redis-cli EXPIRE "$cart_id" "$ttl_seconds" >/dev/null
   echo "${cart_id} created"

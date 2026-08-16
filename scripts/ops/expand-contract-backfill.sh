@@ -26,9 +26,7 @@ for arg in "$@"; do
   esac
 done
 
-for command_name in docker; do
-  command -v "$command_name" >/dev/null
-done
+command -v docker >/dev/null
 
 query_pending_count() {
   (

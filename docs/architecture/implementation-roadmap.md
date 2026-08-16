@@ -30,14 +30,44 @@ tests, frontend lint/type-check/tests, coverage, mutation testing, complexity
 and module-size budgets, Gitleaks, NuGet audit, CodeQL, Trivy, SBOM generation
 and keyless image signing.
 
-This roadmap adds four blocking repository-quality checks to the existing CI:
+The implemented roadmap adds the following blocking repository-quality checks
+to the existing CI:
 
 - `dotnet format --verify-no-changes` after the solution restore;
 - `actionlint` for GitHub Actions syntax and expression validation;
 - `bash -n` for every shell script under `scripts/` and `compose/`;
+- calibrated ShellCheck and Hadolint analysis;
 - Kustomize rendering followed by strict Kubeconform validation of standard
   Kubernetes resources. CRDs without a published schema are reported as
-  skipped, not silently treated as valid.
+  skipped, not silently treated as valid;
+- Kyverno policy tests for immutable-image admission behavior;
+- Prometheus rule/config validation and Grafana JSON validation;
+- npm direct/transitive vulnerability audit at high severity.
+
+## Implementation status (2026-08-16)
+
+| Phase | Repository status | Evidence and remaining acceptance |
+| --- | --- | --- |
+| 1 — Stabilization | Implemented | The [audit rebaseline](audit-rebaseline-2026-08-16.md) links the current evidence; immutable runtime pins/rescans, warehouse-safe replenishment and bounded resilience paths are present. Release build and local tests pass; remote integration/Trivy execution remains a CI/lab gate. |
+| 2 — Domain and architecture | Implemented | Promotion calendar/budget, centralized transitions, exact money contracts and architecture fitness functions are executable. [ADR-001](adr-001-microservices-vs-modular-monolith.md) records the boundary decision. |
+| 3 — Distributed reliability | Implemented | The [producer/consumer reliability inventory](reliability-inventory-2026-08-16.md) records outbox/inbox, IDs, versions and replay guarantees. Duplicate/order/restart proofs remain required in the remote integration job. |
+| 4 — Quality and security | Implemented | CI is split into fast and Testcontainers jobs, third-party actions are SHA-pinned, Dependabot covers Actions/NuGet/npm/Docker, ShellCheck/Hadolint/npm audit are blocking, request bodies are bounded and the [critical-flow matrix](../testing/critical-flow-matrix.md) names the automated evidence. |
+| 5 — Operations | Implemented; scheduled proof pending | Payments/saga dashboards already exist; `commerce-slo.yml` adds checkout/payment/inventory SLOs, every alert has an owner/runbook, [operations runbooks](../operations/runbooks.md) cover recovery, and scheduled backup/chaos jobs retain machine-readable evidence. A real scheduled restore and controlled burn-rate provocation must still produce lab artifacts. |
+| 6 — Delivery and GitOps | Implemented; environment acceptance pending | CI publishes/scans/signs immutable commit images, `promote.yml` promotes verified digests by PR, `staging-smoke.yml` verifies all seven running digests and the critical flow, and production requires matching successful staging evidence. Per-workload service accounts, Linkerd authorization, egress policies, admission tests and overlay validation are declarative. Staging/production credentials, Argo destinations and approval rules are external prerequisites and no production promotion was performed by this implementation. |
+
+### Local verification recorded for this implementation
+
+- `dotnet format --verify-no-changes` passed.
+- Release solution build passed with zero warnings and zero errors.
+- 591 local .NET unit/architecture tests passed.
+- 67 frontend tests passed; lint, type-check/build and `npm audit` passed with
+  zero reported vulnerabilities.
+- `actionlint`, `bash -n`, ShellCheck, Kustomize rendering, strict Kubeconform
+  (67 valid, 25 CRDs skipped, zero invalid), Kyverno CLI tests, Prometheus
+  `promtool`, Grafana JSON parsing, Gitleaks and `git diff --check` passed.
+- Hadolint, container builds/scans/signatures, Testcontainers, mesh/egress
+  smoke, restore and chaos acceptance are intentionally left to CI or the
+  remote/lab environment required by `ENVIRONMENT.md`.
 
 ## Priority and promotion policy
 
@@ -354,13 +384,16 @@ migrations.
 | Gate | Pull request | Main | Scheduled/manual | Current mechanism |
 | --- | ---: | ---: | ---: | --- |
 | .NET format/analyzers/build | Blocking | Blocking | — | `ci.yml` + `Directory.Build.props` |
-| Unit/architecture/integration/contract tests | Blocking | Blocking | — | Solution test job |
+| Unit/architecture tests | Blocking | Blocking | — | Fast `build and test` job |
+| Integration/contract tests | Blocking | Blocking | — | Separate Testcontainers job |
 | Frontend lint/type-check/build/tests | Blocking | Blocking | — | Frontend job |
 | Coverage | Blocking | Blocking | — | Unit-only calibrated threshold |
-| Workflow and Bash syntax | Blocking | Blocking | — | `actionlint` + `bash -n` |
-| Kustomize render/Kubernetes schema | Blocking | Blocking | — | `kubectl kustomize` + Kubeconform |
-| Secrets/dependencies/SAST | Blocking | Blocking | Weekly CodeQL | Gitleaks, NuGet audit, CodeQL |
+| Workflow, Bash and Dockerfile quality | Blocking | Blocking | — | `actionlint`, `bash -n`, ShellCheck, Hadolint |
+| Kustomize/schema/admission policy | Blocking | Blocking | — | all overlays + Kubeconform + Kyverno CLI tests |
+| Observability configuration | Blocking | Blocking | — | Promtool rules/config + Grafana JSON parsing |
+| Secrets/dependencies/SAST | Blocking | Blocking | Weekly CodeQL | Gitleaks, NuGet/npm audit, CodeQL, Dependabot |
 | Image CVEs/SBOM/signature | — | Blocks promotion | Rebuild/rescan to add | Trivy, Syft action, Cosign |
+| Immutable environment promotion | — | Manual protected gate | Staging smoke before production | Digest PR + retained smoke evidence |
 | Mutation testing | — | — | Weekly/manual | Stryker.NET |
 | Concurrency/chaos/restore | Selected proof | Selected proof | Lab schedule/manual | Testcontainers and live-proof scripts |
 

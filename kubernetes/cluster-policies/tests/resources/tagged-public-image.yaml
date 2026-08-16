@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tagged-public-image
+spec:
+  containers:
+    - name: app
+      image: docker.io/library/nginx:1.27.5

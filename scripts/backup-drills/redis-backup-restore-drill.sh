@@ -32,7 +32,7 @@ echo "== BGSAVE: non-blocking point-in-time snapshot of the live instance =="
 backup_started=$(date +%s)
 last_save_before=$(docker compose exec -T redis redis-cli LASTSAVE | tr -d '\r')
 docker compose exec -T redis redis-cli BGSAVE >/dev/null
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   last_save_after=$(docker compose exec -T redis redis-cli LASTSAVE | tr -d '\r')
   if [[ "$last_save_after" != "$last_save_before" ]]; then
     break
@@ -54,7 +54,7 @@ echo "== Restoring into a throwaway, isolated container - never the live one =="
 restore_started=$(date +%s)
 redis_network=$(docker inspect "$(docker compose ps -q redis)" -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' | head -1)
 docker run -d --name redis-restore-drill --network "$redis_network" redis:7.4-alpine >/dev/null
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   if docker exec redis-restore-drill redis-cli ping >/dev/null 2>&1; then
     break
   fi
@@ -67,7 +67,7 @@ docker exec redis-restore-drill redis-cli SHUTDOWN NOSAVE >/dev/null 2>&1 || tru
 sleep 1
 docker cp "$work_directory/dump.rdb" redis-restore-drill:/data/dump.rdb
 docker start redis-restore-drill >/dev/null
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   if docker exec redis-restore-drill redis-cli ping >/dev/null 2>&1; then
     break
   fi

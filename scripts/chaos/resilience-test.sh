@@ -58,7 +58,7 @@ worker_revision_before=$(
 load_pid=$!
 
 traffic_started=false
-for attempt in $(seq 1 30); do
+for _ in $(seq 1 30); do
   orders_now=$(query_order_count)
   if (( orders_now >= orders_before + 5 )); then
     traffic_started=true

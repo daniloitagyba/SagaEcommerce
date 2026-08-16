@@ -97,7 +97,7 @@ for c in "${follower_containers[@]}"; do
 done
 
 echo "Waiting for ISR to shrink to the leader alone (replica.lag.time.max.ms default 30s)..."
-for i in $(seq 1 40); do
+for _ in $(seq 1 40); do
   isr_line=$(describe_via_leader | grep "Partition: 0" || true)
   isr=$(echo "$isr_line" | grep -oE 'Isr: [0-9,]+' | cut -d' ' -f2 || true)
   echo "  Isr=${isr}"
@@ -137,7 +137,7 @@ if [[ "$mode" == "unsafe" ]]; then
   echo "Waiting for a new leader to be elected (must differ from the killed broker ${leader_id})..."
   state=""
   new_leader=""
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     state=$(docker compose exec -T "$helper_svc" /opt/kafka/bin/kafka-topics.sh --bootstrap-server "${helper_svc}:9092" --describe --topic "$topic" 2>/dev/null || true)
     new_leader=$(echo "$state" | grep -oE 'Leader: [0-9]+' | grep -oE '[0-9]+' || true)
     if [[ -n "$new_leader" && "$new_leader" != "-1" && "$new_leader" != "$leader_id" ]]; then
@@ -179,7 +179,7 @@ else
   for c in "${follower_containers[@]}"; do
     docker unpause "$c" >/dev/null
   done
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     isr_line=$(describe_via_leader | grep "Partition: 0" || true)
     isr=$(echo "$isr_line" | grep -oE 'Isr: [0-9,]+' | cut -d' ' -f2 || true)
     isr_count=$(echo "$isr" | tr ',' '\n' | grep -c '[0-9]' || true)

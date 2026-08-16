@@ -5,11 +5,13 @@ resources:
   - namespace.yaml
   - infrastructure-services.yaml
   - orders-runtime-sealed-secret.yaml
+  - application-serviceaccounts.yaml
   - orders-api.yaml
   - orders-api-hpa.yaml
   - orders-api-analysis-template.yaml
   - orders-worker.yaml
   - orders-worker-serviceaccount.yaml
+  - orders-worker-rbac.yaml
   - orders-worker-scaledobject.yaml
   - migration-job.yaml
   - payments-service.yaml
@@ -22,6 +24,7 @@ resources:
   - cart-service.yaml
   - storefront-service.yaml
   - storefront-service-serviceaccount.yaml
+  - mesh-authorization.yaml
   - network-policies.yaml
 labels:
   - pairs:

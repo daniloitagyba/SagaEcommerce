@@ -43,7 +43,7 @@ echo "=== Experiment 1: partition orders-worker <-> Kafka (orders-api and Postgr
 
 pre_partition_ids_file="$result_directory/pre-partition-order-ids.txt"
 : >"$pre_partition_ids_file"
-for attempt in $(seq 1 5); do
+for _ in $(seq 1 5); do
   order_id=$(curl --silent --request POST "$orders_url/orders" \
     --header 'Content-Type: application/json' --header "$auth_header" \
     --data "{\"customerId\":\"partition-gameday-pre\",\"amount\":9.90,\"currency\":\"BRL\"}" |
@@ -62,7 +62,7 @@ printf 'orders-worker readiness 5s into the partition: %s\n' "$worker_ready_duri
 
 during_partition_ids_file="$result_directory/during-partition-order-ids.txt"
 : >"$during_partition_ids_file"
-for attempt in $(seq 1 5); do
+for _ in $(seq 1 5); do
   order_id=$(curl --silent --request POST "$orders_url/orders" \
     --header 'Content-Type: application/json' --header "$auth_header" \
     --data "{\"customerId\":\"partition-gameday-during\",\"amount\":9.90,\"currency\":\"BRL\"}" |

@@ -1,0 +1,110 @@
+name: staging-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: "Full commit SHA promoted to the staging overlay"
+        required: true
+        type: string
+      namespace:
+        description: "Kubernetes namespace reconciled from the staging overlay"
+        required: false
+        default: orders-lab
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: staging-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: verify running digests and critical order flow
+    runs-on: self-hosted
+    environment: staging
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: validate revision and resolve expected digests
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${REVISION}^{commit}"
+          git merge-base --is-ancestor "$REVISION" origin/main
+          mkdir -p staging-evidence
+          : > staging-evidence/images.env
+          for service in orders-api orders-worker payments-service catalog-service inventory-service cart-service storefront-service; do
+            image="ghcr.io/daniloitagyba/saga-ecommerce/${service}"
+            digest=$(docker buildx imagetools inspect "${image}:${REVISION}" --format '{{.Manifest.Digest}}')
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            printf '%s=%s\n' "${service//-/_}" "$digest" >> staging-evidence/images.env
+          done
+
+      - name: verify staging runs every promoted digest
+        env:
+          KUBERNETES_NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          # shellcheck disable=SC1091
+          source staging-evidence/images.env
+          for service in orders-api orders-worker payments-service catalog-service inventory-service cart-service storefront-service; do
+            variable=${service//-/_}
+            expected_digest=${!variable}
+            kubectl wait pod \
+              --namespace "$KUBERNETES_NAMESPACE" \
+              --selector "app.kubernetes.io/name=${service}" \
+              --for condition=Ready \
+              --timeout 5m
+            image_ids=$(kubectl get pods \
+              --namespace "$KUBERNETES_NAMESPACE" \
+              --selector "app.kubernetes.io/name=${service}" \
+              --output json | jq --raw-output --arg service "$service" \
+                '.items[].status.containerStatuses[] | select(.name == $service) | .imageID')
+            [[ -n "$image_ids" ]]
+            while IFS= read -r image_id; do
+              [[ "$image_id" == *"@${expected_digest}" ]]
+            done <<< "$image_ids"
+          done
+
+      - name: run the critical staging smoke test
+        env:
+          KUBERNETES_NAMESPACE: ${{ inputs.namespace }}
+        run: bash scripts/infra/k3s-smoke-test.sh | tee staging-evidence/smoke.log
+
+      - name: record staging evidence
+        if: always()
+        env:
+          KUBERNETES_NAMESPACE: ${{ inputs.namespace }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          mkdir -p staging-evidence
+          jq --null-input \
+            --arg workflowRunId "${{ github.run_id }}" \
+            --arg revision "$REVISION" \
+            --arg namespace "$KUBERNETES_NAMESPACE" \
+            --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg result "${{ job.status }}" \
+            '{workflow_run_id:$workflowRunId,revision:$revision,namespace:$namespace,completed_at:$completedAt,result:$result}' \
+            > staging-evidence/result.json
+
+      - name: upload staging smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staging-smoke-evidence-${{ github.run_id }}
+          path: staging-evidence
+          retention-days: 90

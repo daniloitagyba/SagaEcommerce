@@ -53,7 +53,7 @@ mongodb_network=$(docker inspect "$(docker compose ps -q mongodb)" -f '{{range $
 docker run -d --name mongodb-restore-drill --network "$mongodb_network" mongo:8.0 >/dev/null
 
 echo "Waiting for the restore target to accept connections..."
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   if docker exec mongodb-restore-drill mongosh --quiet --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
     break
   fi

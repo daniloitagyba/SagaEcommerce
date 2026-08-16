@@ -1,0 +1,29 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: immutable-application-images
+policies:
+  - ../verify-image-signatures.yaml
+resources:
+  - resources/tagged-public-image.yaml
+  - resources/digest-public-image.yaml
+  - resources/local-development-image.yaml
+results:
+  - policy: verify-saga-ecommerce-image-signatures
+    rule: require-image-digest
+    resources:
+      - tagged-public-image
+    kind: Pod
+    result: fail
+  - policy: verify-saga-ecommerce-image-signatures
+    rule: require-image-digest
+    resources:
+      - digest-public-image
+    kind: Pod
+    result: pass
+  - policy: verify-saga-ecommerce-image-signatures
+    rule: require-image-digest
+    resources:
+      - local-development-image
+    kind: Pod
+    result: pass

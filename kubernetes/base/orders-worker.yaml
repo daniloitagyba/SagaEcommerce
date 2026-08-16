@@ -47,7 +47,7 @@ spec:
       # Milestone 36: flipped from false (Milestone 26's hardening default)
       # to true - LeaderElectionService needs the projected ServiceAccount
       # token to authenticate to the API server for Lease read/write.
-      # RBAC (kubernetes/cluster-policies/orders-worker-leader-election.yaml)
+      # RBAC (kubernetes/base/orders-worker-rbac.yaml)
       # scopes this ServiceAccount to nothing but Lease objects in this one
       # namespace - it still can't read Pods, Secrets, or anything else.
       automountServiceAccountToken: true
@@ -134,7 +134,7 @@ spec:
             - name: Keycloak__TokenUrl
               value: http://keycloak:8080/realms/orders-lab/protocol/openid-connect/token
             - name: Keycloak__ClientId
-              value: orders-api-clients
+              value: orders-worker
             - name: Keycloak__ClientSecret
               valueFrom:
                 secretKeyRef:

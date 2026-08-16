@@ -21,7 +21,6 @@
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-project_directory=$(cd -- "$script_directory/../.." && pwd)
 service=${1:-orders-api}
 prometheus_url=${PROMETHEUS_URL:-http://127.0.0.1:9090}
 growth_threshold_pct=${2:-25}

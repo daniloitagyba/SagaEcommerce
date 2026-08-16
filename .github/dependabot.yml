@@ -1,0 +1,56 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+
+  - package-ecosystem: nuget
+    directory: /apps
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:15"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - dotnet
+
+  - package-ecosystem: npm
+    directory: /apps/storefront-web
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:30"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - frontend
+
+  - package-ecosystem: docker
+    directories:
+      - /apps/src/Cart.Service
+      - /apps/src/Catalog.Service
+      - /apps/src/Inventory.Service
+      - /apps/src/Orders.Api
+      - /apps/src/Orders.Worker
+      - /apps/src/Payments.Service
+      - /apps/src/Storefront.Service
+      - /compose/nginx
+    schedule:
+      interval: monthly
+      time: "06:45"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - containers

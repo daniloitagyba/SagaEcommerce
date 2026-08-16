@@ -1,0 +1,153 @@
+name: promote-immutable-images
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: "Full commit SHA whose seven images passed CI"
+        required: true
+        type: string
+      environment:
+        description: "Environment overlay to update"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      staging_smoke_run_id:
+        description: "Successful staging-smoke run ID; required for production"
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+  packages: read
+  id-token: write
+
+concurrency:
+  group: promote-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: verify digests and open GitOps promotion
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
+        with:
+          version: v1.34.1
+
+      - name: validate requested revision
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${REVISION}^{commit}"
+          git merge-base --is-ancestor "$REVISION" origin/main
+
+      - name: require matching staging evidence for production
+        if: inputs.environment == 'production'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVISION: ${{ inputs.revision }}
+          SMOKE_RUN_ID: ${{ inputs.staging_smoke_run_id }}
+        run: |
+          [[ "$SMOKE_RUN_ID" =~ ^[0-9]+$ ]]
+          run_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SMOKE_RUN_ID}")
+          jq --exit-status \
+            '.conclusion == "success" and .event == "workflow_dispatch" and .path == ".github/workflows/staging-smoke.yml"' \
+            <<< "$run_json" >/dev/null
+          mkdir -p promotion/staging-evidence
+          gh run download "$SMOKE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "staging-smoke-evidence-${SMOKE_RUN_ID}" \
+            --dir promotion/staging-evidence
+          jq --exit-status --arg revision "$REVISION" \
+            '.revision == $revision and .result == "success"' \
+            promotion/staging-evidence/result.json >/dev/null
+
+      - name: resolve and verify all signed image digests
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          mkdir -p promotion
+          : > promotion/images.env
+          for service in orders-api orders-worker payments-service catalog-service inventory-service cart-service storefront-service; do
+            image="ghcr.io/daniloitagyba/saga-ecommerce/${service}"
+            digest=$(docker buildx imagetools inspect "${image}:${REVISION}" --format '{{.Manifest.Digest}}')
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            cosign verify "${image}@${digest}" \
+              --certificate-identity "https://github.com/daniloitagyba/SagaEcommerce/.github/workflows/ci.yml@refs/heads/main" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+            printf '%s=%s@%s\n' "${service//-/_}" "$image" "$digest" >> promotion/images.env
+          done
+
+      - name: generate digest-pinned environment overlay
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          overlay="kubernetes/overlays/${TARGET_ENVIRONMENT}"
+          mkdir -p "$overlay"
+          # shellcheck disable=SC1091
+          source promotion/images.env
+          {
+            printf 'apiVersion: kustomize.config.k8s.io/v1beta1\n'
+            printf 'kind: Kustomization\n'
+            printf 'resources:\n  - ../../base\n'
+            printf 'images:\n'
+            for entry in \
+              "saga-ecommerce/orders-api|${orders_api}" \
+              "saga-ecommerce/orders-worker|${orders_worker}" \
+              "saga-ecommerce/payments-service|${payments_service}" \
+              "saga-ecommerce/catalog-service|${catalog_service}" \
+              "saga-ecommerce/inventory-service|${inventory_service}" \
+              "saga-ecommerce/cart-service|${cart_service}" \
+              "saga-ecommerce/storefront-service|${storefront_service}"; do
+              name=${entry%%|*}
+              reference=${entry#*|}
+              new_name=${reference%@*}
+              digest=${reference#*@}
+              printf '  - name: %s\n    newName: %s\n    digest: %s\n' "$name" "$new_name" "$digest"
+            done
+          } > "$overlay/kustomization.yaml"
+          kubectl kustomize "$overlay" > promotion/rendered.yaml
+          if rg -n 'image: (saga-ecommerce/|ghcr.io/daniloitagyba/saga-ecommerce/).*:[^@[:space:]]+$' promotion/rendered.yaml; then
+            echo "A mutable image tag survived promotion rendering." >&2
+            exit 1
+          fi
+
+      - name: create promotion pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVISION: ${{ inputs.revision }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          branch="promotion/${TARGET_ENVIRONMENT}-${REVISION:0:12}"
+          git switch --create "$branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "kubernetes/overlays/${TARGET_ENVIRONMENT}/kustomization.yaml"
+          git commit -m "deploy(${TARGET_ENVIRONMENT}): promote ${REVISION:0:12}"
+          git push --set-upstream origin "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "deploy(${TARGET_ENVIRONMENT}): promote ${REVISION:0:12}" \
+            --body "Promotes the seven CI-built, scanned and signed images from revision \`${REVISION}\` by immutable digest. No image is rebuilt or retagged. Merge lets Argo CD reconcile the declarative overlay; revert this PR to roll back."

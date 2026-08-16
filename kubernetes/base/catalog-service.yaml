@@ -25,6 +25,7 @@ spec:
       annotations:
         linkerd.io/inject: enabled
     spec:
+      serviceAccountName: catalog-service
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       # Milestone 65: see cart-service.yaml for the full rationale - a

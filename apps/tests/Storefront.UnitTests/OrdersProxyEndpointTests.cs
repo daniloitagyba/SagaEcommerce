@@ -64,6 +64,24 @@ public sealed class OrdersProxyEndpointTests
         Assert.Equal(StatusCodes.Status404NotFound, httpContext.Response.StatusCode);
     }
 
+    [Fact]
+    public async Task AnOversizedWriteIsRejectedBeforeCallingOrders()
+    {
+        var handler = new RecordingHandler(_ => throw new InvalidOperationException("must not be called"));
+        var httpContext = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
+        httpContext.Request.Method = HttpMethods.Post;
+        httpContext.Request.ContentLength = (5 * 1024 * 1024) + 1;
+
+        await ProxyEndpoints.ForwardOrdersSubPathAsync(
+            "11111111-1111-1111-1111-111111111111/cancellation",
+            httpContext.Request,
+            new FakeHttpClientFactory(handler),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, httpContext.Response.StatusCode);
+        Assert.Empty(handler.Requests);
+    }
+
     private static Task<DefaultHttpContext> InvokeGetAsync(string capturedPath, RecordingHandler handler) =>
         InvokeAsync(HttpMethods.Get, capturedPath, handler);
 

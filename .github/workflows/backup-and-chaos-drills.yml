@@ -41,23 +41,67 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.job == 'backup-drill' || github.event.schedule == '0 5 1 * *'
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: prepare evidence directory
+        run: mkdir -p drill-evidence
 
       - name: MongoDB backup/restore drill
-        run: bash scripts/backup-drills/mongodb-backup-restore-drill.sh
+        run: bash scripts/backup-drills/mongodb-backup-restore-drill.sh | tee drill-evidence/mongodb-backup-restore.log
 
       - name: Redis backup/restore drill
-        run: bash scripts/backup-drills/redis-backup-restore-drill.sh
+        run: bash scripts/backup-drills/redis-backup-restore-drill.sh | tee drill-evidence/redis-backup-restore.log
+
+      - name: record drill result
+        if: always()
+        run: |
+          jq --null-input \
+            --arg workflowRunId "${{ github.run_id }}" \
+            --arg revision "${{ github.sha }}" \
+            --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg result "${{ job.status }}" \
+            '{workflow_run_id:$workflowRunId,revision:$revision,completed_at:$completedAt,result:$result}' \
+            > drill-evidence/result.json
+
+      - name: upload backup/restore evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backup-restore-evidence-${{ github.run_id }}
+          path: drill-evidence
+          retention-days: 365
 
   chaos-gameday:
     name: chaos game day (K3s lab)
     if: github.event_name == 'workflow_dispatch' && inputs.job == 'chaos-gameday' || github.event.schedule == '0 6 1 1,4,7,10 *'
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: prepare evidence directory
+        run: mkdir -p drill-evidence
 
       - name: verify kubectl reaches the lab
         run: kubectl get deployment/orders-worker --namespace orders-lab
 
       - name: run the Chaos Mesh pod-kill game day
-        run: bash scripts/chaos/chaos-mesh-gameday.sh
+        run: bash scripts/chaos/chaos-mesh-gameday.sh | tee drill-evidence/chaos-gameday.log
+
+      - name: record game-day result
+        if: always()
+        run: |
+          jq --null-input \
+            --arg workflowRunId "${{ github.run_id }}" \
+            --arg revision "${{ github.sha }}" \
+            --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg result "${{ job.status }}" \
+            '{workflow_run_id:$workflowRunId,revision:$revision,completed_at:$completedAt,result:$result}' \
+            > drill-evidence/result.json
+
+      - name: upload chaos evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chaos-evidence-${{ github.run_id }}
+          path: drill-evidence
+          retention-days: 365

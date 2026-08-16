@@ -21,9 +21,11 @@ groups:
         for: 0s
         labels:
           severity: ticket
+          owner: messaging
         annotations:
           summary: "A message landed in a dead-letter topic"
           description: "{{ $value }} message(s) dead-lettered on {{ $labels.messaging_destination_name }} in the last 5m - see docs/messaging/milestone-62-dlq-redrive.md for the redrive procedure."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#dead-letter-or-outbox-dead-letter"
 
       # A different DLQ from the one above: the M91-99 outbox dead-letter
       # path (OutboxPublisher.ApplyPublishAttemptAsync, SagaOutboxPublisher's
@@ -37,9 +39,11 @@ groups:
         for: 0s
         labels:
           severity: ticket
+          owner: messaging
         annotations:
           summary: "An outbox row stopped retrying and was dead-lettered"
           description: "{{ $value }} outbox message(s) of type {{ $labels.event_type }} were dead-lettered in the last 5m - a redrive tool run (see docs/messaging/milestone-62-dlq-redrive.md) or manual inspection of the outbox dead-letter table is needed to recover them."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#dead-letter-or-outbox-dead-letter"
 
       # The outbox publisher polls every 500ms in normal operation
       # (OutboxOptions.PollIntervalMilliseconds) - a backlog that stays
@@ -51,9 +55,11 @@ groups:
         for: 5m
         labels:
           severity: ticket
+          owner: messaging
         annotations:
           summary: "Outbox backlog has stayed above 25 pending messages for 5 minutes"
           description: "{{ $value }} messages are waiting to be published. The outbox publisher may have stopped, or Kafka may be unreachable - check outbox_publish_retries_total and the publisher's own logs for the underlying cause."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#kafka-or-broker-outage"
 
       # Every consumer group in this lab processes in well under a second
       # per message (Milestone 51's rebalance-vs-serialization measurement).
@@ -64,6 +70,8 @@ groups:
         for: 5m
         labels:
           severity: ticket
+          owner: messaging
         annotations:
           summary: "Consumer group {{ $labels.consumergroup }} is falling behind on {{ $labels.topic }}"
           description: "Lag has been above 200 messages for 5 minutes straight ({{ $value }} now) - the consumer may be stuck, crashed, or too slow for current throughput."
+          runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#kafka-or-broker-outage"

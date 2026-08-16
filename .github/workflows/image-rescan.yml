@@ -2,13 +2,12 @@ name: image-rescan
 
 # ci.yml's Trivy scan only runs when a push touches main - a CRITICAL/HIGH
 # CVE disclosed against a base-image layer already baked into a published
-# :latest tag goes uncaught until the next code change happens to touch
+# commit-tagged image goes uncaught until the next code change touches
 # that service. codeql.yml already runs on a weekly cron for the identical
 # reason ("catch new query-pack rules against unchanged code"); this closes
-# the same gap for container images. Re-scans the already-published
-# :latest digest rather than rebuilding - cheaper, and it is the exact
-# artifact a cluster would pull, not a fresh build that could quietly
-# differ from it.
+# the same gap for container images. It re-scans the immutable image from the
+# newest application-changing commit rather than rebuilding, so promotion
+# verifies the exact artifact it will resolve to a digest.
 on:
   schedule:
     - cron: "0 6 * * 2"
@@ -16,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   rescan:
@@ -35,10 +35,39 @@ jobs:
     env:
       IMAGE: ghcr.io/daniloitagyba/saga-ecommerce/${{ matrix.service }}
     steps:
-      - name: scan for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@v0.36.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          image-ref: ${{ env.IMAGE }}:latest
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: resolve the latest revision that produced application images
+        run: |
+          revision=$(git rev-list -1 HEAD -- apps Directory.Build.props global.json)
+          test -n "$revision"
+          echo "IMAGE_REVISION=$revision" >> "$GITHUB_ENV"
+
+      - name: resolve and verify the immutable artifact
+        run: |
+          digest=$(docker buildx imagetools inspect "${IMAGE}:${IMAGE_REVISION}" --format '{{.Manifest.Digest}}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cosign verify "${IMAGE}@${digest}" \
+            --certificate-identity "https://github.com/daniloitagyba/SagaEcommerce/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          echo "IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+
+      - name: scan for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }}
           format: table
           severity: CRITICAL,HIGH
           exit-code: "1"

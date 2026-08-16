@@ -113,7 +113,7 @@ prometheus_created_delta() {
 }
 
 consumer_lag=0
-for attempt in $(seq 1 60); do
+for _ in $(seq 1 60); do
   consumer_lag=$(query_consumer_lag)
   if [[ "$consumer_lag" == "0" ]]; then
     break
@@ -201,7 +201,7 @@ outbox_pending=$(query_database_scalar 'SELECT count(*) FROM outbox_messages WHE
 inbox_after=$(query_database_scalar "SELECT count(*) FROM inbox_messages WHERE consumer_name = 'orders-worker';")
 orders_created=$((orders_after - orders_before))
 
-for attempt in $(seq 1 "$pipeline_drain_attempts"); do
+for _ in $(seq 1 "$pipeline_drain_attempts"); do
   inbox_after=$(query_database_scalar "SELECT count(*) FROM inbox_messages WHERE consumer_name = 'orders-worker';")
   outbox_pending=$(query_database_scalar 'SELECT count(*) FROM outbox_messages WHERE processed_at IS NULL;')
   inbox_processed=$((inbox_after - inbox_before))
@@ -211,7 +211,7 @@ for attempt in $(seq 1 "$pipeline_drain_attempts"); do
   sleep 2
 done
 
-for attempt in $(seq 1 15); do
+for _ in $(seq 1 15); do
   capture_prometheus_snapshot "$run_directory/prometheus-after.json"
   prometheus_delta=$(
     prometheus_created_delta \

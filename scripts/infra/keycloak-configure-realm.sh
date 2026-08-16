@@ -189,6 +189,42 @@ service_account_user_id=$(
 assign_missing_roles "$service_account_user_id" \
   "orders:read" "orders:write" "orders:admin" "catalog:admin" "inventory:read" "payments:read"
 
+# Orders.Worker has a narrower machine identity than general backend tooling.
+# It only reads the Payments/Inventory anti-entropy endpoints; it cannot create,
+# fulfil, cancel or return orders and cannot mutate the catalog. The lab reuses
+# the same secret material because its SealedSecret currently exposes one
+# Keycloak client secret, but the token's client_id, audiences and roles are
+# independently least-privileged and can be rotated to a distinct secret later.
+worker_client_id=orders-worker
+worker_internal_id=$(
+  curl --fail --silent --header "$auth_header" \
+    "$keycloak_url/admin/realms/$realm_name/clients?clientId=$worker_client_id" |
+    jq --raw-output '.[0].id // empty'
+)
+
+if [[ -z "$worker_internal_id" ]]; then
+  curl_json --header "$auth_header" \
+    --data "{\"clientId\":\"$worker_client_id\",\"publicClient\":false,\"secret\":\"$KEYCLOAK_CLIENT_SECRET\",\"serviceAccountsEnabled\":true,\"standardFlowEnabled\":false,\"directAccessGrantsEnabled\":false}" \
+    "$keycloak_url/admin/realms/$realm_name/clients"
+  worker_internal_id=$(
+    curl --fail --silent --header "$auth_header" \
+      "$keycloak_url/admin/realms/$realm_name/clients?clientId=$worker_client_id" |
+      jq --raw-output '.[0].id'
+  )
+  printf 'Created least-privilege client %s.\n' "$worker_client_id"
+else
+  printf 'Client %s already exists.\n' "$worker_client_id"
+fi
+
+create_audience_mapper "$worker_internal_id" "inventory-service"
+create_audience_mapper "$worker_internal_id" "payments-service"
+worker_service_account_user_id=$(
+  curl --fail --silent --header "$auth_header" \
+    "$keycloak_url/admin/realms/$realm_name/clients/$worker_internal_id/service-account-user" |
+    jq --raw-output '.id'
+)
+assign_missing_roles "$worker_service_account_user_id" "inventory:read" "payments:read"
+
 # Milestone 83: orders-storefront - a public client (no secret; PKCE
 # instead, since a browser can't keep one) so a shopper authenticates as
 # themselves rather than Storefront.Service asserting an identity on their
@@ -289,5 +325,6 @@ assign_missing_roles "$demo_user_id" "orders:read" "orders:write"
 
 printf '\nRealm ready.\n'
 printf 'Confidential client: %s (secret is KEYCLOAK_CLIENT_SECRET in .env) - orders:read, orders:write, orders:admin, catalog:admin, inventory:read, payments:read.\n' "$client_id"
+printf 'Worker client: %s (same lab secret, separate identity) - inventory:read, payments:read only.\n' "$worker_client_id"
 printf 'Public client: %s (PKCE, no secret) - the shopper-facing client. orders-api + cart-service audiences.\n' "$storefront_client_id"
 printf 'Demo shopper: %s / KEYCLOAK_DEMO_CUSTOMER_PASSWORD in .env.\n' "$demo_username"

@@ -1,0 +1,8 @@
+failure-threshold: warning
+
+# Debian/Alpine package versions are intentionally inherited from immutable
+# base-image patch tags. Pinning distro package revisions here would make a
+# routine base refresh fail as soon as that repository rotates the revision.
+ignored:
+  - DL3008
+  - DL3018

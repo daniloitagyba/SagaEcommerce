@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: digest-public-image
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause@sha256:ee6521f290b3edf8b3e3b2a3a077a6f9127d1c9f017cbe06e790b2d46287a41d

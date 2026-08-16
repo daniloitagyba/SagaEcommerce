@@ -25,23 +25,24 @@ own table already said so). Re-verified against HEAD, finding by finding:
 
 | Finding | Description | Status |
 |---|---|---|
-| 7 | Linkerd mesh authorization (`Server`/`AuthorizationPolicy`) covers only `orders-api`; the other six workloads have none | **Open** - only `kubernetes/cluster-policies/orders-api-authz.yaml` exists |
-| 10b | Kyverno policy validation as a CI job (not just applied to the live cluster) | **Open** |
-| 11 | `orders-worker` running eight independent workloads (saga orchestrator, both sweepers, projection processor, anti-entropy, ...) in one process/lifecycle | **Open** - structural, optional (Phase 7 in that audit) |
-| 14 | `orders-worker` borrows `orders-api`'s Keycloak client credentials instead of its own least-privilege client | **Open** |
+| 7 | Linkerd mesh authorization (`Server`/`AuthorizationPolicy`) covers only `orders-api`; the other six workloads have none | **Implemented; lab proof pending** - `kubernetes/base/mesh-authorization.yaml` adds named caller identities and node-only operational access for the other six HTTP workloads; the staging smoke gate must prove the live mesh paths before promotion |
+| 10b | Kyverno policy validation as a CI job (not just applied to the live cluster) | **Closed** - the pinned Kyverno CLI runs `kubernetes/cluster-policies/tests` in the blocking CI quality job; the three immutable/local-image cases also pass with Kyverno CLI 1.16.1 locally |
+| 11 | `orders-worker` running eight independent workloads (saga orchestrator, both sweepers, projection processor, anti-entropy, ...) in one process/lifecycle | **Accepted risk** - optional structural split deferred until independent scaling or failure-rate evidence justifies the extra deployment/coordination surface; health, graceful shutdown and terminal-state alerting remain required |
+| 14 | `orders-worker` borrows `orders-api`'s Keycloak client credentials instead of its own least-privilege client | **Closed** - Compose/Kubernetes use the dedicated `orders-worker` client and the realm bootstrap grants only `inventory:read` and `payments:read` |
 | 16 | The gRPC `OrderQuery` service has no client anywhere in the repo | **Open** - `OrderQueryGrpcService.cs` still exists, unconsumed |
-| 17 | Kafka topics retain 24h (`retention.ms=86400000`) under a "durable event log" framing, no stated replay window | **Open** - confirmed unchanged in `compose/compose.yaml` |
-| 19 | `CorrelationIdMiddleware` lives in `Orders.Api`, not `BuildingBlocks`, so no other service shares it | **Open** (the middleware). The header-allowlist half of this finding (BFF forwarding `X-Correlation-ID`/`Idempotency-Key`/`Accept`) is now closed - see the 08-16 audit's Phase 3 |
-| 21a | `Saga__Mode` doc/behavior mismatch (README says "side by side," code runs `Orchestration` only) | **Open** - `Saga__Mode: Orchestration` confirmed as the only configured value in `compose/compose.yaml` and `kubernetes/base/` |
-| 21b | Placeholder `BuildingBlocks.Contracts/CatalogClientOptions.cs` (comment-only file, real class moved to `BuildingBlocks.HttpClients`) | **Open** - file still exists |
-| 21c | Two styling systems in the frontend (MUI + Tailwind, six Tailwind classNames total) | **Open** - `tailwindcss` still in `apps/storefront-web/package.json` |
+| 17 | Kafka topics retain 24h (`retention.ms=86400000`) under a "durable event log" framing, no stated replay window | **Closed** - business/CDC topics retain seven days, DLQs 30 days, aligned with the database evidence window and documented in `docs/data/milestone-63-outbox-inbox-retention.md` |
+| 19 | `CorrelationIdMiddleware` lives in `Orders.Api`, not `BuildingBlocks`, so no other service shares it | **Closed** - the bounded shared middleware lives in `BuildingBlocks.Observability`, is installed by all HTTP services and has focused replacement/propagation tests |
+| 21a | `Saga__Mode` doc/behavior mismatch (README says "side by side," code runs `Orchestration` only) | **Closed** - README now states that both implementations exist while the deployed default is orchestration |
+| 21b | Placeholder `BuildingBlocks.Contracts/CatalogClientOptions.cs` (comment-only file, real class moved to `BuildingBlocks.HttpClients`) | **Closed** - the placeholder is absent and the real option remains in `BuildingBlocks.HttpClients` |
+| 21c | Two styling systems in the frontend (MUI + Tailwind, six Tailwind classNames total) | **Accepted risk** - MUI owns components/reset; Tailwind supplies only a small utility layer and explicitly omits preflight, documented in `apps/storefront-web/src/index.css` |
 | 21d | No Grafana dashboard for `payments-service` or the saga | **Closed** - `payments-overview.json` and `saga-overview.json` both exist under `observability/grafana/dashboards/` |
 | 21e (PDB) | No PodDisruptionBudget for `payments-service` | **Closed via the documented-exception branch**, not the replicas:2 branch - the finding's own acceptance criteria allowed either "give it replicas:2 + a PDB, or document why single-replica is acceptable." The 08-16 audit chose and implemented the second: `kubernetes/base/payments-service.yaml` now carries an explicit comment explaining why a PDB would block every node drain given `replicas:1`/`strategy:Recreate`. |
 
 ## What this means for the roadmap's Phase 2+ work
 
-Findings 16 (gRPC client fate) and 19 (shared correlation middleware) overlap
-directly with roadmap Phase 2/3 items already in scope. The rest (7, 10b, 11,
-14, 17, 21a-c) are real but were out of scope for the 08-16 pass and are
-carried forward here rather than re-discovered later - see the roadmap's
-`Executable backlog order` for where each lands.
+Finding 16 (the unconsumed gRPC query surface) remains the only unresolved
+code-level item from this table. It is not removed without an explicit contract
+deprecation decision. Finding 7 is implemented in manifests but remains
+acceptance-blocked until the lab staging smoke proves every allowed path and a
+denied identity. Finding 11 and 21c are deliberate, documented risks rather
+than silently forgotten cleanup work.

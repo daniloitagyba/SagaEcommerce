@@ -25,7 +25,7 @@ echo "== Bringing up the isolated mongo-replicaset-demo cluster (mongo-rs1/2/3) 
 docker compose --profile mongo-replicaset-demo up -d --wait mongo-rs1 mongo-rs2 mongo-rs3 mongo-rs-init
 
 echo "== Waiting for a primary to be elected =="
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   primary=$(docker compose exec -T mongo-rs1 mongosh --quiet --eval \
     'db.hello().isWritablePrimary ? "mongo-rs1" : (function(){ var s = rs.status(); var p = s.members.find(m => m.state === 1); return p ? p.name : ""; })()' 2>/dev/null || true)
   if [[ -n "$primary" ]]; then

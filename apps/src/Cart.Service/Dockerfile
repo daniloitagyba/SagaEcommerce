@@ -40,8 +40,11 @@ RUN apt-get update \
 # package - the .so files aren't delivered by `dotnet restore`/`dotnet publish`
 # and must be fetched separately. Baked into the image but inert unless
 # PYROSCOPE_PROFILING_ENABLED=1 is set at deploy time (see kubernetes/base).
-RUN curl -sL https://github.com/grafana/pyroscope-dotnet/releases/download/pyroscope-1.4.0/pyroscope.1.4.0-glibc-x86_64.tar.gz \
-    | tar xz -C /opt
+RUN curl --fail --location --silent --show-error \
+        --output /tmp/pyroscope.tar.gz \
+        https://github.com/grafana/pyroscope-dotnet/releases/download/pyroscope-1.4.0/pyroscope.1.4.0-glibc-x86_64.tar.gz \
+    && tar xzf /tmp/pyroscope.tar.gz -C /opt \
+    && rm /tmp/pyroscope.tar.gz
 
 WORKDIR /app
 COPY --from=build --chown=$APP_UID:$APP_UID /app/publish .

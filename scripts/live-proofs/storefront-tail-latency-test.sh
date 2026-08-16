@@ -26,10 +26,10 @@ measure() {
   # Warm-up: JIT/connection-pool/DNS-resolution cost after a container
   # (re)start otherwise contaminates the first several timed samples -
   # discard 10 throwaway requests before the timed run.
-  for i in $(seq 1 10); do
+  for _ in $(seq 1 10); do
     docker compose exec -T storefront-service curl -s -o /dev/null "$url" >/dev/null 2>&1 || true
   done
-  for i in $(seq 1 "$n"); do
+  for _ in $(seq 1 "$n"); do
     docker compose exec -T storefront-service curl -s -o /dev/null -w "%{time_total}\n" "$url" >> "$times_file"
   done
   echo "-- ${label} --"

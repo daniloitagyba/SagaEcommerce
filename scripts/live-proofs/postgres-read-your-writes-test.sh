@@ -89,6 +89,9 @@ echo "immediate read on paused replica: ${naive_read} (expected 0 - stale, class
 echo "LSN-gated read after replay caught up: ${gated_read} (expected 1 - correct)"
 if [[ "$naive_read" == "0" && "$gated_read" == "1" ]]; then
   echo "==> READ-YOUR-WRITES VIOLATION CONFIRMED, AND FIXED: an immediate secondary read missed a write the primary already committed; gating the read on the replica's WAL replay position (an LSN token, not a fixed sleep) made it correct."
+elif [[ "$caught_up" != "true" ]]; then
+  echo "==> Replica did not reach the write LSN within 30 seconds." >&2
+  exit 1
 fi
 
 echo ""

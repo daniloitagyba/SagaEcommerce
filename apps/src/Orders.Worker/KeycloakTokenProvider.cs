@@ -9,7 +9,7 @@ public sealed class KeycloakOptions
 
     public string TokenUrl { get; init; } = "http://localhost:18081/realms/orders-lab/protocol/openid-connect/token";
 
-    public string ClientId { get; init; } = "orders-api-clients";
+    public string ClientId { get; init; } = "orders-worker";
 
     public string ClientSecret { get; init; } = string.Empty;
 }
@@ -19,10 +19,9 @@ public sealed class KeycloakOptions
 /// a real gap - the anti-entropy sweep's two
 /// cross-service reads (GET /payments/by-order/{id}, GET /inventory/backorders)
 /// were unauthenticated because this service had no credentials to present.
-/// Reuses orders-api-clients, the confidential client
-/// already provisioned as this lab's stand-in for trusted backend tooling -
-/// not a new client, since that one already carries every role and
-/// audience this sweep needs.
+/// Uses a dedicated client carrying only payments:read and inventory:read,
+/// rather than the backend-tooling client that can also mutate orders and
+/// catalog data.
 ///
 /// Same shape as the KeycloakTokenProvider removed from
 /// Storefront.Service: that one existed to mint a token standing in for a

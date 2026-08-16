@@ -66,7 +66,7 @@ for order_id in "${order_ids[@]}"; do
 done
 
 worker_logged=false
-for attempt in $(seq 1 15); do
+for _ in $(seq 1 15); do
   captured_worker_logs=$(worker_logs 2>&1) || true
   if grep --quiet --fixed-strings "$last_correlation_id" <<<"$captured_worker_logs"; then
     printf 'Worker consumed the final event with correlation %s\n' "$last_correlation_id"
@@ -82,7 +82,7 @@ if [[ "$worker_logged" != true ]]; then
 fi
 
 loki_query="{service_name=\"orders-worker\"} |= \"$last_correlation_id\""
-for attempt in $(seq 1 15); do
+for _ in $(seq 1 15); do
   if ! loki_response=$(
     cd "$compose_directory" &&
       docker compose exec -T grafana curl --fail --silent --get \

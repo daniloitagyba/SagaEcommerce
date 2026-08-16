@@ -31,6 +31,10 @@ const int RestPort = 8080;
 const int GrpcPort = 8081;
 builder.WebHost.ConfigureKestrel(options =>
 {
+    // Bound both REST and gRPC request bodies at the server before model
+    // binding or application code can allocate an attacker-controlled body.
+    // Current order and query messages are well below this ceiling.
+    options.Limits.MaxRequestBodySize = 5 * 1024 * 1024;
     options.ListenAnyIP(RestPort, listenOptions =>
     {
         listenOptions.Protocols = HttpProtocols.Http1;
@@ -158,7 +162,7 @@ app.UseExceptionHandler();
 // First, not last: this used to run after rate limiting and authentication,
 // so the responses most worth tracing during an incident - 429 (shed load),
 // 401/403 (rejected auth) - went out with no correlation id at all.
-app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseMiddleware<BuildingBlocks.CorrelationIdMiddleware>();
 app.UseRateLimiter();
 app.UseAuthentication();
 // After authentication, not before: DistributedRateLimitingMiddleware keys

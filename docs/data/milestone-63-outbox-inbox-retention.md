@@ -47,3 +47,21 @@ DELETE FROM outbox_messages WHERE ctid IN (
   SELECT ctid FROM outbox_messages WHERE processed_at IS NOT NULL AND processed_at < now() - interval '7 days' LIMIT 1000
 );
 ```
+
+## Kafka replay and terminal-failure retention
+
+The Compose topic bootstrap now gives business and CDC topics a **7-day**
+retention (`604800000` ms), aligned with the default processed outbox/inbox
+retention. This makes the replay promise coherent: an operator has seven days
+to restore a consumer or rebuild a projection without the broker having
+discarded data that the database still claims is within its evidence window.
+
+DLQ topics retain records for **30 days** (`2592000000` ms). They are terminal
+failure evidence, not a normal retry queue, and must be inspected/redriven with
+the audited procedure in `docs/operations/runbooks.md`. The compacted `_schemas`
+topic intentionally has no time-based retention.
+
+Changing a retention value in Compose only configures topics when they are
+created. Existing lab topics must be altered explicitly during a controlled
+maintenance window and the effective configuration verified with
+`kafka-configs.sh`; topic recreation is not an acceptable migration strategy.

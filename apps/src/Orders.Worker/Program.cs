@@ -145,10 +145,8 @@ builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, 
     client.BaseAddress = new Uri(options.BaseUrl);
 }).AddBestEffortHttpResilience();
 
-// This service's own credentials - reuses
-// orders-api-clients (already provisioned as this lab's trusted-backend-tooling client)
-// rather than provisioning a new one, since it already carries every role
-// and audience the sweep below needs.
+// Dedicated least-privilege machine identity: only the Payments/Inventory
+// read roles required by the anti-entropy sweep.
 builder.Services.AddOptions<KeycloakOptions>()
     .Bind(builder.Configuration.GetSection(KeycloakOptions.SectionName))
     .Validate(options => !string.IsNullOrWhiteSpace(options.ClientSecret), "Keycloak client secret is required.")

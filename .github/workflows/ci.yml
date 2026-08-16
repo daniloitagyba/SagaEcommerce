@@ -24,7 +24,7 @@ jobs:
     name: secrets scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # scan full history, not just the current diff - a secret committed once and later removed still leaked
 
@@ -37,9 +37,9 @@ jobs:
     name: known-CVE NuGet dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           global-json-file: global.json
 
@@ -61,7 +61,7 @@ jobs:
     name: cyclomatic complexity and module size
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: GitHub Actions syntax and semantics (actionlint)
         run: |
@@ -73,12 +73,31 @@ jobs:
             bash -n "$file"
           done < <(find scripts compose -type f -name "*.sh" -print0)
 
-      - uses: azure/setup-kubectl@v4
+      - name: shell script static analysis (ShellCheck)
+        run: |
+          mapfile -d '' scripts < <(find scripts compose -type f -name "*.sh" -print0)
+          docker run --rm -v "$PWD:/repo" -w /repo koalaman/shellcheck-alpine:v0.10.0 \
+            --severity=warning "${scripts[@]}"
+
+      - name: Dockerfile static analysis (Hadolint)
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo hadolint/hadolint:v2.12.0-debian \
+            apps/src/*/Dockerfile compose/nginx/Dockerfile
+
+      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
         with:
           version: v1.34.1
 
       - name: render Kubernetes manifests (Kustomize)
-        run: kubectl kustomize kubernetes/overlays/local > rendered-manifests.yaml
+        run: |
+          mkdir -p rendered-manifests
+          found=0
+          for overlay in kubernetes/overlays/*; do
+            [[ -f "$overlay/kustomization.yaml" ]] || continue
+            found=1
+            kubectl kustomize "$overlay" > "rendered-manifests/${overlay##*/}.yaml"
+          done
+          [[ "$found" -eq 1 ]]
 
       - name: validate Kubernetes schemas (kubeconform)
         run: |
@@ -87,8 +106,25 @@ jobs:
           # Kubernetes schema bundle. Standard resources remain strict and
           # build-blocking; only resources without a published schema are
           # reported as skipped.
-          docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 \
-            -strict -summary -ignore-missing-schemas < rendered-manifests.yaml
+          for manifest in rendered-manifests/*.yaml; do
+            docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 \
+              -strict -summary -ignore-missing-schemas < "$manifest"
+          done
+
+      - name: test Kyverno admission policies
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/kyverno/kyverno-cli:v1.16.1 \
+            test kubernetes/cluster-policies/tests
+
+      - name: validate Prometheus configuration and alert rules
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo --entrypoint promtool prom/prometheus:v3.13.1 \
+            check rules observability/prometheus/rules/*.yml
+          docker run --rm -v "$PWD:/repo" -w /repo --entrypoint promtool prom/prometheus:v3.13.1 \
+            check config observability/prometheus/prometheus.yml
+
+      - name: validate Grafana dashboard JSON
+        run: find observability/grafana/dashboards -name '*.json' -exec jq empty {} +
 
       - name: cyclomatic complexity (lizard)
         run: |
@@ -101,8 +137,8 @@ jobs:
 
       - name: module size (max 500 lines per file)
         run: |
-          overlong=$(find apps/src -name "*.cs" -not -path "*/obj/*" -not -path "*/bin/*" -not -path "*Migrations*" \
-            | xargs wc -l | awk '$1 > 500 && $2 != "total" {print}')
+          overlong=$(find apps/src -name "*.cs" -not -path "*/obj/*" -not -path "*/bin/*" -not -path "*Migrations*" -print0 \
+            | xargs -0 wc -l | awk '$1 > 500 && $2 != "total" {print}')
           if [[ -n "$overlong" ]]; then
             echo "Files over the 500-line module-size budget:"
             echo "$overlong"
@@ -198,7 +234,7 @@ jobs:
     name: build and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: verify compose network names
         run: bash scripts/infra/verify-compose-network-names.sh
@@ -209,7 +245,7 @@ jobs:
       - name: verify Dockerfile COPY lines match each service's ProjectReference graph
         run: bash scripts/ci/verify-dockerfile-project-references.sh
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           global-json-file: global.json
 
@@ -224,14 +260,24 @@ jobs:
       - name: build
         run: dotnet build apps/SagaEcommerce.slnx --no-restore --configuration Release
 
-      - name: test
+      - name: fast tests (unit and architecture)
         run: |
-          dotnet test apps/SagaEcommerce.slnx --no-build --configuration Release \
-            --logger "trx;LogFileName=test-results.trx"
+          for project in \
+            apps/tests/Orders.UnitTests/Orders.UnitTests.csproj \
+            apps/tests/Storefront.UnitTests/Storefront.UnitTests.csproj \
+            apps/tests/Cart.UnitTests/Cart.UnitTests.csproj \
+            apps/tests/Catalog.UnitTests/Catalog.UnitTests.csproj \
+            apps/tests/Inventory.UnitTests/Inventory.UnitTests.csproj \
+            apps/tests/Payments.UnitTests/Payments.UnitTests.csproj \
+            apps/tests/Orders.ArchitectureTests/Orders.ArchitectureTests.csproj \
+            apps/tests/Services.ArchitectureTests/Services.ArchitectureTests.csproj; do
+            dotnet test "$project" --no-build --configuration Release \
+              --logger "trx;LogFileName=test-results.trx"
+          done
 
       - name: publish test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-results
           path: "apps/**/TestResults/**/*.trx"
@@ -287,7 +333,7 @@ jobs:
 
       - name: upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-report
           path: ./coverage/report
@@ -325,13 +371,49 @@ jobs:
           awk -v cov="$line_coverage" -v threshold="$threshold" 'BEGIN { exit !(cov >= threshold) }' \
             || { echo "Line coverage ${line_coverage}% is below the ${threshold}% threshold."; exit 1; }
 
+  integration-test:
+    name: integration and contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          global-json-file: global.json
+
+      - name: restore
+        run: dotnet restore apps/SagaEcommerce.slnx
+
+      - name: build
+        run: dotnet build apps/SagaEcommerce.slnx --no-restore --configuration Release
+
+      - name: Testcontainers-backed integration and contract tests
+        run: |
+          for project in \
+            apps/tests/Cart.IntegrationTests/Cart.IntegrationTests.csproj \
+            apps/tests/Catalog.IntegrationTests/Catalog.IntegrationTests.csproj \
+            apps/tests/Inventory.IntegrationTests/Inventory.IntegrationTests.csproj \
+            apps/tests/Orders.IntegrationTests/Orders.IntegrationTests.csproj \
+            apps/tests/Orders.ContractTests/Orders.ContractTests.csproj; do
+            dotnet test "$project" --no-build --configuration Release \
+              --logger "trx;LogFileName=test-results.trx"
+          done
+
+      - name: publish integration test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: integration-test-results
+          path: "apps/**/TestResults/**/*.trx"
+          retention-days: 14
+
   frontend:
     name: storefront-web (lint, typecheck, build, test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -340,6 +422,10 @@ jobs:
       - name: install
         working-directory: apps/storefront-web
         run: npm ci
+
+      - name: audit direct and transitive npm dependencies
+        working-directory: apps/storefront-web
+        run: npm audit --audit-level=high
 
       - name: lint
         working-directory: apps/storefront-web
@@ -360,7 +446,7 @@ jobs:
     # a broken backend test blocks the rest - gating the whole matrix on
     # both jobs is simpler than splitting storefront-service into its own
     # job just to scope this dependency to one matrix entry.
-    needs: [test, frontend]
+    needs: [test, integration-test, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -391,27 +477,22 @@ jobs:
       # an invalid tag.
       IMAGE: ghcr.io/daniloitagyba/saga-ecommerce/${{ matrix.service }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pushes only the immutable sha tag, never :latest - :latest is what
-      # kubernetes/base actually pulls (imagePullPolicy: IfNotPresent), so
-      # it must never point at an image before the scan/sign gates below
-      # have run. Before this, the push here carried both tags at once:
-      # a CRITICAL/HIGH CVE failed the *job*, but the vulnerable image was
-      # already in GHCR and already tagged :latest by the time that
-      # happened - the gate blocked the workflow, not the artifact a
-      # cluster would actually deploy.
+      # Publish the immutable commit tag only. Promotion resolves that tag to
+      # its digest, verifies the signature below and writes the digest into an
+      # environment overlay; no mutable tag is consumed by GitOps.
       - name: build and push (sha tag only)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/src/${{ matrix.project }}/Dockerfile
@@ -421,21 +502,21 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: sbom-${{ matrix.service }}.spdx.json
 
       - name: upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-${{ matrix.service }}
           path: sbom-${{ matrix.service }}.spdx.json
           retention-days: 90
 
       - name: scan for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           format: table
@@ -443,7 +524,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: sign image (keyless, Sigstore)
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
@@ -451,12 +532,22 @@ jobs:
           IMAGE: ${{ env.IMAGE }}
           DIGEST: ${{ steps.build.outputs.digest }}
 
-      # Only now, after the scan and the signature both succeeded, does
-      # :latest move - a manifest re-tag against the digest already in
-      # GHCR, not a rebuild, so it can't drift from what was actually
-      # scanned and signed above.
-      - name: promote to :latest
-        run: docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+      - name: record immutable image provenance
+        run: |
+          jq --null-input \
+            --arg service "${{ matrix.service }}" \
+            --arg image "${IMAGE}" \
+            --arg revision "${{ github.sha }}" \
+            --arg digest "${DIGEST}" \
+            '{service:$service,image:$image,revision:$revision,digest:$digest}' \
+            > "image-${{ matrix.service }}.json"
         env:
           IMAGE: ${{ env.IMAGE }}
           DIGEST: ${{ steps.build.outputs.digest }}
+
+      - name: upload immutable image provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-provenance-${{ matrix.service }}
+          path: image-${{ matrix.service }}.json
+          retention-days: 365

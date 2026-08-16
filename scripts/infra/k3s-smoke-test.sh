@@ -40,7 +40,7 @@ kubectl port-forward \
   "$local_port:80" >"$port_forward_log" 2>&1 &
 port_forward_pid=$!
 
-for attempt in $(seq 1 20); do
+for _ in $(seq 1 20); do
   if curl --fail --silent "http://127.0.0.1:$local_port/health/ready" >/dev/null; then
     break
   fi

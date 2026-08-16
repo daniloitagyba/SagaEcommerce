@@ -28,6 +28,10 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 - [Feature Flags with Microsoft.FeatureManagement](architecture/feature-flags.md) — reference doc
 - [Idempotency-Key for POST /orders](architecture/idempotency-key.md) — reference doc
 
+## testing
+
+- [Critical-flow test evidence](testing/critical-flow-matrix.md) — named happy-path, failure, retry, idempotency, concurrency and compensation proofs
+
 ## saga
 
 - [Milestone 12: Payments Service and Choreographed Saga](saga/milestone-12-payments-saga.md)
@@ -83,6 +87,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 
 ## resilience
 
+- [Production operations runbooks](operations/runbooks.md) — DLQ, saga, broker, migration, restore and rollback procedures
 - [Milestone 8: Autoscaling and Resilience](resilience/milestone-8-autoscaling-resilience.md)
 - [Milestone 10: Resilience and Chaos Engineering](resilience/milestone-10-chaos-resilience.md)
 - [Milestone 31: Chaos Mesh Game Day](resilience/milestone-31-chaos-mesh-gameday.md)

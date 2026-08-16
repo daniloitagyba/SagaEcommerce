@@ -6,6 +6,13 @@ using Storefront.Service;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Match ProxyEndpoints' explicit forwarding limit and also cover chunked
+// requests whose Content-Length is absent before any endpoint reads the body.
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 5 * 1024 * 1024;
+});
+
 // Same guard Orders.Api already carries, where
 // one unregistered IProducer took the whole outbox down while the service
 // went on reporting healthy - a background loop cannot fail loudly on its
@@ -87,6 +94,7 @@ builder.Services.AddHealthChecks();
 var app = builder.Build();
 
 app.UseExceptionHandler();
+app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = _ => false });

@@ -34,7 +34,7 @@ min_replicas=$(
 )
 
 hpa_at_minimum=false
-for attempt in $(seq 1 36); do
+for _ in $(seq 1 36); do
   desired_replicas=$(
     kubectl get horizontalpodautoscaler/orders-api \
       --namespace "$namespace" \
@@ -114,7 +114,7 @@ if (( max_replicas <= min_replicas )); then
 fi
 
 scaled_down=false
-for attempt in $(seq 1 36); do
+for _ in $(seq 1 36); do
   desired_replicas=$(
     kubectl get horizontalpodautoscaler/orders-api \
       --namespace "$namespace" \

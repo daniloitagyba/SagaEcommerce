@@ -25,6 +25,7 @@ spec:
       annotations:
         linkerd.io/inject: enabled
     spec:
+      serviceAccountName: cart-service
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       # Milestone 65: nothing previously stopped the scheduler from placing

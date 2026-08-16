@@ -9,7 +9,10 @@ The backend-for-frontend: the browser talks to exactly one origin, avoiding CORS
 - **Proxy Endpoints** — thin, generic 1:1 forwards to `Catalog.Service` and `Cart.Service`. No logic beyond relaying the request and response verbatim.
 - **Checkout / Product Summary** — the genuine BFF logic. `GetProductSummaryAsync` fans `Catalog.Service` and `Inventory.Service` out in parallel and degrades gracefully if Inventory is slow or down (optionally hedged: a second request fires if the first hasn't answered within a configurable delay, since the mesh load-balances new connections per request and has a real chance of landing on a different pod). `CheckoutAsync` turns a cart into an order and only clears the cart *after* `Orders.Api` accepts it — clearing first and having the order call fail would strand the shopper with an empty cart and nothing purchased.
 
-`KeycloakTokenProvider` holds a server-side `client_credentials` token (cached, refreshed before expiry) so the browser never needs to know `Orders.Api` requires auth, and its client secret never reaches client-side code.
+Storefront forwards the shopper's own bearer token to Cart and Orders. It does
+not mint a service token or assert a customer identity on the shopper's behalf;
+each downstream service validates the same signed token and derives ownership
+from its claims.
 
 No database, no Kafka, no Domain namespace of its own — by design.
 
@@ -20,7 +23,7 @@ No database, no Kafka, no Domain namespace of its own — by design.
 | in | `Client (Web / Mobile)` | the only origin it ever talks to |
 | out | `Catalog.Service`, `Cart.Service` | proxied 1:1 |
 | out | `Inventory.Service` | hedged reads for product summaries |
-| out | `Orders.Api` | checkout, with a service-to-service Bearer token injected |
+| out | `Orders.Api` | checkout, forwarding the shopper's bearer token |
 
 ## Run it
 

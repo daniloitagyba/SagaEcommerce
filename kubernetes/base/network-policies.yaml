@@ -80,7 +80,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-egress-cluster-internal-and-infra
+  name: allow-egress-application-common
 spec:
   podSelector:
     matchLabels:
@@ -88,43 +88,138 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # Every pod in the cluster - the API server (orders-worker's leader
-    # election, Milestone 36, and KEDA/HPA scaler queries), Linkerd's
-    # control plane, and every in-cluster service this app talks to. The
-    # threat default-deny-egress actually closes is arbitrary *external*
-    # traffic (exfiltration, a C2 callback) - not east-west traffic inside
-    # a boundary the cluster already trusts, so this stays unscoped by port.
+    # East-west HTTP stays inside this application boundary. Both the app
+    # port and Linkerd's redirected inbound port are explicit.
     - to:
-        - namespaceSelector: {}
-    # The docker-compose-hosted infra this lab's services depend on -
-    # Postgres, Kafka, Redis, MongoDB, the OTel collector, Prometheus,
-    # schema registry, Keycloak, MinIO, Pyroscope. Sits outside the
-    # cluster's pod network (see infrastructure-endpoints.yaml's own
-    # comment on why), so unlike the rule above it needs an explicit
-    # CIDR-and-port allow rather than a namespace selector.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: saga-ecommerce
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 4143 }
+    # Every application emits OTLP/profiles and either validates or obtains
+    # an OIDC token. These are the only shared off-cluster dependencies.
     - to:
         - ipBlock:
             cidr: 172.30.0.0/24
       ports:
-        - protocol: TCP
-          port: 5432 # postgres
-        - protocol: TCP
-          port: 9092 # kafka
-        - protocol: TCP
-          port: 9094 # kafka (k8s listener)
-        - protocol: TCP
-          port: 4317 # otel-collector (OTLP gRPC)
-        - protocol: TCP
-          port: 6379 # redis
-        - protocol: TCP
-          port: 9090 # prometheus
-        - protocol: TCP
-          port: 8081 # schema-registry
-        - protocol: TCP
-          port: 8080 # keycloak
-        - protocol: TCP
-          port: 9000 # minio
-        - protocol: TCP
-          port: 4040 # pyroscope
-        - protocol: TCP
-          port: 27017 # mongodb
+        - { protocol: TCP, port: 4317 } # OTel collector
+        - { protocol: TCP, port: 4040 } # Pyroscope
+        - { protocol: TCP, port: 8080 } # Keycloak
+---
+# Data-plane access is workload-specific. A compromised Catalog pod, for
+# example, no longer gains network access to Kafka or PostgreSQL merely
+# because another application needs them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-orders-api-data
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: orders-api }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 172.30.0.0/24 } }]
+      ports:
+        - { protocol: TCP, port: 5432 } # PostgreSQL
+        - { protocol: TCP, port: 9092 } # Kafka application listener
+        - { protocol: TCP, port: 8081 } # schema registry
+        - { protocol: TCP, port: 6379 } # Redis
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-orders-worker-data
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: orders-worker }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 172.30.0.0/24 } }]
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 9092 }
+        - { protocol: TCP, port: 8081 }
+        - { protocol: TCP, port: 6379 }
+    # Leader election is the worker's only Kubernetes API permission and
+    # is separately constrained by its namespaced Role/RoleBinding.
+    - ports:
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-payments-data
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: payments-service }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 172.30.0.0/24 } }]
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 9092 }
+        - { protocol: TCP, port: 8081 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-inventory-data
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: inventory-service }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 172.30.0.0/24 } }]
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 9092 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-catalog-data
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: catalog-service }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 172.30.0.0/24 } }]
+      ports:
+        - { protocol: TCP, port: 27017 }
+        - { protocol: TCP, port: 6379 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-cart-data
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: cart-service }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 172.30.0.0/24 } }]
+      ports:
+        - { protocol: TCP, port: 6379 }
+---
+# Migration/seed Jobs are short-lived workloads with no east-west calls. Their
+# image determines which listed store they use; the shared selector keeps
+# generated Job names from requiring one policy per migration revision.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-migrations
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: migration }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 172.30.0.0/24 } }]
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 27017 }
+        - { protocol: TCP, port: 6379 }
+        - { protocol: TCP, port: 4317 }
+        - { protocol: TCP, port: 4040 }
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 9092 }
