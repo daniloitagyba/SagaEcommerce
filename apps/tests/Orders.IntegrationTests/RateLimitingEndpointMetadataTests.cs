@@ -33,7 +33,13 @@ public sealed class RateLimitingEndpointMetadataTests : IClassFixture<OrdersApiF
         var ordersEndpoints = dataSource.Endpoints
             .OfType<RouteEndpoint>()
             .Where(endpoint => endpoint.RoutePattern.RawText is { } text
-                && text.StartsWith("/orders", StringComparison.Ordinal))
+                // REST routes only - "/orders" itself or "/orders/...". A plain
+                // StartsWith("/orders") also matches the gRPC route's route
+                // pattern ("/orders.OrderQuery/GetOrder", from the .proto's
+                // "orders" package), which carries no local rate limiter by
+                // design - it's a different transport, not one of the seven
+                // REST endpoints Program.cs's shared MapGroup covers.
+                && (text == "/orders" || text.StartsWith("/orders/", StringComparison.Ordinal)))
             .ToList();
 
         // Guards the rule below from passing trivially if every route were renamed or moved off "/orders".
