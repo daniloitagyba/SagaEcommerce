@@ -8,9 +8,9 @@
 
 | Alert | Provocation script | Last confirmed fired | Notes |
 |---|---|---|---|
-| `AntiEntropyDivergenceDetected` | `scripts/live-proofs/page-alert-provocation.sh anti-entropy` | _(not yet run)_ | Inserts one uniquely identified, impossible backorder, waits for the deployed scheduled sweep to detect it, and removes the marker through an exit trap. |
-| `SettlementReconciliationUnresolved` | `scripts/live-proofs/page-alert-provocation.sh settlement-reconciliation` | _(not yet run)_ | Publishes a synthetic reconciliation-required reply for a nonexistent order. The consumer must reject the transition, increment the metric, and make the alert fire. |
-| `RateLimitingFailedOpen` | `scripts/live-proofs/page-alert-provocation.sh rate-limit-fail-open` | _(not yet run)_ | Stops only the lab Redis container, sends authenticated requests through the deployed middleware, restores Redis through an exit trap, and verifies readiness after the alert fires. |
+| `AntiEntropyDivergenceDetected` | `scripts/live-proofs/page-alert-provocation.sh anti-entropy` | 2026-08-16 22:38:07 UTC | Fired for the scoped `backorder_on_dead_order` check after the deployed scheduled sweep. The uniquely identified marker was removed by the script. |
+| `SettlementReconciliationUnresolved` | `scripts/live-proofs/page-alert-provocation.sh settlement-reconciliation` | 2026-08-16 21:47:56 UTC | Two samples crossed a Prometheus scrape boundary, the consumer rejected both nonexistent-order transitions, and the alert fired. |
+| `RateLimitingFailedOpen` | `scripts/live-proofs/page-alert-provocation.sh rate-limit-fail-open` | 2026-08-16 22:06:13 UTC | Redis was stopped only in the lab, authenticated requests exercised fail-open, the alert fired, Redis was restored, and readiness passed. |
 
 ## Why this list is short
 

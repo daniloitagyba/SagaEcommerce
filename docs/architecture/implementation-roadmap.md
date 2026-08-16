@@ -48,14 +48,18 @@ to the existing CI:
 
 | Phase | Repository status | Evidence and remaining acceptance |
 | --- | --- | --- |
-| 1 — Stabilization | Implemented | The [audit rebaseline](audit-rebaseline-2026-08-16.md) links the current evidence; immutable runtime pins/rescans, warehouse-safe replenishment and bounded resilience paths are present. Release build and local tests pass; remote integration/Trivy execution remains a CI/lab gate. |
-| 2 — Domain and architecture | Implemented | Promotion calendar/budget, centralized transitions, exact money contracts and architecture fitness functions are executable. [ADR-001](adr-001-microservices-vs-modular-monolith.md) records the boundary decision. |
-| 3 — Distributed reliability | Implemented | The [producer/consumer reliability inventory](reliability-inventory-2026-08-16.md) records outbox/inbox, IDs, versions and replay guarantees. Duplicate/order/restart proofs remain required in the remote integration job. |
-| 4 — Quality and security | Implemented | CI is split into fast and Testcontainers jobs, third-party actions are SHA-pinned, Dependabot covers Actions/NuGet/npm/Docker, ShellCheck/Hadolint/npm audit are blocking, request bodies are bounded and the [critical-flow matrix](../testing/critical-flow-matrix.md) names the automated evidence. |
-| 5 — Operations | Implemented; scheduled proof pending | Payments/saga dashboards already exist; `commerce-slo.yml` adds checkout/payment/inventory SLOs, every alert has an owner/runbook, [operations runbooks](../operations/runbooks.md) cover recovery, and scheduled backup/chaos jobs retain machine-readable evidence. A real scheduled restore and controlled burn-rate provocation must still produce lab artifacts. |
-| 6 — Delivery and GitOps | Implemented; environment acceptance pending | CI publishes/scans/signs immutable commit images, `promote.yml` promotes verified digests by PR, `staging-smoke.yml` verifies all seven running digests and the critical flow, and production requires matching successful staging evidence. Per-workload service accounts, Linkerd authorization, egress policies, admission tests and overlay validation are declarative. Staging/production credentials, Argo destinations and approval rules are external prerequisites and no production promotion was performed by this implementation. |
+| 1 — Stabilization | Complete | The [audit rebaseline](audit-rebaseline-2026-08-16.md) links the current evidence. CI run [31971995135](https://github.com/daniloitagyba/SagaEcommerce/actions/runs/31971995135) passed build, tests, integration, image build, Trivy, SBOM and signing for revision `9a1f8d7200fa`; the lab acceptance record is linked below. |
+| 2 — Domain and architecture | Complete | Promotion calendar/budget, centralized transitions, exact money contracts and architecture fitness functions are executable and passed the blocking test suites. [ADR-001](adr-001-microservices-vs-modular-monolith.md) records the boundary decision. |
+| 3 — Distributed reliability | Complete | The [producer/consumer reliability inventory](reliability-inventory-2026-08-16.md) records outbox/inbox, IDs, versions and replay guarantees. Testcontainers integration gates passed, and Chaos Mesh run [31976574923](https://github.com/daniloitagyba/SagaEcommerce/actions/runs/31976574923) proved 20/20 terminal convergence after an abrupt worker kill with zero measured data loss. |
+| 4 — Quality and security | Complete | CI is split into blocking fast and Testcontainers jobs; the promotion and rollback PRs passed build, integration, dependency, secret, frontend, complexity and CodeQL gates. Third-party actions are SHA-pinned, Dependabot covers Actions/NuGet/npm/Docker, and the [critical-flow matrix](../testing/critical-flow-matrix.md) names the automated evidence. |
+| 5 — Operations | Complete | Backup/restore run [31973821277](https://github.com/daniloitagyba/SagaEcommerce/actions/runs/31973821277) measured real MongoDB and Redis recovery, all page-worthy correctness alerts were provoked, the multi-window burn-rate alert fired and resolved during a controlled PostgreSQL outage, and the successful chaos artifact is retained for 365 days. |
+| 6 — Delivery and GitOps | Complete | The same seven signed digests from revision `9a1f8d7200fa` passed staging smoke [31976283730](https://github.com/daniloitagyba/SagaEcommerce/actions/runs/31976283730), production promotion [31977159873](https://github.com/daniloitagyba/SagaEcommerce/actions/runs/31977159873), merge [#22](https://github.com/daniloitagyba/SagaEcommerce/pull/22), and reviewed/gated Git rollback [#23](https://github.com/daniloitagyba/SagaEcommerce/pull/23). The repository has no production cluster destination, so this proves the full declarative promotion/rollback transaction without claiming a live production rollout. |
 
-### Local verification recorded for this implementation
+The complete machine-readable and narrative acceptance record is
+[roadmap-acceptance-2026-08-16](roadmap-acceptance-2026-08-16.md). No known
+repository or available-environment acceptance item remains open.
+
+### Verification recorded for this implementation
 
 - `dotnet format --verify-no-changes` passed.
 - Release solution build passed with zero warnings and zero errors.
@@ -66,8 +70,9 @@ to the existing CI:
   (67 valid, 25 CRDs skipped, zero invalid), Kyverno CLI tests, Prometheus
   `promtool`, Grafana JSON parsing, Gitleaks and `git diff --check` passed.
 - Hadolint, container builds/scans/signatures, Testcontainers, mesh/egress
-  smoke, restore and chaos acceptance are intentionally left to CI or the
-  remote/lab environment required by `ENVIRONMENT.md`.
+  smoke, restore and chaos acceptance passed in CI or the remote/lab
+  environment required by `ENVIRONMENT.md`; exact run IDs and measurements are
+  recorded in [the acceptance report](roadmap-acceptance-2026-08-16.md).
 
 ## Priority and promotion policy
 

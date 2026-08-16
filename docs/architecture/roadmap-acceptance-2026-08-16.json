@@ -1,0 +1,71 @@
+{
+  "date": "2026-08-16",
+  "status": "complete",
+  "pending_items": [],
+  "artifact_revision": "9a1f8d7200fae8826186c08a29242372dc884c8b",
+  "evidence": {
+    "ci": {
+      "run_id": 31971995135,
+      "codeql_run_id": 31971995182,
+      "result": "success"
+    },
+    "backup_restore": {
+      "run_id": 31973821277,
+      "result": "success",
+      "mongodb": {
+        "products": 9,
+        "categories": 4,
+        "backup_seconds": 1,
+        "restore_seconds": 3,
+        "rpo_lost_records": 0
+      },
+      "redis": {
+        "keys": 45,
+        "backup_seconds": 0,
+        "restore_seconds": 2,
+        "rpo_lost_keys": 0
+      }
+    },
+    "staging_smoke": {
+      "run_id": 31976283730,
+      "result": "success",
+      "orders": 6,
+      "all_seven_digests_verified": true
+    },
+    "chaos": {
+      "run_id": 31976574923,
+      "result": "success",
+      "orders_created": 20,
+      "orders_converged": 20,
+      "data_loss": 0,
+      "worker_recovery_seconds": 14,
+      "full_convergence_seconds": 111
+    },
+    "alerts": {
+      "settlement_reconciliation": "2026-08-16T21:47:56Z",
+      "rate_limit_fail_open": "2026-08-16T22:06:13Z",
+      "anti_entropy_scoped": "2026-08-16T22:38:07Z"
+    },
+    "burn_rate": {
+      "result": "success",
+      "alert": "OrdersApiErrorBudgetBurnDemo",
+      "completed_at": "2026-08-16T22:43:19Z",
+      "requests": 1168,
+      "server_errors": 768,
+      "recovered": true,
+      "resolved": true
+    },
+    "production_promotion": {
+      "workflow_run_id": 31977159873,
+      "pull_request": 22,
+      "merge_commit": "e4eddb7cd01c83d506e613bafb16a74bb463fbc7",
+      "result": "merged"
+    },
+    "production_rollback": {
+      "pull_request": 23,
+      "merge_commit": "5e95dec8dd63a3c028af7108cdd34a2f082b33c3",
+      "result": "merged"
+    }
+  },
+  "scope_note": "The repository has no production cluster destination; production acceptance covers the complete declarative promotion and rollback transaction without claiming a live rollout."
+}
