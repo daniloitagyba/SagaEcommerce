@@ -1,7 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../local
+  - ../../base
+  - ../lab-infrastructure
 images:
   - name: saga-ecommerce/orders-api
     newName: ghcr.io/daniloitagyba/saga-ecommerce/orders-api

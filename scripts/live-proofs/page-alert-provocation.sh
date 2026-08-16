@@ -52,6 +52,19 @@ wait_for_alert() {
   return 1
 }
 
+require_alert_rule() {
+  local alert_name=$1
+  curl --fail --silent --show-error --request POST "$prometheus_url/-/reload" >/dev/null
+  sleep 2
+  local rule_count
+  rule_count=$(curl --fail --silent --show-error "$prometheus_url/api/v1/rules" |
+    jq --arg alert "$alert_name" '[.data.groups[].rules[] | select(.name == $alert)] | length')
+  if [[ "$rule_count" -eq 0 ]]; then
+    printf 'Alert rule %s is not loaded; recreate Prometheus if its bind mount is stale.\n' "$alert_name" >&2
+    return 1
+  fi
+}
+
 record_result() {
   local alert_name=$1
   jq --null-input \
@@ -67,23 +80,32 @@ curl --fail --silent --show-error "$prometheus_url/-/ready" >/dev/null
 case "$scenario" in
   settlement-reconciliation)
     alert_name=SettlementReconciliationUnresolved
-    order_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
-    payment_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
-    correlation_id="alert-drill-$run_id"
-    payload=$(jq --compact-output --null-input \
-      --arg orderId "$order_id" \
-      --arg paymentId "$payment_id" \
-      --arg correlationId "$correlation_id" \
-      --arg settledAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      '{orderId:$orderId,paymentId:$paymentId,state:"Expired",amount:1.00,currency:"BRL",correlationId:$correlationId,settledAt:$settledAt,requiresReconciliation:true}')
+    require_alert_rule "$alert_name"
+    # A counter's first exported sample establishes its baseline and does not
+    # produce a positive increase(). Emit twice across a scrape boundary so a
+    # clean lab with no pre-existing series proves the alert too.
+    for sample in 1 2; do
+      order_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
+      payment_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
+      correlation_id="alert-drill-$run_id-$sample"
+      payload=$(jq --compact-output --null-input \
+        --arg orderId "$order_id" \
+        --arg paymentId "$payment_id" \
+        --arg correlationId "$correlation_id" \
+        --arg settledAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{orderId:$orderId,paymentId:$paymentId,state:"Expired",amount:1.00,currency:"BRL",correlationId:$correlationId,settledAt:$settledAt,requiresReconciliation:true}')
 
-    printf '%s|%s\n' "$order_id" "$payload" |
-      compose exec -T kafka \
-        /opt/kafka/bin/kafka-console-producer.sh \
-        --bootstrap-server kafka:9092 \
-        --topic payments.settlement-replied.v1 \
-        --property parse.key=true \
-        --property 'key.separator=|'
+      printf '%s|%s\n' "$order_id" "$payload" |
+        compose exec -T kafka \
+          /opt/kafka/bin/kafka-console-producer.sh \
+          --bootstrap-server kafka:9092 \
+          --topic payments.settlement-replied.v1 \
+          --property parse.key=true \
+          --property 'key.separator=|'
+      if [[ "$sample" -eq 1 ]]; then
+        sleep 20
+      fi
+    done
 
     wait_for_alert "$alert_name" 24
     record_result "$alert_name"
@@ -91,6 +113,7 @@ case "$scenario" in
 
   rate-limit-fail-open)
     alert_name=RateLimitingFailedOpen
+    require_alert_rule "$alert_name"
     # shellcheck disable=SC1091
     source "$compose_directory/.env"
     orders_url=${ORDERS_URL:-"http://127.0.0.1:${ORDERS_PORT:-8088}"}
@@ -121,6 +144,7 @@ case "$scenario" in
 
   anti-entropy)
     alert_name=AntiEntropyDivergenceDetected
+    require_alert_rule "$alert_name"
     reservation_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
     order_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
     marker_sku="ALERT-DRILL-$run_id"

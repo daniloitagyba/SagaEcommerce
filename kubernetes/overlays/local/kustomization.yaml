@@ -3,8 +3,7 @@ kind: Kustomization
 namespace: orders-lab
 resources:
   - ../../base
-  - infrastructure-endpoints.yaml
-  - connectivity-job.yaml
+  - ../lab-infrastructure
 images:
   # The local overlay is the sole tag-based exception: images are built and
   # imported directly into K3s containerd for the lab. Staging/production
