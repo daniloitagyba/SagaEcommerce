@@ -84,10 +84,10 @@ builder.Services.AddOptions<SagaOrchestrationOptions>()
     // a flakier dependency, say) can silently reopen the exact gap
     // Milestone 91 closed: SagaTimeoutSweeper firing while the target
     // consumer is still legitimately retrying, not stuck.
-    .Validate<MessageProcessingOptions>(
+    .Validate<IOptions<MessageProcessingOptions>>(
         (sagaOptions, processingOptions) =>
             sagaOptions.TimeoutSeconds * 1000L
-                >= processingOptions.MaximumAttempts * (long)processingOptions.MaximumRetryDelayMilliseconds,
+                >= processingOptions.Value.MaximumAttempts * (long)processingOptions.Value.MaximumRetryDelayMilliseconds,
         "Saga timeout must exceed the target consumer's own retry budget (MessageProcessing:MaximumAttempts * MessageProcessing:MaximumRetryDelayMilliseconds), or the timeout sweeper can fire while a reply is still legitimately in flight.")
     .ValidateOnStart();
 builder.Services.AddOptions<OrderEventStoreOptions>()
