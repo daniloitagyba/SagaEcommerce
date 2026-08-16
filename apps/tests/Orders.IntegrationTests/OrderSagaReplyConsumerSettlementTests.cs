@@ -9,7 +9,6 @@ using Orders.Domain;
 using Orders.Infrastructure.Data;
 using Orders.Worker;
 using Polly.Registry;
-using Testcontainers.PostgreSql;
 using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
@@ -22,14 +21,9 @@ namespace Orders.IntegrationTests;
 /// sit in Shipped forever, eventually Delivered, having never been charged,
 /// with no record anywhere that it went wrong.
 /// </summary>
-public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDisposable
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class OrderSagaReplyConsumerSettlementTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("orders_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
-
     private readonly RedpandaContainer _redpanda =
         new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v26.2.1").Build();
 
@@ -40,9 +34,11 @@ public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDis
 
     public async Task InitializeAsync()
     {
-        await Task.WhenAll(_postgres.StartAsync(), _redpanda.StartAsync());
+        var connectionStringTask = fixture.CreateSchemaAsync(nameof(OrderSagaReplyConsumerSettlementTests));
+        await Task.WhenAll(connectionStringTask, _redpanda.StartAsync());
+        var connectionString = await connectionStringTask;
 
-        var dbOptions = new DbContextOptionsBuilder<OrdersDbContext>().UseNpgsql(_postgres.GetConnectionString()).Options;
+        var dbOptions = new DbContextOptionsBuilder<OrdersDbContext>().UseNpgsql(connectionString).Options;
         _dbContext = new OrdersDbContext(dbOptions);
         await _dbContext.Database.MigrateAsync();
 
@@ -51,7 +47,7 @@ public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDis
             .BuildServiceProvider()
             .GetRequiredService<ResiliencePipelineProvider<string>>();
 
-        _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
+        _dataSource = NpgsqlDataSource.Create(connectionString);
         _producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = _redpanda.GetBootstrapAddress() }).Build();
 
         _orderStatusStore = CreateOrderStatusStore(pipelineProvider);
@@ -61,7 +57,7 @@ public sealed class OrderSagaReplyConsumerSettlementTests : IAsyncLifetime, IDis
     {
         await _dbContext.DisposeAsync();
         await _dataSource.DisposeAsync();
-        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redpanda.DisposeAsync().AsTask());
+        await _redpanda.DisposeAsync();
     }
 
     public void Dispose() => _producer.Dispose();

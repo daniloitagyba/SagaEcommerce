@@ -11,19 +11,13 @@ using Payments.Service;
 using Payments.Service.Data;
 using Payments.Service.Risk;
 using System.Text.Json;
-using Testcontainers.PostgreSql;
 using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
 
-public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class PaymentMessageProcessorTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("payments_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
-
     // Confluent.SchemaRegistry ships no mock client, and ISchemaRegistryClient
     // has 24+ members - hand-rolling a fake risks subtly wrong schema-ID
     // behavior. Redpanda bundles a Confluent-compatible registry alongside
@@ -36,13 +30,15 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
 
     public async Task InitializeAsync()
     {
-        await Task.WhenAll(_postgres.StartAsync(), _redpanda.StartAsync());
+        var connectionStringTask = fixture.CreateSchemaAsync(nameof(PaymentMessageProcessorTests));
+        await Task.WhenAll(connectionStringTask, _redpanda.StartAsync());
+        var connectionString = await connectionStringTask;
 
         _schemaRegistryClient = new CachedSchemaRegistryClient(
             new SchemaRegistryConfig { Url = _redpanda.GetSchemaRegistryAddress() });
 
         var services = new ServiceCollection();
-        services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(connectionString));
         // The processor resolves the risk evaluator per message from its own scope, so it must be registered here too.
         services.Configure<PaymentRiskOptions>(_ => { });
         services.AddScoped<PaymentRiskEvaluator>();
@@ -57,7 +53,7 @@ public sealed class PaymentMessageProcessorTests : IAsyncLifetime, IDisposable
     public async Task DisposeAsync()
     {
         await _serviceProvider.DisposeAsync();
-        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redpanda.DisposeAsync().AsTask());
+        await _redpanda.DisposeAsync();
     }
 
     public void Dispose()

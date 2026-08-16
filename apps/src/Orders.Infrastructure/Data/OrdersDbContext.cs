@@ -296,8 +296,23 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         summary.Property(item => item.OrderCreatedAt).HasColumnName("order_created_at");
         summary.Property(item => item.DecidedAt).HasColumnName("decided_at");
         summary.Property(item => item.ProjectedAt).HasColumnName("projected_at").IsRequired();
-        summary.HasIndex(item => new { item.Status, item.OrderCreatedAt })
-            .HasDatabaseName("ix_order_summaries_status");
+
+        // Matches EfOrderSummaryRepository.ListAsync exactly: every list is
+        // ordered ProjectedAt DESC, OrderId DESC, and the keyset cursor
+        // filters on that same pair - the prior ix_order_summaries_status
+        // (Status, OrderCreatedAt) supported neither the ordering nor the
+        // cursor predicate, so every page beyond the first sorted the whole
+        // table. This one serves the unfiltered and status-only list paths.
+        summary.HasIndex(item => new { item.ProjectedAt, item.OrderId })
+            .IsDescending(true, true)
+            .HasDatabaseName("ix_order_summaries_projected_at_order_id");
+
+        // Serves the customer-scoped list path the same way - CustomerId
+        // narrows the scan, then ProjectedAt/OrderId serve the ordering and
+        // cursor predicate from the same index.
+        summary.HasIndex(item => new { item.CustomerId, item.ProjectedAt, item.OrderId })
+            .IsDescending(false, true, true)
+            .HasDatabaseName("ix_order_summaries_customer_id_projected_at_order_id");
     }
 
     private static void ConfigureOrderEvent(ModelBuilder modelBuilder)

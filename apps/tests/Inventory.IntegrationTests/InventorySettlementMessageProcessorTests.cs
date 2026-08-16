@@ -8,28 +8,22 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
-using Testcontainers.PostgreSql;
 
 namespace Inventory.IntegrationTests;
 
-public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fixture) : IAsyncLifetime
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
-
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("inventory_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
 
     private ServiceProvider _serviceProvider = null!;
 
     public async Task InitializeAsync()
     {
-        await _postgres.StartAsync();
+        var connectionString = await fixture.CreateSchemaAsync(nameof(InventorySettlementMessageProcessorTests));
 
         var services = new ServiceCollection();
-        services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<WarehouseAllocationStore>();
         _serviceProvider = services.BuildServiceProvider();
 
@@ -50,7 +44,6 @@ public sealed class InventorySettlementMessageProcessorTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _serviceProvider.DisposeAsync();
-        await _postgres.DisposeAsync();
     }
 
     [Fact]

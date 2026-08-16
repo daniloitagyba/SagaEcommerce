@@ -1,12 +1,20 @@
+using BuildingBlocks;
 using Microsoft.EntityFrameworkCore;
+using Orders.Application.Exceptions;
 using Orders.Application.Ports;
 using Orders.Domain;
 using Orders.Infrastructure.Data;
+using Polly;
+using Polly.Registry;
 
 namespace Orders.Infrastructure.Persistence;
 
-public sealed class EfOrderSummaryRepository(OrdersDbContext dbContext) : IOrderSummaryRepository
+public sealed class EfOrderSummaryRepository(
+    OrdersDbContext dbContext,
+    ResiliencePipelineProvider<string> pipelineProvider) : IOrderSummaryRepository
 {
+    private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
+
     public async Task<IReadOnlyList<OrderSummary>> ListAsync(
         string? status,
         string? customerId,
@@ -14,34 +22,44 @@ public sealed class EfOrderSummaryRepository(OrdersDbContext dbContext) : IOrder
         int limit,
         CancellationToken cancellationToken)
     {
-        var query = dbContext.OrderSummaries.AsNoTracking();
-        if (!string.IsNullOrWhiteSpace(status))
+        try
         {
-            query = query.Where(item => item.Status == status);
-        }
+            return await _pipeline.ExecuteAsync(async ct =>
+            {
+                var query = dbContext.OrderSummaries.AsNoTracking();
+                if (!string.IsNullOrWhiteSpace(status))
+                {
+                    query = query.Where(item => item.Status == status);
+                }
 
-        if (!string.IsNullOrWhiteSpace(customerId))
+                if (!string.IsNullOrWhiteSpace(customerId))
+                {
+                    query = query.Where(item => item.CustomerId == customerId);
+                }
+
+                if (cursor is { } after)
+                {
+                    // Strictly after the named row. Plain equality/inequality
+                    // rather than Guid.CompareTo, which not every EF provider
+                    // translates to SQL - a query that throws at request time on a
+                    // second page is worse than pagination that is merely
+                    // imprecise across a same-millisecond tie, which ThenByDescending
+                    // below still orders deterministically within the result set itself.
+                    query = query.Where(item =>
+                        item.ProjectedAt < after.ProjectedAt
+                        || (item.ProjectedAt == after.ProjectedAt && item.OrderId != after.OrderId));
+                }
+
+                return await query
+                    .OrderByDescending(item => item.ProjectedAt)
+                    .ThenByDescending(item => item.OrderId)
+                    .Take(limit)
+                    .ToListAsync(ct);
+            }, cancellationToken);
+        }
+        catch (Exception exception) when (ResilienceExtensions.IsInfrastructureFault(exception))
         {
-            query = query.Where(item => item.CustomerId == customerId);
+            throw new InfrastructureUnavailableException("PostgreSQL is currently unavailable.", exception);
         }
-
-        if (cursor is { } after)
-        {
-            // Strictly after the named row. Plain equality/inequality
-            // rather than Guid.CompareTo, which not every EF provider
-            // translates to SQL - a query that throws at request time on a
-            // second page is worse than pagination that is merely
-            // imprecise across a same-millisecond tie, which ThenByDescending
-            // below still orders deterministically within the result set itself.
-            query = query.Where(item =>
-                item.ProjectedAt < after.ProjectedAt
-                || (item.ProjectedAt == after.ProjectedAt && item.OrderId != after.OrderId));
-        }
-
-        return await query
-            .OrderByDescending(item => item.ProjectedAt)
-            .ThenByDescending(item => item.OrderId)
-            .Take(limit)
-            .ToListAsync(cancellationToken);
     }
 }

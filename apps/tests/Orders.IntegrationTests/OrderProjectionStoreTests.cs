@@ -5,34 +5,28 @@ using Npgsql;
 using Orders.Infrastructure.Data;
 using Orders.Worker;
 using Polly.Registry;
-using Testcontainers.PostgreSql;
 
 namespace Orders.IntegrationTests;
 
-public sealed class OrderProjectionStoreTests : IAsyncLifetime
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class OrderProjectionStoreTests(PostgresFixture fixture) : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("orders_projection_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
-
     private NpgsqlDataSource _dataSource = null!;
     private ResiliencePipelineProvider<string> _pipelineProvider = null!;
 
     public async Task InitializeAsync()
     {
-        await _postgres.StartAsync();
+        var connectionString = await fixture.CreateSchemaAsync(nameof(OrderProjectionStoreTests));
 
         var options = new DbContextOptionsBuilder<OrdersDbContext>()
-            .UseNpgsql(_postgres.GetConnectionString())
+            .UseNpgsql(connectionString)
             .Options;
         await using (var dbContext = new OrdersDbContext(options))
         {
             await dbContext.Database.MigrateAsync();
         }
 
-        _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
+        _dataSource = NpgsqlDataSource.Create(connectionString);
         _pipelineProvider = new ServiceCollection()
             .AddOrdersResilience()
             .BuildServiceProvider()
@@ -42,7 +36,6 @@ public sealed class OrderProjectionStoreTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _dataSource.DisposeAsync();
-        await _postgres.DisposeAsync();
     }
 
     [Fact]

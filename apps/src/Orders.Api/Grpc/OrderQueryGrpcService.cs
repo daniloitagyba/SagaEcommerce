@@ -3,6 +3,7 @@ using global::Grpc.Core;
 using Microsoft.AspNetCore.Authorization;
 using Orders.Api.Authorization;
 using Orders.Api.Middleware;
+using Orders.Application.Exceptions;
 using Orders.Application.UseCases.GetOrder;
 
 namespace Orders.Api.Grpc;
@@ -26,7 +27,21 @@ public sealed class OrderQueryGrpcService(GetOrderHandler handler, IConfiguratio
             throw new RpcException(new Status(StatusCode.InvalidArgument, $"'{request.Id}' is not a valid order id."));
         }
 
-        var result = await handler.HandleAsync(id, context.CancellationToken);
+        GetOrderResult result;
+        try
+        {
+            result = await handler.HandleAsync(id, context.CancellationToken);
+        }
+        catch (InfrastructureUnavailableException exception)
+        {
+            // gRPC has its own status vocabulary - IExceptionHandler (the
+            // REST 503 this mirrors, InfrastructureUnavailableExceptionHandler)
+            // is ASP.NET Core middleware and never runs for a gRPC call, so
+            // this needs its own translation rather than relying on the
+            // exception reaching that pipeline uncaught.
+            throw new RpcException(new Status(StatusCode.Unavailable, exception.Message));
+        }
+
         var httpContext = context.GetHttpContext();
 
         // Same 404-hides-ownership reasoning as the REST
@@ -43,7 +58,10 @@ public sealed class OrderQueryGrpcService(GetOrderHandler handler, IConfiguratio
         {
             Id = order.Id.ToString(),
             CustomerId = order.CustomerId,
-            Amount = (double)order.Amount,
+            // Same conversion OrdersDbContext's own value converter uses for
+            // this exact column (amount_cents) - not a cast, since a decimal
+            // amount has no exact double representation.
+            AmountCents = (long)Math.Round(order.Amount * 100, MidpointRounding.AwayFromZero),
             Currency = order.Currency,
             Status = order.Status,
             CreatedAt = order.CreatedAt.ToString("O", CultureInfo.InvariantCulture),

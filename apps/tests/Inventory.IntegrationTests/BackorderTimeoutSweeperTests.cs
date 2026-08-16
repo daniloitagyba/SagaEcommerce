@@ -7,7 +7,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Testcontainers.PostgreSql;
 
 namespace Inventory.IntegrationTests;
 
@@ -18,24 +17,19 @@ namespace Inventory.IntegrationTests;
 /// the sweep, never interleave with it - see SkuAdvisoryLock's own comment
 /// for the leak/failed-transaction race that guard closes.
 /// </summary>
-public sealed class BackorderTimeoutSweeperTests : IAsyncLifetime
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class BackorderTimeoutSweeperTests(PostgresFixture fixture) : IAsyncLifetime
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
-
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("inventory_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
 
     private ServiceProvider _serviceProvider = null!;
 
     public async Task InitializeAsync()
     {
-        await _postgres.StartAsync();
+        var connectionString = await fixture.CreateSchemaAsync(nameof(BackorderTimeoutSweeperTests));
 
         var services = new ServiceCollection();
-        services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddDbContext<InventoryDbContext>(options => options.UseNpgsql(connectionString));
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -49,7 +43,6 @@ public sealed class BackorderTimeoutSweeperTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _serviceProvider.DisposeAsync();
-        await _postgres.DisposeAsync();
     }
 
     [Fact]

@@ -9,7 +9,6 @@ using Orders.Domain;
 using Orders.Infrastructure.Data;
 using Orders.Worker;
 using Polly.Registry;
-using Testcontainers.PostgreSql;
 using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
@@ -24,15 +23,10 @@ namespace Orders.IntegrationTests;
 /// the row; these tests drive the other half, proving OrderSagaReplyConsumer
 /// actually reacts to the flag instead of finishing the saga as if nothing happened.
 /// </summary>
-public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime, IDisposable
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class OrderSagaReplyConsumerCancellationRaceTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
     private static readonly System.Text.Json.JsonSerializerOptions SerializerOptions = new(System.Text.Json.JsonSerializerDefaults.Web);
-
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("orders_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
 
     private readonly RedpandaContainer _redpanda =
         new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v26.2.1").Build();
@@ -46,9 +40,11 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await Task.WhenAll(_postgres.StartAsync(), _redpanda.StartAsync());
+        var connectionStringTask = fixture.CreateSchemaAsync(nameof(OrderSagaReplyConsumerCancellationRaceTests));
+        await Task.WhenAll(connectionStringTask, _redpanda.StartAsync());
+        var connectionString = await connectionStringTask;
 
-        var dbOptions = new DbContextOptionsBuilder<OrdersDbContext>().UseNpgsql(_postgres.GetConnectionString()).Options;
+        var dbOptions = new DbContextOptionsBuilder<OrdersDbContext>().UseNpgsql(connectionString).Options;
         _dbContext = new OrdersDbContext(dbOptions);
         await _dbContext.Database.MigrateAsync();
 
@@ -57,7 +53,7 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime
             .BuildServiceProvider()
             .GetRequiredService<ResiliencePipelineProvider<string>>();
 
-        _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
+        _dataSource = NpgsqlDataSource.Create(connectionString);
         _producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = _redpanda.GetBootstrapAddress() }).Build();
 
         _orderStatusStore = new OrderStatusStore(
@@ -73,7 +69,7 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests : IAsyncLifetime
     {
         await _dbContext.DisposeAsync();
         await _dataSource.DisposeAsync();
-        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redpanda.DisposeAsync().AsTask());
+        await _redpanda.DisposeAsync();
     }
 
     public void Dispose() => _producer.Dispose();

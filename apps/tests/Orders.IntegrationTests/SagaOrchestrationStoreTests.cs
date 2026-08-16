@@ -5,27 +5,21 @@ using Npgsql;
 using Orders.Infrastructure.Data;
 using Orders.Worker;
 using Polly.Registry;
-using Testcontainers.PostgreSql;
 
 namespace Orders.IntegrationTests;
 
-public sealed class SagaOrchestrationStoreTests : IAsyncLifetime
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class SagaOrchestrationStoreTests(PostgresFixture fixture) : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("orders_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
-
     private NpgsqlDataSource? _dataSource;
     private SagaOrchestrationStore? _store;
 
     public async Task InitializeAsync()
     {
-        await _postgres.StartAsync();
+        var connectionString = await fixture.CreateSchemaAsync(nameof(SagaOrchestrationStoreTests));
 
         var options = new DbContextOptionsBuilder<OrdersDbContext>()
-            .UseNpgsql(_postgres.GetConnectionString())
+            .UseNpgsql(connectionString)
             .Options;
         await using (var context = new OrdersDbContext(options))
         {
@@ -37,7 +31,7 @@ public sealed class SagaOrchestrationStoreTests : IAsyncLifetime
             .BuildServiceProvider()
             .GetRequiredService<ResiliencePipelineProvider<string>>();
 
-        _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
+        _dataSource = NpgsqlDataSource.Create(connectionString);
         _store = new SagaOrchestrationStore(_dataSource, pipelineProvider);
     }
 
@@ -47,8 +41,6 @@ public sealed class SagaOrchestrationStoreTests : IAsyncLifetime
         {
             await _dataSource.DisposeAsync();
         }
-
-        await _postgres.DisposeAsync();
     }
 
     private static List<SagaReservationLine> OneLine(Guid reservationId, string sku = "SKU-1", int quantity = 2) =>

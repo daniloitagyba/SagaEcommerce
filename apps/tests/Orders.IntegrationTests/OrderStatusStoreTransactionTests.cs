@@ -6,32 +6,26 @@ using Orders.Domain;
 using Orders.Infrastructure.Data;
 using Orders.Worker;
 using Polly.Registry;
-using Testcontainers.PostgreSql;
 
 namespace Orders.IntegrationTests;
 
-public sealed class OrderStatusStoreTransactionTests : IAsyncLifetime, IDisposable
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class OrderStatusStoreTransactionTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("orders_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
-
     private OrdersDbContext _dbContext = null!;
     private NpgsqlDataSource _dataSource = null!;
     private OrderStatusStore _store = null!;
 
     public async Task InitializeAsync()
     {
-        await _postgres.StartAsync();
+        var connectionString = await fixture.CreateSchemaAsync(nameof(OrderStatusStoreTransactionTests));
         _dbContext = new OrdersDbContext(
             new DbContextOptionsBuilder<OrdersDbContext>()
-                .UseNpgsql(_postgres.GetConnectionString())
+                .UseNpgsql(connectionString)
                 .Options);
         await _dbContext.Database.MigrateAsync();
 
-        _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
+        _dataSource = NpgsqlDataSource.Create(connectionString);
         var pipelineProvider = new ServiceCollection()
             .AddOrdersResilience()
             .BuildServiceProvider()
@@ -48,7 +42,6 @@ public sealed class OrderStatusStoreTransactionTests : IAsyncLifetime, IDisposab
     {
         await _dbContext.DisposeAsync();
         await _dataSource.DisposeAsync();
-        await _postgres.DisposeAsync();
     }
 
     public void Dispose()

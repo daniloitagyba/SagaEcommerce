@@ -1,7 +1,6 @@
 using System.Globalization;
 using Orders.Api.Authorization;
 using Orders.Api.Contracts;
-using Orders.Api.RateLimiting;
 using Orders.Application.Ports;
 using Orders.Application.UseCases.ListOrderSummaries;
 
@@ -22,9 +21,8 @@ public static class OrderSummaryEndpoints
 {
     public static IEndpointRouteBuilder MapOrderSummaryEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/orders/summary", ListAsync)
+        endpoints.MapGet("/summary", ListAsync)
             .WithTags("Orders")
-            .RequireRateLimiting(RateLimitingExtensions.OrdersPolicy)
             .RequireAuthorization(OrdersAuthorizationPolicies.Read);
 
         return endpoints;

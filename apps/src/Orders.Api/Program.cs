@@ -63,6 +63,7 @@ builder.Logging.AddOrdersOpenTelemetryLogging("orders-api", instanceId, builder.
 builder.Services.AddOrdersObservability("orders-api", instanceId, builder.Environment.EnvironmentName);
 
 builder.Services.AddExceptionHandler<BadHttpRequestExceptionHandler>();
+builder.Services.AddExceptionHandler<InfrastructureUnavailableExceptionHandler>();
 builder.Services.AddProblemDetails();
 builder.Services.AddOptions<KafkaOptions>()
     .Bind(builder.Configuration.GetSection(KafkaOptions.SectionName))
@@ -165,12 +166,19 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 });
 
 app.MapGet("/", () => Results.Ok(new { service = "Orders.Api", instanceId }));
-app.MapOrderEndpoints();
-app.MapFulfillmentEndpoints();
-app.MapCancellationEndpoints();
-app.MapReturnEndpoints();
-app.MapOrderSummaryEndpoints();
-app.MapOrderHistoryEndpoints();
+
+// One group, one RequireRateLimiting call, for every "/orders"-prefixed
+// endpoint across all six route files - the per-file repetition this
+// replaced is what let three side-effecting writes (cancellation, returns,
+// fulfillment) drift with no local limiter at all while every read kept
+// one. See docs/architecture/audit-2026-08-15-patterns-and-api-layer-review.md.
+var orders = app.MapGroup("/orders").RequireRateLimiting(RateLimitingExtensions.OrdersPolicy);
+orders.MapOrderEndpoints();
+orders.MapFulfillmentEndpoints();
+orders.MapCancellationEndpoints();
+orders.MapReturnEndpoints();
+orders.MapOrderSummaryEndpoints();
+orders.MapOrderHistoryEndpoints();
 app.MapGrpcService<OrderQueryGrpcService>();
 
 await app.RunAsync();

@@ -6,33 +6,26 @@ using Orders.Domain;
 using Orders.Infrastructure.Data;
 using Orders.Worker;
 using Polly.Registry;
-using Testcontainers.PostgreSql;
 
 namespace Orders.IntegrationTests;
 
-public sealed class OrdersDbContextTests : IAsyncLifetime
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class OrdersDbContextTests(PostgresFixture fixture) : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("orders_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
+    private string _connectionString = null!;
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
-        return _postgres.StartAsync();
+        _connectionString = await fixture.CreateSchemaAsync(nameof(OrdersDbContextTests));
     }
 
-    public Task DisposeAsync()
-    {
-        return _postgres.DisposeAsync().AsTask();
-    }
+    public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
     public async Task MigrationsSupportAtomicOutboxAndIdempotentInbox()
     {
         var options = new DbContextOptionsBuilder<OrdersDbContext>()
-            .UseNpgsql(_postgres.GetConnectionString())
+            .UseNpgsql(_connectionString)
             .Options;
 
         var expected = Order.Create("integration-customer", 49.90m, "BRL", DateTimeOffset.UtcNow);
@@ -60,7 +53,7 @@ public sealed class OrdersDbContextTests : IAsyncLifetime
             .BuildServiceProvider()
             .GetRequiredService<ResiliencePipelineProvider<string>>();
 
-        await using var dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
+        await using var dataSource = NpgsqlDataSource.Create(_connectionString);
         var inboxStore = new InboxStore(dataSource, pipelineProvider);
         var eventId = Guid.NewGuid();
         var firstProcessing = await inboxStore.TryRecordAsync(

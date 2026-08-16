@@ -7,7 +7,6 @@ using Microsoft.Extensions.Options;
 using Payments.Service;
 using Payments.Service.Data;
 using Payments.Service.Domain;
-using Testcontainers.PostgreSql;
 
 namespace Orders.IntegrationTests;
 
@@ -20,24 +19,19 @@ namespace Orders.IntegrationTests;
 /// exact outcome was indistinguishable from a harmless redelivered capture
 /// and invisible to the rest of the system.
 /// </summary>
-public sealed class PaymentSettlementProcessorTests : IAsyncLifetime
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class PaymentSettlementProcessorTests(PostgresFixture fixture) : IAsyncLifetime
 {
     private static readonly System.Text.Json.JsonSerializerOptions SerializerOptions = new(System.Text.Json.JsonSerializerDefaults.Web);
-
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("payments_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
 
     private ServiceProvider _serviceProvider = null!;
 
     public async Task InitializeAsync()
     {
-        await _postgres.StartAsync();
+        var connectionString = await fixture.CreateSchemaAsync(nameof(PaymentSettlementProcessorTests));
 
         var services = new ServiceCollection();
-        services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(connectionString));
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();

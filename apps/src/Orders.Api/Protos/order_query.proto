@@ -21,7 +21,13 @@ message GetOrderRequest {
 message GetOrderResponse {
   string id = 1;
   string customer_id = 2;
-  double amount = 3;
+  // Minor units (cents), matching how this figure is already stored
+  // (orders.amount_cents, a Postgres bigint) and read back everywhere else
+  // in this codebase - Order.Amount itself is derived from this column. A
+  // decimal amount has no exact binary64 representation, so a plain
+  // `double` here could report a different value than the REST endpoint
+  // backed by the same GetOrderHandler for the identical order.
+  int64 amount_cents = 3;
   string currency = 4;
   string status = 5;
   string created_at = 6;

@@ -1,6 +1,5 @@
 using Orders.Api.Authorization;
 using Orders.Api.Middleware;
-using Orders.Application.Exceptions;
 using Orders.Application.UseCases.AdvanceFulfillment;
 
 namespace Orders.Api.Endpoints;
@@ -17,7 +16,7 @@ public static class CancellationEndpoints
 {
     public static IEndpointRouteBuilder MapCancellationEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapPost("/orders/{id:guid}/cancellation", CancelAsync)
+        endpoints.MapPost("/{id:guid}/cancellation", CancelAsync)
             .WithTags("Orders")
             .RequireAuthorization(OrdersAuthorizationPolicies.Write);
 
@@ -30,20 +29,8 @@ public static class CancellationEndpoints
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
-        AdvanceFulfillmentResult result;
-        try
-        {
-            result = await handler.HandleSelfServiceCancelAsync(
-                id, httpContext.GetCallerIdentity(), httpContext.GetCorrelationId(), cancellationToken);
-        }
-        catch (InfrastructureUnavailableException)
-        {
-            httpContext.Response.Headers["Retry-After"] = "5";
-            return Results.Problem(
-                detail: "PostgreSQL is currently unavailable.",
-                statusCode: StatusCodes.Status503ServiceUnavailable,
-                title: "Service Unavailable");
-        }
+        var result = await handler.HandleSelfServiceCancelAsync(
+            id, httpContext.GetCallerIdentity(), httpContext.GetCorrelationId(), cancellationToken);
 
         return result.Outcome switch
         {

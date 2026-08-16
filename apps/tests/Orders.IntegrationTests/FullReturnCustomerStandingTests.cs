@@ -5,7 +5,6 @@ using Orders.Domain;
 using Orders.Infrastructure.Data;
 using Orders.Infrastructure.Persistence;
 using Polly.Registry;
-using Testcontainers.PostgreSql;
 
 namespace Orders.IntegrationTests;
 
@@ -20,21 +19,16 @@ namespace Orders.IntegrationTests;
 /// race guard that also queues the OrderStatusChanged event, so a losing
 /// concurrent request cannot reverse it twice.
 /// </summary>
-public sealed class FullReturnCustomerStandingTests : IAsyncLifetime
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class FullReturnCustomerStandingTests(PostgresFixture fixture) : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("orders_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
-
     private DbContextOptions<OrdersDbContext> _dbOptions = null!;
     private ResiliencePipelineProvider<string> _pipelineProvider = null!;
 
     public async Task InitializeAsync()
     {
-        await _postgres.StartAsync();
-        _dbOptions = new DbContextOptionsBuilder<OrdersDbContext>().UseNpgsql(_postgres.GetConnectionString()).Options;
+        var connectionString = await fixture.CreateSchemaAsync(nameof(FullReturnCustomerStandingTests));
+        _dbOptions = new DbContextOptionsBuilder<OrdersDbContext>().UseNpgsql(connectionString).Options;
 
         await using var dbContext = new OrdersDbContext(_dbOptions);
         await dbContext.Database.MigrateAsync();
@@ -45,7 +39,7 @@ public sealed class FullReturnCustomerStandingTests : IAsyncLifetime
             .GetRequiredService<ResiliencePipelineProvider<string>>();
     }
 
-    public async Task DisposeAsync() => await _postgres.DisposeAsync();
+    public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
     public async Task AFullReturnReversesCustomerStanding()

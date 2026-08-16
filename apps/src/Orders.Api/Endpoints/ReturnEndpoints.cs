@@ -25,7 +25,7 @@ public static class ReturnEndpoints
 {
     public static IEndpointRouteBuilder MapReturnEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapPost("/orders/{id:guid}/returns", CreateAsync)
+        endpoints.MapPost("/{id:guid}/returns", CreateAsync)
             .WithTags("Returns")
             .RequireAuthorization(OrdersAuthorizationPolicies.Write);
 
@@ -76,14 +76,6 @@ public static class ReturnEndpoints
                 httpContext.GetCallerIdentity(),
                 httpContext.GetCorrelationId(),
                 cancellationToken);
-        }
-        catch (InfrastructureUnavailableException)
-        {
-            httpContext.Response.Headers["Retry-After"] = "5";
-            return Results.Problem(
-                detail: "PostgreSQL is currently unavailable.",
-                statusCode: StatusCodes.Status503ServiceUnavailable,
-                title: "Service Unavailable");
         }
         catch (OrderReturnConflictException)
         {

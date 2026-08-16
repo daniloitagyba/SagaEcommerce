@@ -1,7 +1,6 @@
 using BuildingBlocks;
 using Orders.Api.Authorization;
 using Orders.Api.Middleware;
-using Orders.Application.Exceptions;
 using Orders.Application.UseCases.AdvanceFulfillment;
 
 namespace Orders.Api.Endpoints;
@@ -29,7 +28,7 @@ public static class FulfillmentEndpoints
 {
     public static IEndpointRouteBuilder MapFulfillmentEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapPost("/orders/{id:guid}/fulfillment", AdvanceAsync)
+        endpoints.MapPost("/{id:guid}/fulfillment", AdvanceAsync)
             .WithTags("Fulfillment")
             .RequireAuthorization(OrdersAuthorizationPolicies.Admin);
 
@@ -70,19 +69,7 @@ public static class FulfillmentEndpoints
                 title: "Illegal Transition");
         }
 
-        AdvanceFulfillmentResult result;
-        try
-        {
-            result = await handler.HandleAsync(id, request.Status, httpContext.GetCorrelationId(), cancellationToken);
-        }
-        catch (InfrastructureUnavailableException)
-        {
-            httpContext.Response.Headers["Retry-After"] = "5";
-            return Results.Problem(
-                detail: "PostgreSQL is currently unavailable.",
-                statusCode: StatusCodes.Status503ServiceUnavailable,
-                title: "Service Unavailable");
-        }
+        var result = await handler.HandleAsync(id, request.Status, httpContext.GetCorrelationId(), cancellationToken);
 
         return result.Outcome switch
         {

@@ -1,8 +1,6 @@
 using Orders.Api.Authorization;
 using Orders.Api.Contracts;
 using Orders.Api.Middleware;
-using Orders.Api.RateLimiting;
-using Orders.Application.Exceptions;
 using Orders.Application.Ports;
 using Orders.Application.UseCases.CreateOrder;
 using Orders.Application.UseCases.GetOrder;
@@ -14,10 +12,8 @@ public static class OrderEndpoints
 {
     public static IEndpointRouteBuilder MapOrderEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        var group = endpoints.MapGroup("/orders").WithTags("Orders").RequireRateLimiting(RateLimitingExtensions.OrdersPolicy);
-
-        group.MapPost("", CreateAsync).RequireAuthorization(OrdersAuthorizationPolicies.Write);
-        group.MapGet("/{id:guid}", GetByIdAsync).RequireAuthorization(OrdersAuthorizationPolicies.Read);
+        endpoints.MapPost("", CreateAsync).WithTags("Orders").RequireAuthorization(OrdersAuthorizationPolicies.Write);
+        endpoints.MapGet("/{id:guid}", GetByIdAsync).WithTags("Orders").RequireAuthorization(OrdersAuthorizationPolicies.Read);
 
         return endpoints;
     }
@@ -59,10 +55,6 @@ public static class OrderEndpoints
         try
         {
             result = await handler.HandleAsync(command, cancellationToken);
-        }
-        catch (InfrastructureUnavailableException)
-        {
-            return ServiceUnavailable(httpContext, "PostgreSQL is currently unavailable.");
         }
         catch (CouponRedemptionUnavailableException exception)
         {
@@ -125,15 +117,7 @@ public static class OrderEndpoints
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
-        GetOrderResult result;
-        try
-        {
-            result = await handler.HandleAsync(id, cancellationToken);
-        }
-        catch (InfrastructureUnavailableException)
-        {
-            return ServiceUnavailable(httpContext, "PostgreSQL is currently unavailable.");
-        }
+        var result = await handler.HandleAsync(id, cancellationToken);
 
         // 404, not 403 - a non-owner gets the same answer as
         // a genuinely missing id, so probing ids can't be used to learn
@@ -156,15 +140,6 @@ public static class OrderEndpoints
             result.Order,
             httpContext.GetCorrelationId(),
             configuration["InstanceId"] ?? Environment.MachineName));
-    }
-
-    private static IResult ServiceUnavailable(HttpContext httpContext, string detail)
-    {
-        httpContext.Response.Headers["Retry-After"] = "5";
-        return Results.Problem(
-            detail: detail,
-            statusCode: StatusCodes.Status503ServiceUnavailable,
-            title: "Service Unavailable");
     }
 
     private static OrderResponse ToResponse(

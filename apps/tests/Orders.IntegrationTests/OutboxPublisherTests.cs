@@ -5,7 +5,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Orders.Infrastructure.Data;
-using Testcontainers.PostgreSql;
 
 namespace Orders.IntegrationTests;
 
@@ -17,22 +16,18 @@ namespace Orders.IntegrationTests;
 /// Kafka call happens outside the transaction that claims it (see
 /// OutboxPublisher.ClaimBatchAsync's own comment for why that split exists).
 /// </summary>
-public sealed class OutboxPublisherTests : IAsyncLifetime
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class OutboxPublisherTests(PostgresFixture fixture) : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("orders_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
-
+    private string _connectionString = null!;
     private ServiceProvider _serviceProvider = null!;
 
     public async Task InitializeAsync()
     {
-        await _postgres.StartAsync();
+        _connectionString = await fixture.CreateSchemaAsync(nameof(OutboxPublisherTests));
 
         var services = new ServiceCollection();
-        services.AddDbContext<OrdersDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddDbContext<OrdersDbContext>(options => options.UseNpgsql(_connectionString));
         _serviceProvider = services.BuildServiceProvider();
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -43,7 +38,6 @@ public sealed class OutboxPublisherTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _serviceProvider.DisposeAsync();
-        await _postgres.DisposeAsync();
     }
 
     [Fact]
@@ -110,7 +104,7 @@ public sealed class OutboxPublisherTests : IAsyncLifetime
     private OutboxPublisher<OrdersDbContext> CreatePublisher(IOutboxEventDispatcher dispatcher)
     {
         var services = new ServiceCollection();
-        services.AddDbContext<OrdersDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddDbContext<OrdersDbContext>(options => options.UseNpgsql(_connectionString));
         services.AddScoped<IOutboxEventDispatcher>(_ => dispatcher);
         var scopedProvider = services.BuildServiceProvider();
 

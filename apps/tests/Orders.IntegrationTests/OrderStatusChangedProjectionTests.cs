@@ -11,7 +11,6 @@ using Orders.Domain;
 using Orders.Infrastructure.Data;
 using Orders.Worker;
 using Polly.Registry;
-using Testcontainers.PostgreSql;
 using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
@@ -29,14 +28,9 @@ namespace Orders.IntegrationTests;
 /// proving the read model and the event-store timeline both actually catch
 /// up, not just that the outbox row exists.
 /// </summary>
-public sealed class OrderStatusChangedProjectionTests : IAsyncLifetime, IDisposable
+[Collection(PostgresCollectionDefinition.Name)]
+public sealed class OrderStatusChangedProjectionTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
-        .WithDatabase("orders_test")
-        .WithUsername("test_user")
-        .WithPassword("test-password-not-a-secret")
-        .Build();
-
     private readonly RedpandaContainer _redpanda =
         new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v26.2.1").Build();
 
@@ -50,9 +44,11 @@ public sealed class OrderStatusChangedProjectionTests : IAsyncLifetime, IDisposa
 
     public async Task InitializeAsync()
     {
-        await Task.WhenAll(_postgres.StartAsync(), _redpanda.StartAsync());
+        var connectionStringTask = fixture.CreateSchemaAsync(nameof(OrderStatusChangedProjectionTests));
+        await Task.WhenAll(connectionStringTask, _redpanda.StartAsync());
+        var connectionString = await connectionStringTask;
 
-        var dbOptions = new DbContextOptionsBuilder<OrdersDbContext>().UseNpgsql(_postgres.GetConnectionString()).Options;
+        var dbOptions = new DbContextOptionsBuilder<OrdersDbContext>().UseNpgsql(connectionString).Options;
         _dbContext = new OrdersDbContext(dbOptions);
         await _dbContext.Database.MigrateAsync();
 
@@ -61,7 +57,7 @@ public sealed class OrderStatusChangedProjectionTests : IAsyncLifetime, IDisposa
             .BuildServiceProvider()
             .GetRequiredService<ResiliencePipelineProvider<string>>();
 
-        _dataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
+        _dataSource = NpgsqlDataSource.Create(connectionString);
         _orderStatusStore = new OrderStatusStore(
             _dataSource, new CouponRedemptionStore(), new PaymentSettlementRequester(), new CustomerTierStore(), pipelineProvider);
         _projectionStore = new OrderProjectionStore(_dataSource, pipelineProvider);
@@ -79,7 +75,7 @@ public sealed class OrderStatusChangedProjectionTests : IAsyncLifetime, IDisposa
     {
         await _dbContext.DisposeAsync();
         await _dataSource.DisposeAsync();
-        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redpanda.DisposeAsync().AsTask());
+        await _redpanda.DisposeAsync();
     }
 
     public void Dispose() => _schemaRegistryClient.Dispose();
