@@ -7,6 +7,7 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 
 ## architecture
 
+- [Phased implementation roadmap](architecture/implementation-roadmap.md) — prioritized delivery plan and quality-gate promotion criteria
 - [Milestone 18: Clean/Hexagonal Architecture Refactor](architecture/milestone-18-clean-architecture.md)
 - [Milestone 36: Kubernetes Lease Leader Election](architecture/milestone-36-leader-election.md)
 - [Milestone 38: Cluster-Wide Distributed Rate Limiting](architecture/milestone-38-distributed-rate-limiting.md)

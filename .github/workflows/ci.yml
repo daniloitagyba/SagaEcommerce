@@ -56,10 +56,39 @@ jobs:
           fi
 
   complexity-and-module-size:
+    # Keep the published check name stable: branch protection may require it by
+    # name even though this job now owns additional repository-quality gates.
     name: cyclomatic complexity and module size
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: GitHub Actions syntax and semantics (actionlint)
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
+
+      - name: shell script syntax
+        run: |
+          while IFS= read -r -d '' file; do
+            bash -n "$file"
+          done < <(find scripts compose -type f -name "*.sh" -print0)
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.34.1
+
+      - name: render Kubernetes manifests (Kustomize)
+        run: kubectl kustomize kubernetes/overlays/local > rendered-manifests.yaml
+
+      - name: validate Kubernetes schemas (kubeconform)
+        run: |
+          # The rendered overlay contains CRDs (Argo Rollouts, KEDA and
+          # SealedSecrets) whose schemas are not part of the upstream
+          # Kubernetes schema bundle. Standard resources remain strict and
+          # build-blocking; only resources without a published schema are
+          # reported as skipped.
+          docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 \
+            -strict -summary -ignore-missing-schemas < rendered-manifests.yaml
 
       - name: cyclomatic complexity (lizard)
         run: |
@@ -186,6 +215,11 @@ jobs:
 
       - name: restore
         run: dotnet restore apps/SagaEcommerce.slnx
+
+      - name: formatting and analyzer fixes are applied
+        run: |
+          dotnet format apps/SagaEcommerce.slnx --no-restore \
+            --verify-no-changes --verbosity minimal
 
       - name: build
         run: dotnet build apps/SagaEcommerce.slnx --no-restore --configuration Release
