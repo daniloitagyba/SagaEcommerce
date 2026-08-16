@@ -10,7 +10,7 @@ A distributed-systems lab built as a real e-commerce system, one milestone at a 
 
 - **Sagas** — choreographed and orchestrated, side by side, for comparison. Reserve inventory → decide payment → commit or *compensate*.
 - **A real pricing domain** — line items priced server-side, promotions composed by a rules engine (NRules), coupons, loyalty tiers, multi-warehouse allocation with backorders, authorize-then-capture payments. See [`docs/domain/`](docs/domain/), starting at [Milestone 66](docs/domain/milestone-66-line-items-pricing-and-risk.md).
-- **Delivery guarantees** — transactional Outbox + Inbox, at-least-once Kafka processing, a durable event log.
+- **Delivery guarantees, stated precisely** — local atomicity (one Postgres transaction per write), at-least-once Kafka transport, and *effectively-once* effects only where durable idempotency (the Inbox, a CAS-guarded transition, a unique claim) actually proves it — not claimed anywhere it isn't.
 - **Polyglot persistence** — Postgres for transactions, MongoDB for the catalog, Redis as a real system of record for carts, not just a cache.
 - **Resilience & chaos engineering** — Polly pipelines proven against real fault injection (Toxiproxy, Chaos Mesh), not just configured.
 - **Anti-entropy reconciliation** — a periodic sweep that catches divergence between services (a payment an order believes happened but Payments never accounted for, stock still committed against an order that's since been cancelled) instead of assuming it can't occur.
