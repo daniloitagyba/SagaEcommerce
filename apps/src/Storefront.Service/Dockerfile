@@ -1,4 +1,4 @@
-FROM node:22-alpine AS frontend-build
+FROM node:26-alpine AS frontend-build
 WORKDIR /src/apps/storefront-web
 
 COPY apps/storefront-web/package.json apps/storefront-web/package-lock.json ./
