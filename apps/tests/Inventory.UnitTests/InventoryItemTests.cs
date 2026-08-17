@@ -1,3 +1,4 @@
+using CsCheck;
 using Inventory.Service.Domain;
 
 namespace Inventory.UnitTests;
@@ -114,13 +115,65 @@ public class InventoryItemTests
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void RestockingWithANonPositiveQuantityIsANoOp(int quantity)
+    public void RestockingWithANonPositiveQuantityIsRejected(int quantity)
     {
         var item = InventoryItem.Create("SKU-A", 10, Now);
 
-        item.Restock(quantity, Now.AddMinutes(1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => item.Restock(quantity, Now.AddMinutes(1)));
 
         Assert.Equal(10, item.AvailableQuantity);
         Assert.Equal(Now, item.UpdatedAt);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NonPositiveReservationsAndSettlementsDoNotChangeStock(int quantity)
+    {
+        var item = InventoryItem.Create("SKU-A", 10, Now);
+        item.TryReserve(4, Now);
+
+        Assert.False(item.TryReserve(quantity, Now.AddMinutes(1)));
+        Assert.False(item.TryCommit(quantity, Now.AddMinutes(1)));
+        Assert.False(item.TryRelease(quantity, Now.AddMinutes(1)));
+
+        Assert.Equal(6, item.AvailableQuantity);
+        Assert.Equal(4, item.ReservedQuantity);
+    }
+
+    [Fact]
+    public void RandomInventoryOperationsPreserveNonNegativeBalances()
+    {
+        Gen.Int[0, int.MaxValue].Sample(seed =>
+        {
+            var random = new Random(seed);
+            var item = InventoryItem.Create("SKU-A", random.Next(0, 101), Now);
+
+            for (var operation = 0; operation < 100; operation++)
+            {
+                var quantity = random.Next(-5, 26);
+                switch (random.Next(4))
+                {
+                    case 0:
+                        item.TryReserve(quantity, Now.AddMinutes(operation));
+                        break;
+                    case 1:
+                        item.TryCommit(quantity, Now.AddMinutes(operation));
+                        break;
+                    case 2:
+                        item.TryRelease(quantity, Now.AddMinutes(operation));
+                        break;
+                    default:
+                        if (quantity > 0)
+                        {
+                            item.Restock(quantity, Now.AddMinutes(operation));
+                        }
+
+                        break;
+                }
+            }
+
+            return item.AvailableQuantity >= 0 && item.ReservedQuantity >= 0;
+        }, iter: 2_000);
     }
 }

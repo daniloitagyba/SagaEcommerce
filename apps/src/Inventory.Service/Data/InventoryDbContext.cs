@@ -36,7 +36,11 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
     {
         var item = modelBuilder.Entity<InventoryItem>();
 
-        item.ToTable("inventory_items");
+        item.ToTable("inventory_items", table =>
+        {
+            table.HasCheckConstraint("ck_inventory_items_available_quantity_non_negative", "available_quantity >= 0");
+            table.HasCheckConstraint("ck_inventory_items_reserved_quantity_non_negative", "reserved_quantity >= 0");
+        });
         item.HasKey(entity => entity.Sku);
         item.Property(entity => entity.Sku).HasColumnName("sku").HasMaxLength(64).ValueGeneratedNever();
         item.Property(entity => entity.AvailableQuantity).HasColumnName("available_quantity").IsRequired();
@@ -48,7 +52,12 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
     {
         var stock = modelBuilder.Entity<WarehouseStock>();
 
-        stock.ToTable("warehouse_stock");
+        stock.ToTable("warehouse_stock", table =>
+        {
+            table.HasCheckConstraint("ck_warehouse_stock_available_quantity_non_negative", "available_quantity >= 0");
+            table.HasCheckConstraint("ck_warehouse_stock_reserved_quantity_non_negative", "reserved_quantity >= 0");
+            table.HasCheckConstraint("ck_warehouse_stock_reorder_point_non_negative", "reorder_point >= 0");
+        });
         stock.HasKey(entity => new { entity.Sku, entity.WarehouseCode });
         stock.Property(entity => entity.Sku).HasColumnName("sku").HasMaxLength(64);
         stock.Property(entity => entity.WarehouseCode).HasColumnName("warehouse_code").HasMaxLength(16);
@@ -59,7 +68,8 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
 
         var allocation = modelBuilder.Entity<ReservationAllocation>();
 
-        allocation.ToTable("reservation_allocations");
+        allocation.ToTable("reservation_allocations", table =>
+            table.HasCheckConstraint("ck_reservation_allocations_quantity_positive", "quantity > 0"));
         allocation.HasKey(entity => entity.Id);
         allocation.Property(entity => entity.Id).HasColumnName("id").ValueGeneratedNever();
         allocation.Property(entity => entity.ReservationId).HasColumnName("reservation_id").IsRequired();
@@ -74,7 +84,8 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
     {
         var entry = modelBuilder.Entity<InventoryReservationLedgerEntry>();
 
-        entry.ToTable("inventory_reservation_ledger");
+        entry.ToTable("inventory_reservation_ledger", table =>
+            table.HasCheckConstraint("ck_inventory_reservation_ledger_quantity_positive", "quantity > 0"));
         entry.HasKey(item => item.Id);
         entry.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
         entry.Property(item => item.ReservationId).HasColumnName("reservation_id").IsRequired();
@@ -90,7 +101,8 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
     {
         var backorder = modelBuilder.Entity<Backorder>();
 
-        backorder.ToTable("backorders");
+        backorder.ToTable("backorders", table =>
+            table.HasCheckConstraint("ck_backorders_quantity_positive", "quantity > 0"));
         backorder.HasKey(entity => entity.ReservationId);
         backorder.Property(entity => entity.ReservationId).HasColumnName("reservation_id").ValueGeneratedNever();
         backorder.Property(entity => entity.OrderId).HasColumnName("order_id").IsRequired();
@@ -106,7 +118,8 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
     {
         var purchaseOrder = modelBuilder.Entity<PurchaseOrder>();
 
-        purchaseOrder.ToTable("purchase_orders");
+        purchaseOrder.ToTable("purchase_orders", table =>
+            table.HasCheckConstraint("ck_purchase_orders_quantity_positive", "quantity > 0"));
         purchaseOrder.HasKey(entity => entity.Id);
         purchaseOrder.Property(entity => entity.Id).HasColumnName("id").ValueGeneratedNever();
         purchaseOrder.Property(entity => entity.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();

@@ -53,7 +53,9 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
     {
         var client = CreateAuthenticatedClient("reader-only", "orders:read");
 
-        var response = await client.PostAsJsonAsync("/orders", new { customerId = "reader-only", amount = 10m, currency = "BRL" });
+        var response = await client.PostAsJsonAsync(
+            "/orders",
+            new { customerId = "reader-only", items = new[] { new { sku = "SKU-BOOK-002", quantity = 1 } } });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -75,7 +77,13 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
 
         var createResponse = await client.PostAsJsonAsync(
             "/orders",
-            new { customerId = "customer-http-1", amount = 49.90m, currency = "BRL" },
+            new
+            {
+                customerId = "customer-http-1",
+                amount = 0.01m,
+                currency = "USD",
+                items = new[] { new { sku = "SKU-BOOK-002", quantity = 1 } }
+            },
             SerializerOptions);
 
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
@@ -84,7 +92,8 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
         var created = await createResponse.Content.ReadFromJsonAsync<JsonElement>(SerializerOptions);
         var orderId = created.GetProperty("id").GetGuid();
         Assert.Equal("customer-http-1", created.GetProperty("customerId").GetString());
-        Assert.Equal(49.90m, created.GetProperty("amount").GetDecimal());
+        Assert.Equal(69.80m, created.GetProperty("amount").GetDecimal());
+        Assert.Equal("BRL", created.GetProperty("currency").GetString());
 
         var getResponse = await client.GetAsync($"/orders/{orderId}");
         Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
@@ -98,11 +107,11 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
         var client = CreateAuthenticatedClient("customer-http-idempotency", "orders:write");
         var key = $"http-idempotency-{Guid.NewGuid():N}";
 
-        using var firstRequest = CreateOrderRequest(key, 49.90m);
+        using var firstRequest = CreateOrderRequest(key, 1);
         var firstResponse = await client.SendAsync(firstRequest);
-        using var replayRequest = CreateOrderRequest(key, 49.90m);
+        using var replayRequest = CreateOrderRequest(key, 1);
         var replayResponse = await client.SendAsync(replayRequest);
-        using var conflictRequest = CreateOrderRequest(key, 59.90m);
+        using var conflictRequest = CreateOrderRequest(key, 2);
         var conflictResponse = await client.SendAsync(conflictRequest);
 
         Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
@@ -120,8 +129,8 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
     {
         var client = CreateAuthenticatedClient("customer-http-concurrent", "orders:write");
         var key = $"http-concurrent-{Guid.NewGuid():N}";
-        using var firstRequest = CreateOrderRequest(key, 79.90m);
-        using var secondRequest = CreateOrderRequest(key, 79.90m);
+        using var firstRequest = CreateOrderRequest(key, 1);
+        using var secondRequest = CreateOrderRequest(key, 1);
 
         var responses = await Task.WhenAll(
             client.SendAsync(firstRequest),
@@ -141,7 +150,7 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
         var owner = CreateAuthenticatedClient("customer-http-owner", "orders:write", "orders:read");
         var createResponse = await owner.PostAsJsonAsync(
             "/orders",
-            new { customerId = "customer-http-owner", amount = 20m, currency = "BRL" },
+            new { customerId = "customer-http-owner", items = new[] { new { sku = "SKU-BOOK-002", quantity = 1 } } },
             SerializerOptions);
         var created = await createResponse.Content.ReadFromJsonAsync<JsonElement>(SerializerOptions);
         var orderId = created.GetProperty("id").GetGuid();
@@ -164,6 +173,19 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
     }
 
     [Fact]
+    public async Task AmountOnlyCheckoutIsRejected()
+    {
+        var client = CreateAuthenticatedClient("customer-http-legacy", "orders:write");
+
+        var response = await client.PostAsJsonAsync(
+            "/orders",
+            new { customerId = "customer-http-legacy", amount = 49.90m, currency = "BRL" },
+            SerializerOptions);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task EveryResponseCarriesTheInstanceIdHeaderRegardlessOfOutcome()
     {
         var client = _factory.CreateClient();
@@ -173,12 +195,12 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
         Assert.True(response.Headers.Contains("X-Instance-ID"));
     }
 
-    private static HttpRequestMessage CreateOrderRequest(string idempotencyKey, decimal amount)
+    private static HttpRequestMessage CreateOrderRequest(string idempotencyKey, int quantity)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/orders")
         {
             Content = JsonContent.Create(
-                new { customerId = "ignored-for-non-admin", amount, currency = "BRL" },
+                new { customerId = "ignored-for-non-admin", items = new[] { new { sku = "SKU-BOOK-002", quantity } } },
                 options: SerializerOptions)
         };
         request.Headers.Add("Idempotency-Key", idempotencyKey);

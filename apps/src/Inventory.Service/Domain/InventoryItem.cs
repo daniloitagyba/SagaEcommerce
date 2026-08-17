@@ -17,6 +17,9 @@ public sealed class InventoryItem
 
     public static InventoryItem Create(string sku, int availableQuantity, DateTimeOffset now)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sku);
+        ArgumentOutOfRangeException.ThrowIfNegative(availableQuantity);
+
         return new InventoryItem
         {
             Sku = sku,
@@ -28,7 +31,7 @@ public sealed class InventoryItem
 
     public bool TryReserve(int quantity, DateTimeOffset now)
     {
-        if (AvailableQuantity < quantity)
+        if (quantity <= 0 || AvailableQuantity < quantity)
         {
             return false;
         }
@@ -42,7 +45,7 @@ public sealed class InventoryItem
     /// <summary>Turns a temporary hold into a permanent deduction - the saga's "everything downstream succeeded" outcome.</summary>
     public bool TryCommit(int quantity, DateTimeOffset now)
     {
-        if (ReservedQuantity < quantity)
+        if (quantity <= 0 || ReservedQuantity < quantity)
         {
             return false;
         }
@@ -57,10 +60,7 @@ public sealed class InventoryItem
     /// </summary>
     public void Restock(int quantity, DateTimeOffset now)
     {
-        if (quantity <= 0)
-        {
-            return;
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quantity);
 
         AvailableQuantity += quantity;
         UpdatedAt = now;
@@ -69,7 +69,7 @@ public sealed class InventoryItem
     /// <summary>The saga's compensating transaction: gives held stock back when a downstream step (payment) fails.</summary>
     public bool TryRelease(int quantity, DateTimeOffset now)
     {
-        if (ReservedQuantity < quantity)
+        if (quantity <= 0 || ReservedQuantity < quantity)
         {
             return false;
         }

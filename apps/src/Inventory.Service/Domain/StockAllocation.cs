@@ -22,8 +22,14 @@ public sealed class WarehouseStock
 
     public bool NeedsReplenishment => AvailableQuantity <= ReorderPoint;
 
-    public static WarehouseStock Create(string sku, string warehouseCode, int available, int reorderPoint, DateTimeOffset now) =>
-        new()
+    public static WarehouseStock Create(string sku, string warehouseCode, int available, int reorderPoint, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sku);
+        ArgumentException.ThrowIfNullOrWhiteSpace(warehouseCode);
+        ArgumentOutOfRangeException.ThrowIfNegative(available);
+        ArgumentOutOfRangeException.ThrowIfNegative(reorderPoint);
+
+        return new WarehouseStock
         {
             Sku = sku,
             WarehouseCode = warehouseCode,
@@ -32,6 +38,7 @@ public sealed class WarehouseStock
             ReorderPoint = reorderPoint,
             UpdatedAt = now
         };
+    }
 
     public bool TryReserve(int quantity, DateTimeOffset now)
     {
@@ -73,10 +80,7 @@ public sealed class WarehouseStock
 
     public void Restock(int quantity, DateTimeOffset now)
     {
-        if (quantity <= 0)
-        {
-            return;
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quantity);
 
         AvailableQuantity += quantity;
         UpdatedAt = now;
@@ -105,8 +109,14 @@ public sealed class ReservationAllocation
 
     public DateTimeOffset AllocatedAt { get; private set; }
 
-    public static ReservationAllocation Create(Guid reservationId, string sku, string warehouseCode, int quantity, DateTimeOffset now) =>
-        new()
+    public static ReservationAllocation Create(Guid reservationId, string sku, string warehouseCode, int quantity, DateTimeOffset now)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(reservationId, Guid.Empty);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sku);
+        ArgumentException.ThrowIfNullOrWhiteSpace(warehouseCode);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quantity);
+
+        return new ReservationAllocation
         {
             Id = Guid.NewGuid(),
             ReservationId = reservationId,
@@ -115,6 +125,7 @@ public sealed class ReservationAllocation
             Quantity = quantity,
             AllocatedAt = now
         };
+    }
 }
 
 /// <summary>Decides which warehouses fulfil a reservation, preferring the fewest warehouses possible.</summary>

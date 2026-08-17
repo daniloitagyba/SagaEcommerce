@@ -20,8 +20,15 @@ public sealed class Backorder
     public DateTimeOffset RequestedAt { get; private set; }
 
     public static Backorder Create(
-        Guid reservationId, Guid orderId, string sku, int quantity, string correlationId, DateTimeOffset now) =>
-        new()
+        Guid reservationId, Guid orderId, string sku, int quantity, string correlationId, DateTimeOffset now)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(reservationId, Guid.Empty);
+        ArgumentOutOfRangeException.ThrowIfEqual(orderId, Guid.Empty);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sku);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quantity);
+        ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
+
+        return new Backorder
         {
             ReservationId = reservationId,
             OrderId = orderId,
@@ -30,4 +37,5 @@ public sealed class Backorder
             CorrelationId = correlationId,
             RequestedAt = now
         };
+    }
 }

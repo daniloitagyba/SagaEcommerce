@@ -33,8 +33,10 @@ public sealed class OrdersApiConsumerTests
             .WithJsonBody(new
             {
                 customerId = "contract-test-customer",
-                amount = 49.90,
-                currency = "BRL"
+                items = new[]
+                {
+                    new { sku = "SKU-BOOK-002", quantity = 1 }
+                }
             })
             .WillRespond()
             .WithStatus(HttpStatusCode.Created)
@@ -58,7 +60,14 @@ public sealed class OrdersApiConsumerTests
 
             var response = await client.PostAsJsonAsync(
                 "/orders",
-                new { customerId = "contract-test-customer", amount = 49.90m, currency = "BRL" });
+                new
+                {
+                    customerId = "contract-test-customer",
+                    items = new[]
+                    {
+                        new { sku = "SKU-BOOK-002", quantity = 1 }
+                    }
+                });
 
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         });

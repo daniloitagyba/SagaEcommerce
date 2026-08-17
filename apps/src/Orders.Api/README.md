@@ -6,11 +6,11 @@ The REST + gRPC entry point for placing, tracking, and managing orders. Prices e
 
 ## Responsibilities
 
-- **Checkout** — `POST /orders` accepts either the real line-item shape (SKU + quantity, priced server-side with promotions, coupons, and loyalty tiers via `Orders.Application`/`Orders.Domain`) or the legacy Milestone 7 amount-only shape, kept working for k6/Pact/README backward compatibility.
+- **Checkout** — `POST /orders` accepts SKU and quantity, pricing them server-side with promotions, coupons, and loyalty tiers via `Orders.Application`/`Orders.Domain`.
 - **Durable idempotency** — an `Idempotency-Key` is scoped by customer and bound to a normalized request hash in PostgreSQL. Lookup happens before pricing; the key, order, coupon reservation, and Outbox row commit together. Reusing the key with another payload returns `409 Conflict`.
 - **Fulfilment** — `POST /orders/{id}/fulfillment` advances the order lifecycle (`Created → Confirmed → Picking → Shipped → Delivered`) through a single compare-and-set that also queues the implied settlement command (capture on `Shipped`, void on `Cancelled`).
 - **Returns** — partial or full returns, refunding each line's actually-charged total (post-discount), never list price.
-- **Reads** — order summaries (CQRS read model) and full history (event-sourced fold), plus a gRPC `OrderQuery` service demonstrating HTTP/2's per-request load balancing under Linkerd.
+- **Reads** — order summaries from the CQRS read model and full history from the event store.
 
 ## Talks to
 
@@ -23,7 +23,7 @@ The REST + gRPC entry point for placing, tracking, and managing orders. Prices e
 
 ## Run it
 
-Part of the Compose stack — see the [repo root README](../../../README.md#quickstart-docker-compose). Two replicas (`orders-api-1`, `orders-api-2`) sit behind the `nginx` gateway on `127.0.0.1:8088`; internally it's REST on `:8080` and gRPC on `:8081`.
+Part of the Compose stack — see the [repo root README](../../../README.md#quickstart-docker-compose). Two replicas (`orders-api-1`, `orders-api-2`) sit behind the `nginx` gateway on `127.0.0.1:8088` and serve REST on `:8080`.
 
 ## See also
 

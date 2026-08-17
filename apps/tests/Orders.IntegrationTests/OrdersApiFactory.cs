@@ -1,11 +1,13 @@
 extern alias OrdersApi;
 
+using BuildingBlocks;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Orders.Infrastructure.Data;
 using Testcontainers.PostgreSql;
 using Testcontainers.Redis;
@@ -52,8 +54,21 @@ public sealed class OrdersApiFactory : WebApplicationFactory<OrdersApiProgram>, 
 
         builder.ConfigureTestServices(services =>
         {
+            services.RemoveAll<ICatalogClient>();
+            services.AddSingleton<ICatalogClient, TestCatalogClient>();
             services.AddAuthentication(TestAuthHandler.SchemeName)
                 .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.SchemeName, _ => { });
         });
+    }
+
+    private sealed class TestCatalogClient : ICatalogClient
+    {
+        public Task<CatalogProductSnapshot?> FindBySkuAsync(string sku, CancellationToken cancellationToken) =>
+            Task.FromResult<CatalogProductSnapshot?>(sku switch
+            {
+                "SKU-BOOK-002" => new CatalogProductSnapshot("book-002", "Test book", 49.90m, "BRL", sku, "books"),
+                "SKU-ELEC-001" => new CatalogProductSnapshot("elec-001", "Test electronics", 1_500m, "BRL", sku, "electronics"),
+                _ => null
+            });
     }
 }

@@ -53,6 +53,11 @@ public sealed class StockEscrow
             throw new ArgumentOutOfRangeException(nameof(preferredBucket));
         }
 
+        if (quantity <= 0)
+        {
+            return ReservationPlan.Unfulfillable;
+        }
+
         var candidates = new List<StockAllocator.Candidate>(BucketCount);
         for (var i = 0; i < BucketCount; i++)
         {
@@ -80,7 +85,7 @@ public sealed class StockEscrow
         var buckets = _buckets.ToArray();
         foreach (var line in lines)
         {
-            if (line.Quantity < 0 || line.Bucket < 0 || line.Bucket >= buckets.Length || buckets[line.Bucket] < line.Quantity)
+            if (line.Quantity <= 0 || line.Bucket < 0 || line.Bucket >= buckets.Length || buckets[line.Bucket] < line.Quantity)
             {
                 throw new InvalidOperationException($"Bucket {line.Bucket} cannot supply {line.Quantity} - only {(line.Bucket >= 0 && line.Bucket < buckets.Length ? buckets[line.Bucket] : 0)} available.");
             }
@@ -97,7 +102,7 @@ public sealed class StockEscrow
         var buckets = _buckets.ToArray();
         foreach (var line in lines)
         {
-            if (line.Bucket < 0 || line.Bucket >= buckets.Length)
+            if (line.Quantity <= 0 || line.Bucket < 0 || line.Bucket >= buckets.Length)
             {
                 throw new ArgumentOutOfRangeException(nameof(lines));
             }

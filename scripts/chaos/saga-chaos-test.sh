@@ -38,12 +38,16 @@ printf 'Creating %s orders while payments-service is down\n' "$order_count"
 order_ids_file="$test_directory/order-ids.txt"
 : >"$order_ids_file"
 for attempt in $(seq 1 "$order_count"); do
-  amount=$(( (attempt % 2 == 0) ? 1500 : 50 ))
+  if (( attempt % 2 == 0 )); then
+    item='{"sku":"SKU-ELEC-001","quantity":1}'
+  else
+    item='{"sku":"SKU-BOOK-002","quantity":1}'
+  fi
   order_id=$(curl --silent --request POST "http://$service_ip/orders" \
     --header 'Content-Type: application/json' \
     --header "$auth_header" \
     --header "X-Correlation-ID: saga-chaos-$run_id-$attempt" \
-    --data "{\"customerId\":\"saga-chaos-customer\",\"amount\":${amount}.00,\"currency\":\"BRL\"}" |
+    --data "{\"customerId\":\"saga-chaos-customer\",\"items\":[${item}]}" |
     jq --raw-output '.id')
   echo "$order_id" >>"$order_ids_file"
 done

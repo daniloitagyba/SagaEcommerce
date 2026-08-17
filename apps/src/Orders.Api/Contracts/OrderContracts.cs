@@ -3,12 +3,10 @@ namespace Orders.Api.Contracts;
 /// <summary>A requested order line; price is resolved server-side, not supplied by the caller.</summary>
 public sealed record CreateOrderItemRequest(string? Sku, int Quantity);
 
-/// <summary>A request to create an order, accepting both the items-based and legacy amount-based shapes.</summary>
+/// <summary>Creates an order from requested items.</summary>
 public sealed record CreateOrderRequest(
     string? CustomerId,
-    decimal Amount,
-    string? Currency,
-    IReadOnlyList<CreateOrderItemRequest>? Items = null,
+    IReadOnlyList<CreateOrderItemRequest>? Items,
     string? CouponCode = null,
     /// <summary>"Card" or "Pix"; defaults to Pix.</summary>
     string? PaymentMethod = null,
@@ -28,7 +26,7 @@ public sealed record OrderLineResponse(
     decimal LineDiscount,
     decimal LineTotal);
 
-/// <summary>The pricing breakdown behind the order total; null on an amount-only order.</summary>
+/// <summary>Represents order pricing.</summary>
 public sealed record OrderPricingResponse(
     decimal Subtotal,
     decimal DiscountTotal,

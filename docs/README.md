@@ -145,4 +145,5 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 - [Milestone 25: CI Pipeline and Supply Chain Security](cicd/milestone-25-ci-pipeline.md)
 - [Milestone 29: Contract Testing with Pact](cicd/milestone-29-contract-testing.md)
 - [Milestone 30: gRPC and Mesh Traffic Shadowing](cicd/milestone-30-grpc-and-mesh-load-balancing.md)
+- [ADR 002: Retire the Unconsumed OrderQuery gRPC Surface](architecture/adr-002-retire-unconsumed-order-query-grpc.md)
 - [Milestone 59: Quality and Security Guardrails](cicd/milestone-59-quality-security-guardrails.md)

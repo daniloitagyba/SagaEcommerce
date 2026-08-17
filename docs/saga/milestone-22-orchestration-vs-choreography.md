@@ -47,12 +47,12 @@ Once `payments-service` was scaled back up, its choreographed `OrderCreatedConsu
 
 ```bash
 # Normal case
-curl -X POST http://<orders-api>/orders -d '{"customerId":"demo","amount":49.90,"currency":"BRL"}'
+curl -X POST http://<orders-api>/orders -d '{"customerId":"demo","items":[{"sku":"SKU-BOOK-002","quantity":1}]}'
 kubectl logs -n orders-lab -l app.kubernetes.io/name=orders-worker | grep OrchestratedSaga
 
 # Timeout case (pause Argo CD auto-sync first - see "what didn't work" above)
 kubectl scale deployment payments-service -n orders-lab --replicas=0
-curl -X POST http://<orders-api>/orders -d '{"customerId":"demo","amount":49.90,"currency":"BRL"}'
+curl -X POST http://<orders-api>/orders -d '{"customerId":"demo","items":[{"sku":"SKU-BOOK-002","quantity":1}]}'
 # wait >5s, then:
 kubectl logs -n orders-lab -l app.kubernetes.io/name=orders-worker | grep OrchestratedSagaTimedOut
 kubectl scale deployment payments-service -n orders-lab --replicas=1

@@ -163,7 +163,10 @@ namespace Inventory.Service.Data.Migrations
                     b.HasIndex("Sku", "RequestedAt")
                         .HasDatabaseName("ix_backorders_sku_requested_at");
 
-                    b.ToTable("backorders", (string)null);
+                    b.ToTable("backorders", (string)null, t =>
+                        {
+                            t.HasCheckConstraint("ck_backorders_quantity_positive", "quantity > 0");
+                        });
                 });
 
             modelBuilder.Entity("Inventory.Service.Domain.InventoryItem", b =>
@@ -187,7 +190,11 @@ namespace Inventory.Service.Data.Migrations
 
                     b.HasKey("Sku");
 
-                    b.ToTable("inventory_items", (string)null);
+                    b.ToTable("inventory_items", (string)null, t =>
+                        {
+                            t.HasCheckConstraint("ck_inventory_items_available_quantity_non_negative", "available_quantity >= 0");
+                            t.HasCheckConstraint("ck_inventory_items_reserved_quantity_non_negative", "reserved_quantity >= 0");
+                        });
                 });
 
             modelBuilder.Entity("Inventory.Service.Domain.InventoryReservationLedgerEntry", b =>
@@ -223,7 +230,10 @@ namespace Inventory.Service.Data.Migrations
                     b.HasIndex("OrderId", "Sku")
                         .HasDatabaseName("ix_inventory_reservation_ledger_order_sku");
 
-                    b.ToTable("inventory_reservation_ledger", (string)null);
+                    b.ToTable("inventory_reservation_ledger", (string)null, t =>
+                        {
+                            t.HasCheckConstraint("ck_inventory_reservation_ledger_quantity_positive", "quantity > 0");
+                        });
                 });
 
             modelBuilder.Entity("Inventory.Service.Domain.PurchaseOrder", b =>
@@ -273,7 +283,10 @@ namespace Inventory.Service.Data.Migrations
                     b.HasIndex("State", "RequestedAt")
                         .HasDatabaseName("ix_purchase_orders_state_requested_at");
 
-                    b.ToTable("purchase_orders", (string)null);
+                    b.ToTable("purchase_orders", (string)null, t =>
+                        {
+                            t.HasCheckConstraint("ck_purchase_orders_quantity_positive", "quantity > 0");
+                        });
                 });
 
             modelBuilder.Entity("Inventory.Service.Domain.ReservationAllocation", b =>
@@ -311,7 +324,10 @@ namespace Inventory.Service.Data.Migrations
                     b.HasIndex("ReservationId")
                         .HasDatabaseName("ix_reservation_allocations_reservation");
 
-                    b.ToTable("reservation_allocations", (string)null);
+                    b.ToTable("reservation_allocations", (string)null, t =>
+                        {
+                            t.HasCheckConstraint("ck_reservation_allocations_quantity_positive", "quantity > 0");
+                        });
                 });
 
             modelBuilder.Entity("Inventory.Service.Domain.WarehouseStock", b =>
@@ -344,7 +360,12 @@ namespace Inventory.Service.Data.Migrations
 
                     b.HasKey("Sku", "WarehouseCode");
 
-                    b.ToTable("warehouse_stock", (string)null);
+                    b.ToTable("warehouse_stock", (string)null, t =>
+                        {
+                            t.HasCheckConstraint("ck_warehouse_stock_available_quantity_non_negative", "available_quantity >= 0");
+                            t.HasCheckConstraint("ck_warehouse_stock_reserved_quantity_non_negative", "reserved_quantity >= 0");
+                            t.HasCheckConstraint("ck_warehouse_stock_reorder_point_non_negative", "reorder_point >= 0");
+                        });
                 });
 #pragma warning restore 612, 618
         }

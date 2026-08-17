@@ -2,8 +2,10 @@ using BuildingBlocks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Orders.Application.Ports;
 using Orders.Domain;
 using Orders.Infrastructure.Data;
+using Orders.Infrastructure.Persistence;
 using Orders.Worker;
 using Polly.Registry;
 
@@ -14,6 +16,7 @@ public sealed class OrderStatusStoreTransactionTests(PostgresFixture fixture) : 
 {
     private OrdersDbContext _dbContext = null!;
     private NpgsqlDataSource _dataSource = null!;
+    private ResiliencePipelineProvider<string> _pipelineProvider = null!;
     private OrderStatusStore _store = null!;
 
     public async Task InitializeAsync()
@@ -26,7 +29,7 @@ public sealed class OrderStatusStoreTransactionTests(PostgresFixture fixture) : 
         await _dbContext.Database.MigrateAsync();
 
         _dataSource = NpgsqlDataSource.Create(connectionString);
-        var pipelineProvider = new ServiceCollection()
+        _pipelineProvider = new ServiceCollection()
             .AddOrdersResilience()
             .BuildServiceProvider()
             .GetRequiredService<ResiliencePipelineProvider<string>>();
@@ -36,7 +39,7 @@ public sealed class OrderStatusStoreTransactionTests(PostgresFixture fixture) : 
             new PromotionCampaignStore(),
             new PaymentSettlementRequester(),
             new CustomerTierStore(),
-            pipelineProvider);
+            _pipelineProvider);
     }
 
     public async Task DisposeAsync()
@@ -157,6 +160,92 @@ public sealed class OrderStatusStoreTransactionTests(PostgresFixture fixture) : 
         Assert.Equal(OrderStatuses.Cancelled, await CurrentStatusAsync(order.Id));
         Assert.Equal(0m, customer.LifetimeSpend);
         Assert.Equal(0, customer.CompletedOrderCount);
+    }
+
+    [Fact]
+    public async Task ApiAndSagaConfirmationHaveEquivalentStatusAndLoyaltyEffects()
+    {
+        const decimal amount = 1_250m;
+        var apiOrder = Order.Create("api-transition-customer", amount, "BRL", DateTimeOffset.UtcNow);
+        var sagaOrder = Order.Create("saga-transition-customer", amount, "BRL", DateTimeOffset.UtcNow);
+        await _dbContext.Customers.AddRangeAsync(
+            Customer.Create(apiOrder.CustomerId, DateTimeOffset.UtcNow.AddDays(-30)),
+            Customer.Create(sagaOrder.CustomerId, DateTimeOffset.UtcNow.AddDays(-30)));
+        await _dbContext.Orders.AddRangeAsync(apiOrder, sagaOrder);
+        await _dbContext.SaveChangesAsync();
+
+        var apiRepository = new EfOrderStatusRepository(new OrderTransitionExecutor(_dataSource, _pipelineProvider));
+        var apiResult = await apiRepository.TryTransitionAsync(
+            apiOrder.Id,
+            OrderStatuses.Confirmed,
+            OrderStatuses.PredecessorsOf(OrderStatuses.Confirmed),
+            OrderStatuses.SettlementActionFor(OrderStatuses.Confirmed),
+            "api-transition",
+            CancellationToken.None);
+        var sagaResult = await _store.TryTransitionAsync(
+            sagaOrder.Id,
+            OrderStatuses.Confirmed,
+            "saga-transition",
+            CancellationToken.None);
+
+        Assert.Equal(OrderTransitionOutcome.Advanced, apiResult.Outcome);
+        Assert.Equal(StatusTransitionResult.Transitioned, sagaResult);
+        Assert.Equal(OrderStatuses.Confirmed, await CurrentStatusAsync(apiOrder.Id));
+        Assert.Equal(OrderStatuses.Confirmed, await CurrentStatusAsync(sagaOrder.Id));
+
+        _dbContext.ChangeTracker.Clear();
+        var customers = await _dbContext.Customers.AsNoTracking()
+            .Where(customer => customer.Id == apiOrder.CustomerId || customer.Id == sagaOrder.CustomerId)
+            .OrderBy(customer => customer.Id)
+            .ToListAsync();
+        Assert.Equal(2, customers.Count);
+        Assert.All(customers, customer =>
+        {
+            Assert.Equal(amount, customer.LifetimeSpend);
+            Assert.Equal(1, customer.CompletedOrderCount);
+            Assert.Equal(CustomerTiers.Silver, customer.Tier);
+        });
+
+        var events = await _dbContext.OutboxMessages.AsNoTracking()
+            .Where(message => message.EventType == nameof(OrderStatusChanged))
+            .ToListAsync();
+        Assert.Equal(2, events.Count);
+        Assert.Contains(events, message => message.Payload.Contains(apiOrder.Id.ToString(), StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(events, message => message.Payload.Contains(sagaOrder.Id.ToString(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ApiAndSagaShippingHaveEquivalentStatusAndCaptureEffects()
+    {
+        var apiOrder = await SeedPickingCardOrderAsync();
+        var sagaOrder = await SeedPickingCardOrderAsync();
+        var apiRepository = new EfOrderStatusRepository(new OrderTransitionExecutor(_dataSource, _pipelineProvider));
+
+        var apiResult = await apiRepository.TryTransitionAsync(
+            apiOrder,
+            OrderStatuses.Shipped,
+            OrderStatuses.PredecessorsOf(OrderStatuses.Shipped),
+            OrderStatuses.SettlementActionFor(OrderStatuses.Shipped),
+            "api-shipping",
+            CancellationToken.None);
+        var sagaResult = await _store.TryTransitionAsync(
+            sagaOrder,
+            OrderStatuses.Shipped,
+            "saga-shipping",
+            CancellationToken.None);
+
+        Assert.Equal(OrderTransitionOutcome.Advanced, apiResult.Outcome);
+        Assert.Equal(StatusTransitionResult.Transitioned, sagaResult);
+        Assert.Equal(OrderStatuses.Shipped, await CurrentStatusAsync(apiOrder));
+        Assert.Equal(OrderStatuses.Shipped, await CurrentStatusAsync(sagaOrder));
+
+        _dbContext.ChangeTracker.Clear();
+        var messages = await _dbContext.OutboxMessages.AsNoTracking().ToListAsync();
+        Assert.Equal(4, messages.Count);
+        Assert.Equal(2, messages.Count(message => message.EventType == nameof(OrderStatusChanged)));
+        Assert.Equal(2, messages.Count(message => message.EventType == nameof(PaymentCaptureRequested)));
+        Assert.Contains(messages, message => message.Payload.Contains(apiOrder.ToString(), StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(messages, message => message.Payload.Contains(sagaOrder.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<Guid> SeedPickingCardOrderAsync()

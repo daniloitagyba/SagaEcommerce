@@ -10,6 +10,8 @@ using Orders.Infrastructure.Caching;
 using Orders.Infrastructure.Data;
 using Orders.Infrastructure.Messaging;
 using Orders.Infrastructure.RateLimiting;
+using Orders.Infrastructure.Persistence;
+using Npgsql;
 
 namespace Orders.Infrastructure;
 
@@ -45,6 +47,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddDbContext<OrdersDbContext>((serviceProvider, options) =>
             options.UseNpgsql(connectionString)
                 .AddNPlusOneDetection(serviceProvider.GetRequiredService<ILoggerFactory>()));
+        services.AddSingleton(NpgsqlDataSource.Create(connectionString));
+        services.AddSingleton<OrderTransitionExecutor>();
         services.AddOrdersSchemaRegistry(configuration);
 
         services.AddSingleton<IProducer<string, byte[]>>(serviceProvider =>

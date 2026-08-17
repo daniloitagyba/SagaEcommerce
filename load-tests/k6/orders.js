@@ -272,8 +272,7 @@ export function setup() {
   for (let index = 0; index < CACHE_SEED_POOL_SIZE; index += 1) {
     const payload = JSON.stringify({
       customerId: `cache-seed-customer-${index}`,
-      amount: 19.9,
-      currency: 'BRL',
+      items: [{ sku: 'SKU-BOOK-002', quantity: 1 }],
     });
     const response = http.post(`${baseUrl}/orders`, payload, {
       headers: {
@@ -322,13 +321,13 @@ export default async function (data) {
 function sagaWorkload() {
   const iterationId = `${runId}-${exec.vu.idInTest}-${exec.scenario.iterationInTest}`;
   const shouldDecline = exec.scenario.iterationInTest % 2 === 1;
-  const amount = shouldDecline ? SAGA_DECLINE_THRESHOLD + 500 : SAGA_DECLINE_THRESHOLD - 500;
   const expectedStatus = shouldDecline ? 'Cancelled' : 'Confirmed';
 
   const payload = JSON.stringify({
     customerId: `saga-customer-${iterationId}`,
-    amount,
-    currency: 'BRL',
+    items: shouldDecline
+      ? [{ sku: 'SKU-ELEC-001', quantity: 1 }]
+      : [{ sku: 'SKU-BOOK-002', quantity: 1 }],
   });
 
   const createResponse = http.post(`${baseUrl}/orders`, payload, {
@@ -398,8 +397,7 @@ function pickTwoDistinctPods() {
 function createOrderDirect(pod, label, iterationId) {
   const payload = JSON.stringify({
     customerId: `hedged-${label}-${iterationId}`,
-    amount: 9.9,
-    currency: 'BRL',
+    items: [{ sku: 'SKU-BOOK-002', quantity: 1 }],
   });
   const response = http.post(`http://${pod}:8080/orders`, payload, {
     headers: {
@@ -486,8 +484,7 @@ function overloadWorkload() {
   const iterationId = `${runId}-${exec.vu.idInTest}-${exec.scenario.iterationInTest}`;
   const payload = JSON.stringify({
     customerId: `overload-customer-${iterationId}`,
-    amount: 9.9,
-    currency: 'BRL',
+    items: [{ sku: 'SKU-BOOK-002', quantity: 1 }],
   });
 
   const response = http.post(`${baseUrl}/orders`, payload, {
@@ -554,8 +551,7 @@ function ordersWorkload() {
   const correlationId = `k6-${iterationId}`;
   const payload = JSON.stringify({
     customerId: `performance-customer-${iterationId}`,
-    amount: 49.9,
-    currency: 'BRL',
+    items: [{ sku: 'SKU-BOOK-002', quantity: 1 }],
   });
 
   const createResponse = http.post(`${baseUrl}/orders`, payload, {

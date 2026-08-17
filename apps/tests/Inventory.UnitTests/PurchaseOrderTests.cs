@@ -29,4 +29,13 @@ public class PurchaseOrderTests
         Assert.False(purchaseOrder.TryReceive(Now.AddMinutes(2)));
         Assert.Equal(receivedAt, purchaseOrder.ReceivedAt);
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void CreateRejectsANonPositiveQuantity(int quantity)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            PurchaseOrder.Create("SKU-A", "WH-SP", quantity, "correlation-1", Now));
+    }
 }

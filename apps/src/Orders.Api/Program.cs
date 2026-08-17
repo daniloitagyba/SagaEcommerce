@@ -2,12 +2,10 @@ using BuildingBlocks;
 using BuildingBlocks.WebAuthentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Orders.Api.Authorization;
 using Orders.Api.Endpoints;
-using Orders.Api.Grpc;
 using Orders.Api.Middleware;
 using Orders.Api.RateLimiting;
 using Orders.Application;
@@ -19,20 +17,7 @@ using Orders.Infrastructure.Data;
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
-const int RestPort = 8080;
-const int GrpcPort = 8081;
-builder.WebHost.ConfigureKestrel(options =>
-{
-    options.Limits.MaxRequestBodySize = 5 * 1024 * 1024;
-    options.ListenAnyIP(RestPort, listenOptions =>
-    {
-        listenOptions.Protocols = HttpProtocols.Http1;
-    });
-    options.ListenAnyIP(GrpcPort, listenOptions =>
-    {
-        listenOptions.Protocols = HttpProtocols.Http2;
-    });
-});
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 5 * 1024 * 1024);
 
 builder.Host.UseDefaultServiceProvider(options =>
 {
@@ -91,7 +76,6 @@ builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, 
 builder.Services.AddOrdersApplication();
 builder.Services.AddOrdersInfrastructure(builder.Configuration, connectionString, instanceId);
 builder.Services.AddOrdersRateLimiting(builder.Configuration);
-builder.Services.AddGrpc();
 
 builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "orders-api");
 builder.Services.AddAuthorizationBuilder()
@@ -148,7 +132,6 @@ orders.MapCancellationEndpoints();
 orders.MapReturnEndpoints();
 orders.MapOrderSummaryEndpoints();
 orders.MapOrderHistoryEndpoints();
-app.MapGrpcService<OrderQueryGrpcService>();
 
 await app.RunAsync();
 

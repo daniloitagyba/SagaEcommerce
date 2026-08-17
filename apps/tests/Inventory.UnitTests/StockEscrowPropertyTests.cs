@@ -99,4 +99,14 @@ public class StockEscrowPropertyTests
         Assert.Equal(0, escrow.Total);
         Assert.False(escrow.TryReserve(0, 1).Fulfillable);
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NonPositiveReservationsAreUnfulfillable(int quantity)
+    {
+        var escrow = StockEscrow.Split(10, 2);
+
+        Assert.False(escrow.TryReserve(0, quantity).Fulfillable);
+    }
 }

@@ -22,9 +22,9 @@ The saga, outbox, inbox, schema registry and compensation work were all real. Wh
 
 `SagaSkuMapper` is deleted. The orchestrated saga now reserves the SKU the customer actually ordered.
 
-### Expand/contract, not a breaking change
+### Public contract retirement
 
-The amount-only shape (`{customerId, amount, currency}`) still works. The k6 load scripts, smoke tests, Pact contracts and the README quickstart all post it, and breaking them all simultaneously would have made a pricing regression indistinguishable from a migration mistake. Both shapes run side by side; `items` wins when present. An amount-only order has no lines and reports `pricing: null` rather than a breakdown full of zeroes - "no pricing detail" and "nothing was discounted" are different statements.
+The temporary amount-only shape was removed from the public REST contract on 2026-08-17. Load, smoke, chaos, Pact, and operational documentation now submit items. The server always resolves the total from the catalog; a request containing only a client-authored amount is rejected.
 
 ### Schema evolution, done properly
 
@@ -90,7 +90,7 @@ That last one is monotonicity, and it is the property that would catch free ship
 
 Validated on the lab server's Docker Compose stack against live Postgres, Kafka, Schema Registry, Keycloak and MongoDB.
 
-**Legacy shape still works:** `{customerId, amount: 49.90, currency}` → `201`, `pricing: null`.
+**Historical validation:** the amount-only shape returned `201` with `pricing: null`. It was retired from the public REST contract on 2026-08-17.
 
 **Line-item checkout with stacked promotions** - 2x `SKU-BOOK-001` + 1x `SKU-ELEC-001`, coupon `SAVE10`:
 

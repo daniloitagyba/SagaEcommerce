@@ -67,7 +67,7 @@ The `401` in the first case is the actual proof the mesh layer worked: Linkerd l
 # Get a token and exercise the API directly
 TOKEN=$(scripts/keycloak-get-token.sh)
 curl -X POST http://<orders-api>/orders -H "Authorization: Bearer $TOKEN" \
-  -d '{"customerId":"demo","amount":49.90,"currency":"BRL"}'
+  -d '{"customerId":"demo","items":[{"sku":"SKU-BOOK-002","quantity":1}]}'
 
 # Prove the Linkerd layer independently (needs a throwaway pod using
 # ServiceAccount "orders-worker" vs one using "default" - see

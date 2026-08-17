@@ -19,8 +19,14 @@ public sealed class InventoryReservationLedgerEntry
 
     public DateTimeOffset CommittedAt { get; private set; }
 
-    public static InventoryReservationLedgerEntry Create(Guid reservationId, Guid orderId, string sku, int quantity, DateTimeOffset now) =>
-        new()
+    public static InventoryReservationLedgerEntry Create(Guid reservationId, Guid orderId, string sku, int quantity, DateTimeOffset now)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(reservationId, Guid.Empty);
+        ArgumentOutOfRangeException.ThrowIfEqual(orderId, Guid.Empty);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sku);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quantity);
+
+        return new InventoryReservationLedgerEntry
         {
             Id = Guid.NewGuid(),
             ReservationId = reservationId,
@@ -29,7 +35,14 @@ public sealed class InventoryReservationLedgerEntry
             Quantity = quantity,
             CommittedAt = now
         };
+    }
 
     /// <summary>A restock giving some (or all) of this entry's committed quantity back.</summary>
-    public void Reduce(int quantity) => Quantity -= quantity;
+    public void Reduce(int quantity)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quantity);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(quantity, Quantity);
+
+        Quantity -= quantity;
+    }
 }

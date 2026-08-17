@@ -148,7 +148,7 @@ else
       --header 'Content-Type: application/json' \
       --header "$auth_header" \
       --header "X-Correlation-ID: chaos-outage-$run_id-$attempt" \
-      --data '{"customerId":"chaos-outage-customer","amount":9.99,"currency":"BRL"}' || echo "000")
+      --data '{"customerId":"chaos-outage-customer","items":[{"sku":"SKU-BOOK-002","quantity":1}]}' || echo "000")
     ended_ms=$(date +%s%3N)
     elapsed_ms=$((ended_ms - started_ms))
     printf 'attempt=%s status=%s elapsed_ms=%s\n' "$attempt" "$status" "$elapsed_ms" | tee -a "$outage_log"

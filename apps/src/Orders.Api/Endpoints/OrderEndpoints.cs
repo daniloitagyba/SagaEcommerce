@@ -32,8 +32,8 @@ public static class OrderEndpoints
         var customerId = httpContext.IsAdmin() ? request.CustomerId : httpContext.GetCustomerId();
         var command = new CreateOrderCommand(
             customerId,
-            request.Amount,
-            request.Currency,
+            0m,
+            null,
             correlationId,
             instanceId,
             idempotencyKey,

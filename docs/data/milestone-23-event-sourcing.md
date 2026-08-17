@@ -85,7 +85,7 @@ On first deploy, `OrderEventStoreProjector` had to replay the entire historical 
 
 ```bash
 # Create an order, let it confirm, then inspect its full history
-curl -X POST http://<orders-api>/orders -d '{"customerId":"demo","amount":77.00,"currency":"BRL"}'
+curl -X POST http://<orders-api>/orders -d '{"customerId":"demo","items":[{"sku":"SKU-BOOK-002","quantity":1}]}'
 curl http://<orders-api>/orders/<order-id>/history
 
 # Temporal query: state as it existed before confirmation

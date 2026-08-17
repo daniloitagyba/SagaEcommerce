@@ -23,8 +23,14 @@ public sealed class PurchaseOrder
 
     public DateTimeOffset? ReceivedAt { get; private set; }
 
-    public static PurchaseOrder Create(string sku, string warehouseCode, int quantity, string correlationId, DateTimeOffset now) =>
-        new()
+    public static PurchaseOrder Create(string sku, string warehouseCode, int quantity, string correlationId, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sku);
+        ArgumentException.ThrowIfNullOrWhiteSpace(warehouseCode);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quantity);
+        ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
+
+        return new PurchaseOrder
         {
             Id = Guid.NewGuid(),
             Sku = sku,
@@ -34,6 +40,7 @@ public sealed class PurchaseOrder
             CorrelationId = correlationId,
             RequestedAt = now
         };
+    }
 
     /// <summary>False if already received - the receiving sweep's claim query already excludes these, but the guard makes a redelivered claim a no-op instead of a second restock.</summary>
     public bool TryReceive(DateTimeOffset now)

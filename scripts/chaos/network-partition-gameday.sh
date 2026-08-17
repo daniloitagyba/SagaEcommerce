@@ -35,7 +35,7 @@ pre_partition_ids_file="$result_directory/pre-partition-order-ids.txt"
 for _ in $(seq 1 5); do
   order_id=$(curl --silent --request POST "$orders_url/orders" \
     --header 'Content-Type: application/json' --header "$auth_header" \
-    --data "{\"customerId\":\"partition-gameday-pre\",\"amount\":9.90,\"currency\":\"BRL\"}" |
+    --data '{"customerId":"partition-gameday-pre","items":[{"sku":"SKU-BOOK-002","quantity":1}]}' |
     jq --raw-output '.id')
   echo "$order_id" >>"$pre_partition_ids_file"
 done
@@ -54,7 +54,7 @@ during_partition_ids_file="$result_directory/during-partition-order-ids.txt"
 for _ in $(seq 1 5); do
   order_id=$(curl --silent --request POST "$orders_url/orders" \
     --header 'Content-Type: application/json' --header "$auth_header" \
-    --data "{\"customerId\":\"partition-gameday-during\",\"amount\":9.90,\"currency\":\"BRL\"}" |
+    --data '{"customerId":"partition-gameday-during","items":[{"sku":"SKU-BOOK-002","quantity":1}]}' |
     jq --raw-output '.id')
   echo "$order_id" >>"$during_partition_ids_file"
 done
@@ -122,7 +122,7 @@ printf 'orders-api ready Service endpoints 10s into the partition: %s (expected:
 create_during_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --max-time 5 --request POST "$orders_url/orders" \
   --header 'Content-Type: application/json' --header "$auth_header" \
-  --data '{"customerId":"partition-gameday-api","amount":9.90,"currency":"BRL"}' || echo "curl_failed")
+  --data '{"customerId":"partition-gameday-api","items":[{"sku":"SKU-BOOK-002","quantity":1}]}' || echo "curl_failed")
 printf 'POST /orders during the partition: %s\n' "$create_during_status"
 
 printf 'Waiting for the partition window to elapse (45s duration)...\n'
@@ -142,7 +142,7 @@ ready_endpoints_after=$(poll_ready_endpoints)
 
 create_after_id=$(curl --silent --request POST "$orders_url/orders" \
   --header 'Content-Type: application/json' --header "$auth_header" \
-  --data '{"customerId":"partition-gameday-api-recovered","amount":9.90,"currency":"BRL"}' |
+  --data '{"customerId":"partition-gameday-api-recovered","items":[{"sku":"SKU-BOOK-002","quantity":1}]}' |
   jq --raw-output '.id')
 
 printf '\n--- Experiment 2 results ---\n'

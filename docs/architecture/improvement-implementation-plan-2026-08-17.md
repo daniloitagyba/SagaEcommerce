@@ -2,8 +2,8 @@
 
 ## Status
 
-Proposed on 2026-08-17. This plan is intentionally not an implementation record.
-Each phase must be revalidated against the current branch before work starts.
+Phase 1 started on 2026-08-17. This document remains the implementation plan.
+Each remaining phase must be revalidated against the current branch before work starts.
 
 ## Goals
 
@@ -32,6 +32,13 @@ Each phase must be revalidated against the current branch before work starts.
 5. Deprecate and then remove the public amount-only checkout shape.
 6. Decide through an ADR whether the unused OrderQuery gRPC endpoint will gain a real client or be removed.
 
+### Progress
+
+- Completed: inventory quantity guards, PostgreSQL check constraints, and randomized inventory invariant coverage.
+- Completed: public checkout now accepts items only; load, chaos, contract, integration, and active operational documentation use item-based payloads.
+- Completed: ADR 002 removes the unconsumed OrderQuery gRPC endpoint and its HTTP/2 listener and Kubernetes service port.
+- Completed: an integration characterization test compares API and saga confirmation effects before transition-store consolidation.
+
 ### Acceptance
 
 - No valid command sequence creates negative inventory.
@@ -55,6 +62,11 @@ Each phase must be revalidated against the current branch before work starts.
 - API and saga paths produce equivalent effects for the same transition.
 - Compare-and-set, local state, and outbox writes remain in one transaction.
 - Adding a lifecycle state does not require synchronized edits in independent stores.
+
+### Progress
+
+- Completed: `OrderTransitionExecutor` owns compare-and-set updates, status events, promotion and coupon settlement, loyalty, payment commands, and API cancellation compensation in one transaction.
+- Completed: API and Worker route transitions through the shared executor; the Worker keeps a compatibility adapter for saga-owned ambient transactions.
 
 ## Phase 3: DDD and SOLID boundaries
 

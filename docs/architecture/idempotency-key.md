@@ -52,5 +52,5 @@ curl -X POST http://<orders-api>/orders \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: <client-generated-unique-key>" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"customerId":"...","amount":10.00,"currency":"BRL"}'
+  -d '{"customerId":"...","items":[{"sku":"SKU-BOOK-002","quantity":1}]}'
 ```

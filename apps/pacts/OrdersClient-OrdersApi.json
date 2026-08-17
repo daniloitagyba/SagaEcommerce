@@ -43,9 +43,13 @@
       ],
       "request": {
         "body": {
-          "amount": 49.9,
-          "currency": "BRL",
-          "customerId": "contract-test-customer"
+          "customerId": "contract-test-customer",
+          "items": [
+            {
+              "quantity": 1,
+              "sku": "SKU-BOOK-002"
+            }
+          ]
         },
         "headers": {
           "Authorization": "Bearer contract-test-token",

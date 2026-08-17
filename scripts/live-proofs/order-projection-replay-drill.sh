@@ -19,7 +19,7 @@ for i in $(seq 1 "$order_count"); do
   response=$(curl -s -X POST "http://${orders_ip}/orders" \
     -H "Authorization: Bearer ${access_token}" \
     -H "Content-Type: application/json" \
-    -d "{\"customerId\":\"replay-drill-${i}\",\"amount\":$((10 + i)).50,\"currency\":\"BRL\"}")
+    -d "{\"customerId\":\"replay-drill-${i}\",\"items\":[{\"sku\":\"SKU-BOOK-002\",\"quantity\":1}]}")
   order_id=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null || true)
   if [[ -n "$order_id" ]]; then
     echo "$order_id" >> "$order_ids_file"
