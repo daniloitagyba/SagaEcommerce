@@ -1,14 +1,3 @@
-# Milestone 50: Chaos Mesh is installed since Milestone 31 but TimeChaos had
-# never been used - every prior game day (31, 37) injects a network or
-# process fault, never a clock fault. Skews orders-worker's clock forward
-# by 3 real minutes while SagaTimeoutSweeper's timeout comparison
-# (SagaOrchestrationStore.ClaimTimedOutAsync: `cutoff = now - timeout`,
-# `now` = this same pod's DateTimeOffset.UtcNow) only has a 5-second
-# window to work with - proving a saga that's been running for a real
-# couple of seconds gets treated as if it's been running for minutes, and
-# gets swept as timed out, purely because the sweeper's own clock lied to
-# it. Applied ad hoc for the experiment, not left running - `kubectl
-# delete` after (scripts/live-proofs/clock-skew-saga-timeout-test.sh does this).
 apiVersion: chaos-mesh.org/v1alpha1
 kind: TimeChaos
 metadata:

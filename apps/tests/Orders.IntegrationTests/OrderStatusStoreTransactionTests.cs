@@ -65,11 +65,6 @@ public sealed class OrderStatusStoreTransactionTests(PostgresFixture fixture) : 
         Assert.Equal(StatusTransitionResult.Transitioned, result);
         Assert.Equal(OrderStatuses.Shipped, await CurrentStatusAsync(orderId));
 
-        // Two rows now, not one: the capture command Shipped-with-Card has
-        // always queued, plus OrderStatusChanged - QueueOrderStatusChangedAsync
-        // is unconditional (see ApplySideEffectsAsync's own comment), so every
-        // legal transition through this store queues it alongside whatever
-        // else that target status implies.
         var messages = await _dbContext.OutboxMessages.AsNoTracking().ToListAsync();
         Assert.Equal(2, messages.Count);
 
@@ -117,14 +112,7 @@ public sealed class OrderStatusStoreTransactionTests(PostgresFixture fixture) : 
         Assert.Equal(CustomerTiers.Silver, customer.Tier);
     }
 
-    /// <summary>
-    /// Pins the fix for the loophole CustomerTierStore's own header used to
-    /// describe as closed by recording at confirmation alone: confirm,
-    /// then cancel, and assert standing is given back rather than kept
-    /// permanently. Regression coverage for
-    /// docs/architecture/audit-2026-08-15-domain-and-business-rules-review.md
-    /// finding 1.
-    /// </summary>
+    /// <summary>Pins the fix for the loophole where standing recorded at confirmation was never reversed on cancellation. Regression coverage for docs/architecture/audit-2026-08-15-domain-and-business-rules-review.md finding 1.</summary>
     [Fact]
     public async Task ConfirmThenCancelReversesCustomerStanding()
     {
@@ -149,7 +137,6 @@ public sealed class OrderStatusStoreTransactionTests(PostgresFixture fixture) : 
         Assert.Equal(OrderStatuses.Cancelled, await CurrentStatusAsync(order.Id));
         Assert.Equal(0m, cancelledCustomer.LifetimeSpend);
         Assert.Equal(0, cancelledCustomer.CompletedOrderCount);
-        // Tier is deliberately not demoted - see Customer.ReverseCompletedOrder's own doc comment.
         Assert.Equal(CustomerTiers.Silver, cancelledCustomer.Tier);
     }
 

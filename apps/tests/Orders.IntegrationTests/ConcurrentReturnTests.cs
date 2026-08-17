@@ -9,20 +9,7 @@ using Polly.Registry;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// Closes the gap the audit's finding 6 flagged: before OrderLine's xmin
-/// concurrency token (ConfigureOrderLine), two concurrent returns of the
-/// same units both read ReturnedQuantity=0, both passed validation against
-/// ReturnableQuantity, and both wrote ReturnedQuantity=N - a double refund
-/// and a double restock queued, not just a double-counted quantity.
-///
-/// Reproduced deterministically - both requests read before either writes,
-/// then the first save commits and the second is made afterwards - rather
-/// than via real thread timing. Optimistic concurrency does not care which
-/// wall-clock order the reads happened in, only that both readers' snapshots
-/// are stale by the time the second one tries to write, which sequencing the
-/// two SaveReturnAsync calls this way guarantees on every run.
-/// </summary>
+/// <summary>Closes the gap the audit's finding 6 flagged: before OrderLine's xmin concurrency token, two concurrent returns of the same units both read ReturnedQuantity=0 and both wrote it, causing a double refund and double restock.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class ConcurrentReturnTests(PostgresFixture fixture) : IAsyncLifetime
 {
@@ -54,8 +41,6 @@ public sealed class ConcurrentReturnTests(PostgresFixture fixture) : IAsyncLifet
             dbContext.Orders.Add(order);
             await dbContext.SaveChangesAsync();
 
-            // Jumps straight to Delivered - this test is about the return's
-            // own concurrency guard, not the lifecycle that gets it there.
             await dbContext.Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE orders SET status = {OrderStatuses.Delivered} WHERE id = {order.Id}");
 
@@ -73,9 +58,6 @@ public sealed class ConcurrentReturnTests(PostgresFixture fixture) : IAsyncLifet
     [Fact]
     public async Task TwoConcurrentFullReturnsOfTheSameLineOnlyOneSucceeds()
     {
-        // Two separate DbContext instances, matching two separate
-        // request-scoped repositories in the real API - a single shared
-        // context's own change tracker would hide the race entirely.
         await using var dbContextA = new OrdersDbContext(_dbOptions);
         await using var dbContextB = new OrdersDbContext(_dbOptions);
         var repositoryA = new EfOrderReturnRepository(dbContextA, _pipelineProvider);
@@ -93,9 +75,6 @@ public sealed class ConcurrentReturnTests(PostgresFixture fixture) : IAsyncLifet
         var (returnB, rejectionB, _) = orderB!.TryReturn(
             itemsToReturn, "customer return", ReturnReasonCategory.Unwanted, TimeSpan.FromDays(30), DateTimeOffset.UtcNow);
 
-        // Domain validation alone cannot see the other request in flight -
-        // both pass it, exactly as they did before the fix. The guard has
-        // to live at the storage layer, which is what this test proves.
         Assert.Equal(ReturnRejectionReason.None, rejectionA);
         Assert.Equal(ReturnRejectionReason.None, rejectionB);
 

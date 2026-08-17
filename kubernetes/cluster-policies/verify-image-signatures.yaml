@@ -1,24 +1,3 @@
-# Milestone 25: requires every image pushed by this repo's own CI pipeline
-# (.github/workflows/ci.yml) to carry a valid cosign keyless signature
-# before Kyverno's admission controller will let a pod referencing it be
-# created. The signing identity is pinned to the exact GitHub Actions OIDC
-# subject the workflow runs under - not just "signed by someone" - so a
-# signature produced by any other workflow, fork, or branch is rejected.
-#
-# Applied imperatively (kubectl apply), the same way Linkerd and Sealed
-# Secrets were installed in Milestones 17/24: this is cluster infrastructure
-# configuration, not an application manifest Argo CD reconciles.
-#
-# Scope, stated plainly: `imageReferences` below matches
-# `ghcr.io/daniloitagyba/saga-ecommerce/*` - the CI-published images
-# - not `saga-ecommerce/*:local`, which is what this lab's own K3s
-# overlay actually runs (kubernetes/overlays/local/kustomization.yaml,
-# imagePullPolicy: Never). That's deliberate: the local dev loop
-# (scripts/infra/k3s-build-images.sh) builds and imports images straight into
-# containerd for fast iteration, and signing every local rebuild would
-# defeat that. This policy verifies what a real deployment pointed at the
-# CI-published, cosign-signed GHCR images would be admitted to run - it
-# does not evaluate any pod in this lab's own local cluster today.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -36,35 +15,17 @@ spec:
                 - Pod
       verifyImages:
         - imageReferences:
-            # Lowercase - Docker/OCI registry paths must be lowercase even
-            # though the GitHub repo itself is "SagaEcommerce"
-            # (mixed case); see .github/workflows/ci.yml's IMAGE comment.
             - "ghcr.io/daniloitagyba/saga-ecommerce/*"
           mutateDigest: true
           attestors:
             - count: 1
               entries:
                 - keyless:
-                    # Case-sensitive: this must match the GitHub repository's
-                    # actual name exactly as GitHub reports it in the
-                    # Actions OIDC token subject, unlike the image path above.
                     subject: "https://github.com/daniloitagyba/SagaEcommerce/.github/workflows/ci.yml@refs/heads/main"
                     issuer: "https://token.actions.githubusercontent.com"
                     rekor:
                       url: https://rekor.sigstore.dev
 
-    # Belt-and-suspenders companion to the rule above: that rule only
-    # *looks at* images matching ghcr.io/daniloitagyba/saga-ecommerce/*, and
-    # by the time one passes signature verification it already carries a
-    # digest via mutateDigest - so a second check scoped to the same
-    # pattern would be a no-op. This rule instead covers what the first one
-    # structurally can't: any pod's container referencing *any* image by
-    # tag alone, saga-ecommerce or not, without a resolved digest. The
-    # local dev loop's own images (kubernetes/overlays/local/, `:local`
-    # tag, imagePullPolicy: Never, built straight into containerd by
-    # scripts/infra/k3s-build-images.sh) are excluded on purpose, for the same
-    # reason the header comment above gives for the first rule - signing
-    # or digest-pinning every local rebuild would defeat fast iteration.
     - name: require-image-digest
       match:
         any:

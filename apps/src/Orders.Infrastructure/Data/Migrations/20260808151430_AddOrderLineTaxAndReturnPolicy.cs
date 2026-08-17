@@ -4,17 +4,10 @@
 
 namespace Orders.Infrastructure.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddOrderLineTaxAndReturnPolicy : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // Existing rows predate the refund-policy split and
-            // never owed shipping under any category - Unwanted is the one
-            // category that keeps them refunding exactly what they already
-            // refunded, not retroactively granting a shipping refund they
-            // never asked for.
             migrationBuilder.AddColumn<string>(
                 name: "reason_category",
                 table: "order_returns",
@@ -42,7 +35,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 defaultValue: 0m);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropColumn(

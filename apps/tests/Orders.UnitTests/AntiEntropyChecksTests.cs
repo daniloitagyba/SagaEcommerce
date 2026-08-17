@@ -2,11 +2,7 @@ using BuildingBlocks;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// The sweep's own decision logic, isolated from the
-/// database/HTTP calls that gather the two facts it compares - see
-/// AntiEntropyChecks for why these are pure functions in the first place.
-/// </summary>
+/// <summary>The anti-entropy sweep's decision logic, isolated from the database/HTTP calls that gather the facts it compares.</summary>
 public class AntiEntropyChecksTests
 {
     [Theory]
@@ -30,7 +26,6 @@ public class AntiEntropyChecksTests
     [Fact]
     public void ADeclinedPaymentOnAConfirmedOrRelatedOrderIsADivergence()
     {
-        // A declined payment should never have let the order reach Confirmed in the first place.
         Assert.True(AntiEntropyChecks.OrderIsMissingAnAccountedPayment(PaymentStates.Declined));
     }
 
@@ -82,7 +77,6 @@ public class AntiEntropyChecksTests
     [Fact]
     public void AMismatchedReadModelStatusIsADivergence()
     {
-        // orders.status moved on to Delivered but order_summaries is still projecting Shipped.
         Assert.True(AntiEntropyChecks.WriteModelDivergesFromReadModel(OrderStatuses.Delivered, OrderStatuses.Shipped));
     }
 

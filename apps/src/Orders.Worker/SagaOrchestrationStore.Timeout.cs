@@ -4,23 +4,8 @@ using NpgsqlTypes;
 
 namespace Orders.Worker;
 
-// The other half of SagaOrchestrationStore.cs's own split - see that
-// file's class comment. This one owns SagaTimeoutSweeper's claim path and
-// MarkParkedAsync, the write that keeps a backordered order out of it.
 public sealed partial class SagaOrchestrationStore
 {
-    // FOR UPDATE SKIP LOCKED here is belt-and-suspenders, not the primary
-    // mechanism - leader election already ensures one active sweeper; this
-    // guards the brief window during a leadership handoff.
-    //
-    // A row parked at ReserveInventory (see SagaOrchestrationState.ParkedAt)
-    // is excluded from this timeout entirely while it stays at that step -
-    // it is waiting on a restock, governed by BackorderTimeoutSweeper's own,
-    // much longer Backorder:TimeoutMinutes window, not this saga's
-    // SagaOrchestration:TimeoutSeconds. The `step <> @reserve_step` half of
-    // the guard is what stops a stale ParkedAt (left set after the row
-    // advanced past ReserveInventory once every line answered) from
-    // exempting DecidePayment/ReleaseInventory from ever timing out.
     private const string ClaimCandidatesSql = """
         SELECT order_id
         FROM saga_orchestration_states
@@ -41,10 +26,6 @@ public sealed partial class SagaOrchestrationStore
         DELETE FROM saga_orchestration_states WHERE order_id = ANY(@order_ids);
         """;
 
-    // Idempotent (COALESCE), same guard shape as
-    // EfOrderStatusRepository.FlagInFlightSagaAsCancelledAsync - a
-    // redelivered "Backordered: true" reply for a sibling line must not
-    // push ParkedAt later than the first line that actually parked this row.
     private const string MarkParkedSql = """
         UPDATE saga_orchestration_states
         SET parked_at = COALESCE(parked_at, @parked_at)
@@ -67,19 +48,7 @@ public sealed partial class SagaOrchestrationStore
         ClaimTimedOutCoreAsync(timeout, now, batchSize, commandFactory, null, cancellationToken);
 
     /// <summary>
-    /// Same as ClaimTimedOutAndQueueAsync, but also resolves each claimed
-    /// order's own status (cancel, confirm, or park at FulfillmentHold -
-    /// whatever SagaTimeoutSweeper.ResolveAsync used to decide after the
-    /// fact) inside the very transaction that deletes its saga row.
-    ///
-    /// Introduced at Milestone 91: SweepOnceAsync used to call this
-    /// method's undecorated sibling to delete the timed-out rows and queue
-    /// their inventory releases atomically, then loop over the results and
-    /// call SagaTimeoutSweeper.ResolveAsync - a second, separate
-    /// transaction per order - afterwards. A crash between the two (or
-    /// simply losing the leader lease mid-loop) left the order stuck
-    /// non-terminal with no saga row left to time out again; see
-    /// docs/roadmap-milestones-91-99.md, "durable claim, non-durable act".
+    /// Resolves timed-out sagas.
     /// </summary>
     public Task<IReadOnlyList<(Guid OrderId, SagaOrchestrationRecord Saga)>> ClaimTimedOutAndResolveAsync(
         TimeSpan timeout,
@@ -206,11 +175,7 @@ public sealed partial class SagaOrchestrationStore
     }
 
     /// <summary>
-    /// Called the moment a line comes back Backordered
-    /// (OrderSagaReplyConsumer.HandleReservationRepliedAsync), while the row
-    /// stays parked at ReserveInventory - see SagaOrchestrationState.ParkedAt
-    /// for why SagaTimeoutSweeper needs this to not cancel a customer who is
-    /// legitimately still waiting on a restock.
+    /// Records a backordered saga line.
     /// </summary>
     public Task MarkParkedAsync(Guid orderId, DateTimeOffset parkedAt, CancellationToken cancellationToken)
     {

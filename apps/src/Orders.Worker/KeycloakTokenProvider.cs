@@ -15,19 +15,7 @@ public sealed class KeycloakOptions
 }
 
 /// <summary>
-/// Orders.Worker's own service identity, closing
-/// a real gap - the anti-entropy sweep's two
-/// cross-service reads (GET /payments/by-order/{id}, GET /inventory/backorders)
-/// were unauthenticated because this service had no credentials to present.
-/// Uses a dedicated client carrying only payments:read and inventory:read,
-/// rather than the backend-tooling client that can also mutate orders and
-/// catalog data.
-///
-/// Same shape as the KeycloakTokenProvider removed from
-/// Storefront.Service: that one existed to mint a token standing in for a
-/// *shopper*, which Storefront now forwards instead of minting - a problem
-/// Orders.Worker doesn't have, since nothing it calls is on a shopper's
-/// behalf. Fetches and caches the token, refreshing shortly before it expires.
+/// Provides access tokens for Orders Worker.
 /// </summary>
 public sealed class KeycloakTokenProvider(
     HttpClient httpClient,
@@ -71,7 +59,6 @@ public sealed class KeycloakTokenProvider(
                 ?? throw new InvalidOperationException("Keycloak returned an empty token response.");
 
             _cachedToken = payload.AccessToken;
-            // Refresh 30 seconds early rather than racing the exact expiry instant.
             _expiresAt = requestedAt.AddSeconds(Math.Max(payload.ExpiresIn - 30, 5));
             return _cachedToken;
         }
@@ -86,10 +73,6 @@ public sealed class KeycloakTokenProvider(
         _lock.Dispose();
     }
 
-    // Keycloak's token response is snake_case (access_token, expires_in),
-    // not the camelCase JsonSerializerDefaults.Web expects - explicit
-    // names here, not a global serializer option, since this is the only
-    // place in Orders.Worker that talks to a non-camelCase API.
     private sealed record TokenResponse(
         [property: JsonPropertyName("access_token")] string AccessToken,
         [property: JsonPropertyName("expires_in")] int ExpiresIn);

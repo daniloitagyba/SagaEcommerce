@@ -2,12 +2,7 @@ using Cart.Service.Endpoints;
 
 namespace Cart.UnitTests;
 
-/// <summary>
-/// CartEndpoints.BuildClientState turns an offline client's
-/// batch of Increase/Decrease/Remove operations into a CartCrdtState (or
-/// rejects the batch) - the reconciliation algorithm behind POST
-/// /carts/me/merge, and the only part of it that doesn't need a live Redis.
-/// </summary>
+/// <summary>CartEndpoints.BuildClientState turns an offline client's batch of Increase/Decrease/Remove operations into a CartCrdtState (or rejects the batch) - the reconciliation algorithm behind POST /carts/me/merge, testable without a live Redis.</summary>
 public sealed class CartEndpointsMergeTests
 {
     private static CartMergeOperation Increase(string sku, int delta = 1) =>
@@ -105,7 +100,6 @@ public sealed class CartEndpointsMergeTests
 
         Assert.Null(errors);
         Assert.NotNull(state);
-        // SKU-A is the only operation that ever added anything present.
         var line = Assert.Single(state.ToLineItems());
         Assert.Equal("SKU-A", line.Sku);
         Assert.Equal(2, line.Quantity);
@@ -114,7 +108,6 @@ public sealed class CartEndpointsMergeTests
     [Fact]
     public void EachIncreaseInTheSameBatchMintsItsOwnDot()
     {
-        // Two Increases on the same sku in one batch must both count, not collapse into one.
         var operations = new[] { Increase("SKU-A", 1), Increase("SKU-A", 1) };
 
         var (state, _) = CartEndpoints.BuildClientState(operations);

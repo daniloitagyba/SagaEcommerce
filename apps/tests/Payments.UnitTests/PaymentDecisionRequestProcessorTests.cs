@@ -4,14 +4,7 @@ using Payments.Service;
 
 namespace Payments.UnitTests;
 
-/// <summary>
-/// PaymentDecisionRequestProcessor itself needs a live PaymentsDbContext
-/// (transactions, an INSERT ... ON CONFLICT inbox check) and a
-/// PaymentRiskEvaluator, so it isn't unit-testable end to end - but
-/// DeserializeAndValidate has no dependency on either, and until now had no
-/// coverage anywhere despite being the first thing every decision request
-/// passes through.
-/// </summary>
+/// <summary>PaymentDecisionRequestProcessor needs a live PaymentsDbContext and PaymentRiskEvaluator so it isn't unit-testable end to end, but DeserializeAndValidate has no dependency on either and had no coverage despite being the first thing every decision request passes through.</summary>
 public sealed class PaymentDecisionRequestProcessorTests
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);

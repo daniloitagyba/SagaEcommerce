@@ -5,12 +5,7 @@ using Orders.Domain;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// The temporal fold (Order state reconstructed from the event stream, not
-/// read from a current-state row) had no coverage anywhere - a hand-rolled
-/// IOrderEventStoreRepository fake, since OrderEvent's own construction is
-/// EF-only and the fold logic itself has no database dependency.
-/// </summary>
+/// <summary>The temporal fold (Order state reconstructed from the event stream, not a current-state row); a hand-rolled IOrderEventStoreRepository fake since the fold logic has no database dependency.</summary>
 public sealed class GetOrderHistoryHandlerTests
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -64,7 +59,6 @@ public sealed class GetOrderHistoryHandlerTests
         var result = await handler.HandleAsync(orderId, asOf: null, CancellationToken.None);
 
         Assert.Equal("Confirmed", result.Snapshot!.Status);
-        // Confirmation carries no customer/amount payload of its own - the fold must not blank these out.
         Assert.Equal("customer-2", result.Snapshot.CustomerId);
         Assert.Equal(120m, result.Snapshot.Amount);
         Assert.Equal(createdAt, result.Snapshot.CreatedAt);
@@ -92,9 +86,6 @@ public sealed class GetOrderHistoryHandlerTests
     [Fact]
     public async Task AsOfLimitsTheFoldToEventsAtOrBeforeTheBoundary()
     {
-        // The repository itself filters by asOf (EfOrderEventStoreRepository
-        // applies the WHERE) - this fake mirrors that so the handler is
-        // exercised the same way it would be against the real one.
         var orderId = Guid.NewGuid();
         var createdAt = DateTimeOffset.UtcNow.AddHours(-3);
         var confirmedAt = createdAt.AddMinutes(5);

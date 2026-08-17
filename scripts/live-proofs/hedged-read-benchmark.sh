@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Milestone 39: measures real p99 latency for GET /orders/{id} with and
-# without client-side hedged requests (Dean & Barroso's "Tail at Scale"
-# pattern) - fire a request to one orders-api replica, and if it hasn't
-# answered within HEDGE_DELAY_MS, also fire to a different replica and take
-# whichever responds first. Targets pod IPs directly rather than the K3s
-# Service ClusterIP - hedging needs to race two distinct backends, and a
-# single client connection through a Service VIP is load-balanced by
-# kube-proxy at the TCP-connection level, not per request, so it can't be
-# steered to a specific replica.
-
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_directory=$(cd -- "$script_directory/../.." && pwd)
 workload_file="$project_directory/load-tests/k6/orders.js"

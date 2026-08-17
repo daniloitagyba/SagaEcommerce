@@ -4,10 +4,8 @@
 
 namespace Payments.Service.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddPaymentRefunds : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<decimal>(
@@ -20,7 +18,6 @@ namespace Payments.Service.Data.Migrations
                 defaultValue: 0m);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropColumn(

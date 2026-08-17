@@ -12,9 +12,6 @@ on:
       - "docs/**"
       - "**.md"
   schedule:
-    # Catches new CodeQL query-pack rules against unchanged code, not just
-    # new commits - a code-level vulnerability class can be added to the
-    # ruleset after this code was last touched.
     - cron: "0 6 * * 1"
 
 permissions:
@@ -33,13 +30,13 @@ jobs:
       security-events: write
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           global-json-file: global.json
 
-      - uses: github/codeql-action/init@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+      - uses: github/codeql-action/init@f3712979fa5f215279b101dd0a2e3bdfb4353324
         with:
           languages: csharp
           queries: security-extended
@@ -49,6 +46,6 @@ jobs:
           dotnet restore apps/SagaEcommerce.slnx
           dotnet build apps/SagaEcommerce.slnx --no-restore --configuration Release
 
-      - uses: github/codeql-action/analyze@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+      - uses: github/codeql-action/analyze@f3712979fa5f215279b101dd0a2e3bdfb4353324
         with:
           category: "/language:csharp"

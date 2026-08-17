@@ -1,6 +1,3 @@
-# The worker's projected token is used only for Kubernetes Lease-based leader
-# election. This namespaced Role deliberately grants no Pod, Secret, ConfigMap
-# or workload mutation access.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

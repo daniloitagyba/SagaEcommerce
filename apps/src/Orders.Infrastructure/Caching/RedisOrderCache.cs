@@ -35,7 +35,6 @@ public sealed class RedisOrderCache(
         }
         catch (Exception exception) when (ResilienceExtensions.IsInfrastructureFault(exception))
         {
-            // Redis is unavailable: degrade gracefully to an uncached read rather than failing the request.
             OrdersTelemetry.RecordCacheBypass();
             var bypassedOrder = await factory(cancellationToken);
             return new CacheLookup(bypassedOrder, CacheLookupResult.Bypassed);
@@ -51,7 +50,6 @@ public sealed class RedisOrderCache(
         var lockTimeout = TimeSpan.FromMilliseconds(_options.LockTimeoutMilliseconds);
         var acquiredLock = await database.LockTakeAsync(lockKey, LockToken, lockTimeout);
 
-        // Drawn once per acquisition, independent of the lock itself - see RedisFencedWrite for why the lock's own timeout isn't enough.
         var fenceToken = acquiredLock ? await database.NextFenceTokenAsync(OrderCacheKeys.FenceSequenceKey(id)) : 0;
 
         if (!acquiredLock)
@@ -82,7 +80,6 @@ public sealed class RedisOrderCache(
                     cacheKey, fenceToken, payload, TimeSpan.FromSeconds(_options.TimeToLiveSeconds));
                 if (!applied)
                 {
-                    // This holder's lock expired and was re-acquired with a newer token before this write landed - discard, don't overwrite.
                     OrdersTelemetry.RecordFencedWriteRejected("order-cache");
                 }
             }
@@ -106,16 +103,11 @@ public sealed class RedisOrderCache(
 
         return JsonSerializer.Deserialize<CachedOrder>((string)value!, SerializerOptions);
     }
-    /// <summary>
-    /// Deletes the cached value only, deliberately not the fence sequence -
-    /// deleting it would restart the counter at 1, letting a paused writer
-    /// still holding an old token reject every subsequent refill as
-    /// "older" until the TTL expires, the exact hazard fencing prevents.
-    /// </summary>
+
+    /// <summary>Deletes the cached value only, deliberately not the fence sequence, to avoid restarting the counter and defeating fencing.</summary>
     public async Task InvalidateAsync(Guid id, CancellationToken cancellationToken)
     {
         var database = connectionMultiplexer.GetDatabase();
         await database.KeyDeleteAsync(OrderCacheKeys.Key(id));
     }
-
 }

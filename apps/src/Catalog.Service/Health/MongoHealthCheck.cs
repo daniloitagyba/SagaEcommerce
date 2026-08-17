@@ -14,10 +14,6 @@ public sealed class MongoHealthCheck(IMongoDatabase database) : IHealthCheck
         {
             await database.RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1), cancellationToken: cancellationToken);
 
-            // A reachable Mongo (the ping above) says nothing about whether
-            // EnsureIndexesAsync ever actually ran against it - a deployment
-            // that skipped that step would still report healthy while every
-            // insert relied on a unique constraint that was never created.
             if (!await HasIndexOnAsync(database, "products", "Sku", cancellationToken)
                 || !await HasIndexOnAsync(database, "categories", "Slug", cancellationToken))
             {

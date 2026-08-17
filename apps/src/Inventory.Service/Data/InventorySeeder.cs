@@ -3,11 +3,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Inventory.Service.Data;
 
-/// <summary>
-/// Stock quantities mirror Catalog.Service's seeded SKUs.
-/// SKU-ELEC-002 is deliberately seeded low (8 units) so the same-SKU
-/// oversell-prevention test has a small, easy-to-exhaust pool to hammer.
-/// </summary>
+/// <summary>Seeds inventory stock quantities mirroring Catalog.Service's seeded SKUs.</summary>
 public static class InventorySeeder
 {
     private static readonly (string Sku, int Quantity)[] SeedData =

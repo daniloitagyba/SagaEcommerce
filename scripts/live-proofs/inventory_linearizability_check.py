@@ -77,7 +77,7 @@ def main():
         args=([op["correlation_id"] for op in operations], results, 30),
     )
     consumer_thread.start()
-    time.sleep(2)  # let the consumer group actually join before we start producing
+    time.sleep(2)
 
     invoke_ts = {}
     producer = Producer({"bootstrap.servers": BOOTSTRAP})
@@ -175,7 +175,6 @@ def check_linearizable(history, initial_quantity):
         for j in range(n):
             if i == j:
                 continue
-            # i happens-before j (i completes strictly before j invokes)
             if history[i]["complete"] < history[j]["invoke"]:
                 if (not history[i]["reserved"]) and history[j]["reserved"]:
                     return False, []

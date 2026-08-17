@@ -65,8 +65,6 @@ for order_id in "${order_ids[@]}"; do
   curl --fail --silent --show-error --header "$auth_header" "$orders_url/orders/$order_id" >/dev/null
 done
 
-# This is a critical-flow smoke test, so consuming OrderCreated is not enough:
-# every valid line-item order must actually finish its inventory/payment saga.
 converged=0
 for _ in $(seq 1 60); do
   converged=0

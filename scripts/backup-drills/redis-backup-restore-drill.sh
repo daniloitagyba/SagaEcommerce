@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 80: Cart.Service's Redis has had AOF persistence since
-# Milestone 46 (everysec, surviving a hard kill with zero cart loss - see
-# cart-redis-durability-test.sh) but "the data survives a crash" and "the
-# data can be restored somewhere else" are different claims. This drill
-# proves the second one: a live BGSAVE snapshot, copied out, loaded into a
-# throwaway isolated container - never the live one, so a real cart in
-# flight is never at risk from running this.
-#
-# Usage: redis-backup-restore-drill.sh
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -60,9 +51,6 @@ for _ in $(seq 1 30); do
   fi
   sleep 1
 done
-# Load from the snapshot: stop the freshly-started instance's own empty
-# dataset, drop the real snapshot in its data directory, then restart the
-# server process so it loads dump.rdb from disk the normal way.
 docker exec redis-restore-drill redis-cli SHUTDOWN NOSAVE >/dev/null 2>&1 || true
 sleep 1
 docker cp "$work_directory/dump.rdb" redis-restore-drill:/data/dump.rdb

@@ -8,14 +8,7 @@ using Orders.Infrastructure.Data;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// Baseline coverage for the shared OutboxPublisher&lt;TDbContext&gt; - it had
-/// none before, despite every service depending on it. Exercises the
-/// two-phase claim-then-publish restructuring directly: a message must
-/// still end up published and marked processed exactly once, now that the
-/// Kafka call happens outside the transaction that claims it (see
-/// OutboxPublisher.ClaimBatchAsync's own comment for why that split exists).
-/// </summary>
+/// <summary>Baseline coverage for the shared OutboxPublisher&lt;TDbContext&gt;. Exercises the two-phase claim-then-publish restructuring: a message must still end up published and marked processed exactly once now that the Kafka call happens outside the claiming transaction.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class OutboxPublisherTests(PostgresFixture fixture) : IAsyncLifetime
 {
@@ -65,7 +58,6 @@ public sealed class OutboxPublisherTests(PostgresFixture fixture) : IAsyncLifeti
         var message = await assertDbContext.OutboxMessages.SingleAsync(m => m.Id == eventId);
         Assert.NotNull(message.ProcessedAt);
 
-        // A second pass must not re-publish - ProcessedAt already excludes it from the claim query.
         var secondPublished = await publisher.ProcessBatchAsync(CancellationToken.None);
         Assert.Equal(0, secondPublished);
         Assert.Single(dispatcher.PublishedEventIds);
@@ -88,9 +80,6 @@ public sealed class OutboxPublisherTests(PostgresFixture fixture) : IAsyncLifeti
 
         var published = await publisher.ProcessBatchAsync(CancellationToken.None);
 
-        // The claim still counts as "processed this tick" from the loop's
-        // perspective (a batch was found and acted on) - what matters here
-        // is the row's own state, checked below.
         Assert.Equal(1, published);
 
         await using var assertScope = _serviceProvider.CreateAsyncScope();

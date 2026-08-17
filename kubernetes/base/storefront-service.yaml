@@ -28,9 +28,6 @@ spec:
       serviceAccountName: storefront-service
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
-      # Milestone 65: see cart-service.yaml for the full rationale - a
-      # no-op on this single-node cluster today, a real guardrail once a
-      # second node exists.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

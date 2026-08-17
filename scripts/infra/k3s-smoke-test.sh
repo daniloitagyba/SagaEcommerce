@@ -6,10 +6,6 @@ namespace=${KUBERNETES_NAMESPACE:-orders-lab}
 local_port=${K3S_SMOKE_PORT:-18088}
 temporary_directory=$(mktemp -d)
 
-# orders-api is an Argo Rollout (Milestone 15), reconciled by Argo CD and
-# horizontally scaled by an HPA (Milestone 13) - its replica count moves with
-# load, so this only asserts every desired replica is actually ready rather
-# than a specific fixed count.
 for _ in $(seq 1 60); do
   rollout_json=$(kubectl get rollout/orders-api --namespace "$namespace" --output json 2>/dev/null) && break
   sleep 2

@@ -4,13 +4,7 @@ using Orders.Application.UseCases.GetOrderHistory;
 
 namespace Orders.Api.Endpoints;
 
-/// <summary>
-/// The event-sourced read side: state folded from the append-only
-/// event log rather than a current-state row, plus the full event history
-/// alongside it. Entirely separate from GetByIdAsync's cache-aside read of
-/// the orders table - this is a second, independent way to read the same
-/// aggregate, built on the event store rather than current state.
-/// </summary>
+/// <summary>The event-sourced read side, folding order state and history from the append-only event log.</summary>
 public static class OrderHistoryEndpoints
 {
     public static IEndpointRouteBuilder MapOrderHistoryEndpoints(this IEndpointRouteBuilder endpoints)
@@ -31,7 +25,6 @@ public static class OrderHistoryEndpoints
     {
         var result = await handler.HandleAsync(id, asOf, cancellationToken);
 
-        // Same 404-hides-ownership reasoning as GetByIdAsync.
         if (result.Snapshot is null || !httpContext.MayAccess(result.Snapshot.CustomerId))
         {
             return Results.NotFound();

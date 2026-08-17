@@ -1,15 +1,3 @@
-# Template for a point-in-time-recovery drill: restores orders-ha's backups
-# into a brand new Cluster, up to (and excluding) whatever happened at
-# recoveryTarget.targetTime. Copy this, fill in a real targetTime (from
-# `SELECT now();` on the source cluster, taken right before whatever
-# incident you're rehearsing), and `kubectl apply` it - a separate Cluster
-# next to the original, never destructive to it.
-#
-# serverName is required and easy to get wrong: it defaults to this
-# externalClusters entry's own `name` ("orders-ha-backup-source" below), but
-# barman-cloud archived the source cluster's WALs under ITS name ("orders-ha")
-# - without this override, recovery fails with "no target backup found"
-# even though the backups are sitting right there in the bucket.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:

@@ -7,28 +7,7 @@ using Polly.Registry;
 
 namespace BuildingBlocks;
 
-// The dedup half of every outbox-backed consumer in this codebase: an
-// INSERT ... ON CONFLICT (consumer_name, event_id) DO NOTHING against
-// inbox_messages, so a redelivered Kafka message (the standard
-// at-least-once contract every KafkaConsumerHost carries) is processed at
-// most once. Previously written out as raw SQL 8 separate times across
-// Inventory.Service, Payments.Service and Orders.Worker; the SQL text now
-// lives here, once.
-//
-// Two variants, not one, because there are genuinely two different call
-// shapes over that same statement in this codebase - forcing either
-// through the other would change behavior, not just move code:
-//
-//   - TryRecordAsync (instance method): Orders.Worker's shape. Runs on its
-//     own connection, outside any transaction, dedup'd purely on the
-//     Kafka offset (consumer_name, event_id) pair - correct for consumers
-//     whose business write and inbox record aren't part of one atomic
-//     unit.
-//   - TryRecordWithinTransactionAsync (static): Inventory.Service's and
-//     Payments.Service's shape. Runs via DatabaseFacade.ExecuteSqlInterpolatedAsync
-//     against the caller's own already-open EF transaction, so a rolled-back
-//     business write also rolls back the inbox record instead of leaving
-//     a "processed" marker for a change that never actually happened.
+/// <summary>The dedup half of every outbox-backed consumer: an idempotent insert against inbox_messages so a redelivered Kafka message is processed at most once.</summary>
 public sealed class InboxStore(NpgsqlDataSource dataSource, ResiliencePipelineProvider<string> pipelineProvider)
 {
     private const string InsertSql = """

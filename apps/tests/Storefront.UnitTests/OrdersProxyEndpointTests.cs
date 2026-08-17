@@ -4,22 +4,7 @@ using Storefront.Service;
 
 namespace Storefront.UnitTests;
 
-/// <summary>
-/// Regression coverage for the bug behind "place order didn't work": the
-/// storefront created the order fine (POST /api/orders -> 201) but every
-/// follow-up read - GET /api/orders/{id}, GET /api/orders/{id}/history,
-/// GET /api/orders/summary - 404d, because ProxyEndpoints.ForwardAsync
-/// forwarded the wildcard-captured {**path} bare, silently dropping the
-/// "orders/" segment Orders.Api's own routes all live under. A shopper
-/// saw "This order could not be found" immediately after placing it.
-///
-/// Exercises ForwardOrdersSubPathAsync directly - the same method the
-/// MapGet/MapPost("/api/orders/{**path}") lambdas call - passing exactly
-/// the {**path} value ASP.NET's router would have captured (no leading
-/// "orders", the route template already consumed that literal segment),
-/// so this fails the same way production did if the "orders/" prefix is
-/// ever removed.
-/// </summary>
+/// <summary>Regression coverage for "place order didn't work": order creation succeeded but every follow-up read 404d because ProxyEndpoints.ForwardAsync forwarded the wildcard-captured {**path} bare, dropping the "orders/" segment Orders.Api's routes live under. Exercises ForwardOrdersSubPathAsync directly with the same {**path} value ASP.NET's router would capture.</summary>
 public sealed class OrdersProxyEndpointTests
 {
     [Theory]

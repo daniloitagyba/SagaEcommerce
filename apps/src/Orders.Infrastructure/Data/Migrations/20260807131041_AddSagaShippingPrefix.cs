@@ -4,10 +4,8 @@
 
 namespace Orders.Infrastructure.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddSagaShippingPrefix : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<string>(
@@ -19,7 +17,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 defaultValue: "");
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropColumn(

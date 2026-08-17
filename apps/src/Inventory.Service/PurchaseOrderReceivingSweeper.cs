@@ -10,14 +10,7 @@ using Polly.Registry;
 
 namespace Inventory.Service;
 
-/// <summary>
-/// The other half of ReplenishmentRequestProcessor - turns a
-/// Requested purchase order into an actual restock once its lead time has
-/// elapsed. Single-sweeper via pg_try_advisory_xact_lock, the same
-/// reasoning BackorderTimeoutSweeper already carries in this service: the
-/// lock only stops every replica polling every tick, since SKIP LOCKED
-/// already makes concurrent sweeps safe on its own.
-/// </summary>
+/// <summary>Turns a Requested purchase order into an actual restock once its lead time has elapsed.</summary>
 public sealed class PurchaseOrderReceivingSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<ReplenishmentOptions> options,
@@ -25,13 +18,11 @@ public sealed class PurchaseOrderReceivingSweeper(
     ILogger<PurchaseOrderReceivingSweeper> logger,
     ResiliencePipelineProvider<string> pipelineProvider) : BackgroundService
 {
-    /// <summary>Kept numerically distinct from BackorderTimeoutSweeper's and Payments' lock keys so a grep for any of them is unambiguous.</summary>
+    /// <summary>Numerically distinct from BackorderTimeoutSweeper's and Payments' lock keys.</summary>
     private const long SweepLockKey = 7400_0002;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly ReplenishmentOptions _options = options.Value;
-    // No-retry transactional pipeline, not the retrying PostgresPipeline -
-    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -51,7 +42,6 @@ public sealed class PurchaseOrderReceivingSweeper(
             }
             catch (Exception exception)
             {
-                // A failed sweep must never take the host down - purchase orders it missed this pass are still claimable next time.
                 ReplenishmentLog.ReceivingSweepFailed(logger, exception);
             }
         }
@@ -107,13 +97,6 @@ public sealed class PurchaseOrderReceivingSweeper(
                     continue;
                 }
 
-                // OrderId is a real customer order for every other producer of
-                // this command (a return); there is none here, so the purchase
-                // order's own id fills the slot instead - ProcessRestockAsync's
-                // shared validator requires it non-empty, and reusing it (rather
-                // than a throwaway Guid.NewGuid()) keeps the resulting
-                // InventoryRestockReplied traceable back to the purchase order
-                // that caused it.
                 var request = new InventoryRestockRequested(
                     Guid.NewGuid(), purchaseOrder.Id, purchaseOrder.Sku, purchaseOrder.Quantity, purchaseOrder.CorrelationId, now,
                     purchaseOrder.WarehouseCode);

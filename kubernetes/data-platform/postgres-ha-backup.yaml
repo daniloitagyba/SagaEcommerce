@@ -1,6 +1,3 @@
-# Triggers an on-demand base backup of the orders-ha cluster to MinIO.
-# `kubectl apply` this, then poll `kubectl get backup orders-ha-backup-1 -n
-# postgres-ha -o jsonpath='{.status.phase}'` until "completed".
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata:

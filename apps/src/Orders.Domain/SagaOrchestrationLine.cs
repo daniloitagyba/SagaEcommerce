@@ -1,16 +1,6 @@
 namespace Orders.Domain;
 
-/// <summary>
-/// One row per order line being reserved, replacing
-/// SagaOrchestrationState's single Sku/Quantity/ReservationId - a
-/// multi-line order now reserves every line, not just the largest by
-/// value. EF owns this table's schema only, same as SagaOrchestrationState;
-/// runtime reads/writes go through raw Npgsql in SagaOrchestrationStore.
-/// Reserved/Committed/Released are null until that line's reply arrives -
-/// the reply consumer aggregates across every line for the same OrderId
-/// before advancing the parent row's Step, since ReserveInventory now
-/// means "waiting for every line," not "waiting for the one reservation."
-/// </summary>
+/// <summary>One row per order line being reserved by the saga; Reserved/Committed/Released are null until that line's reply arrives.</summary>
 public sealed class SagaOrchestrationLine
 {
     private SagaOrchestrationLine()

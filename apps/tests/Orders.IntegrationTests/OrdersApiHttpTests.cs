@@ -5,15 +5,7 @@ using System.Text.Json;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// The first WebApplicationFactory-based test in this repo - no service
-/// had one, so nothing exercised real HTTP: routing, authorization
-/// policies, model binding, the actual ProblemDetails/JSON error shape a
-/// client sees. Orders.Api first (largest surface, per the plan this
-/// closes a gap in) - GET/POST /orders through the real ASP.NET Core
-/// pipeline, not the handlers directly the way the rest of this session's
-/// new tests do.
-/// </summary>
+/// <summary>The first WebApplicationFactory-based test in this repo, exercising real HTTP (routing, authorization policies, model binding, ProblemDetails/JSON error shape) via GET/POST /orders through the real ASP.NET Core pipeline.</summary>
 public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -63,7 +55,6 @@ public sealed class OrdersApiHttpTests : IClassFixture<OrdersApiFactory>
 
         var response = await client.PostAsJsonAsync("/orders", new { customerId = "reader-only", amount = 10m, currency = "BRL" });
 
-        // 403, not 401 - the caller IS authenticated, just not authorized for this policy.
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 

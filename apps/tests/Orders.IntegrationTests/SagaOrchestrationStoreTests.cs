@@ -79,9 +79,6 @@ public sealed class SagaOrchestrationStoreTests(PostgresFixture fixture) : IAsyn
 
         await _store!.TrackReserveRequestedAsync(orderId, "correlation-1", "customer-1", "Pix", "01", OneLine(Guid.NewGuid(), quantity: 1), 49.90m, "BRL", requestedAt, CancellationToken.None);
 
-        // A stale/duplicate reply for a step the saga has already moved
-        // past (e.g. a redelivered Reserve reply arriving after the saga
-        // already advanced to DecidePayment) must not corrupt state.
         var staleAdvance = await _store.TryAdvanceAsync(orderId, SagaStep.CommitInventory, SagaStep.DecidePayment, requestedAt, CancellationToken.None);
         var realAdvance = await _store.TryAdvanceAsync(orderId, SagaStep.ReserveInventory, SagaStep.DecidePayment, requestedAt, CancellationToken.None);
 
@@ -139,7 +136,6 @@ public sealed class SagaOrchestrationStoreTests(PostgresFixture fixture) : IAsyn
         Assert.NotNull(afterSecondReply);
         Assert.All(afterSecondReply!, line => Assert.True(line.Reserved));
 
-        // A redelivered reply for a line that already has an answer is a no-op (the "field IS NULL" guard), not a second write.
         var redelivered = await _store.RecordLineOutcomeAsync(orderId, lineA.ReservationId, SagaLineOutcomeField.Reserved, false, CancellationToken.None);
         Assert.NotNull(redelivered);
         Assert.Contains(redelivered!, line => line.Sku == "SKU-A" && line.Reserved == true);

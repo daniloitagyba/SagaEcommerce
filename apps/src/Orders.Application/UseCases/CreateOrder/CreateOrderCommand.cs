@@ -1,10 +1,7 @@
 namespace Orders.Application.UseCases.CreateOrder;
 
 /// <summary>
-/// One requested line: a SKU and how many. Deliberately <em>no</em> price -
-/// the client tells us what it wants to buy, never what it costs. The
-/// unit price is read from the catalog server-side at checkout, so a
-/// tampered request cannot buy a television for one centavo.
+/// Represents an order line request.
 /// </summary>
 public sealed record CreateOrderItem(string? Sku, int Quantity);
 
@@ -17,23 +14,17 @@ public sealed record CreateOrderCommand(
     string? IdempotencyKey = null,
     IReadOnlyList<CreateOrderItem>? Items = null,
     string? CouponCode = null,
-    /// <summary>Card or Pix. Null means Pix - see PaymentMethods.</summary>
+    /// <summary>Card or Pix; null means Pix.</summary>
     string? PaymentMethod = null,
     /// <summary>Destination. Null falls back to flat shipping and the global tax rate.</summary>
     Orders.Domain.ShippingAddress? ShippingAddress = null,
     /// <summary>
-    /// What the caller believes the subtotal (before
-    /// shipping, tax, and discounts - see CreateOrderHandler for why
-    /// specifically the subtotal) is, from whatever catalog prices it last
-    /// saw. Null skips the check entirely - only a caller that actually
-    /// snapshotted prices earlier (Storefront's cart) has grounds to assert one.
+    /// Gets the expected order subtotal.
     /// </summary>
     decimal? ExpectedSubtotal = null)
 {
     /// <summary>
-    /// Both request shapes run side by side - the expand half
-    /// of an expand/contract migration - so a pricing bug stays
-    /// distinguishable from a migration bug while both are live.
+    /// Both request shapes run side by side as the expand half of an expand/contract migration.
     /// </summary>
     public bool IsLineItemCheckout => Items is { Count: > 0 };
 }

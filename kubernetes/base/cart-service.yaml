@@ -28,14 +28,6 @@ spec:
       serviceAccountName: cart-service
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
-      # Milestone 65: nothing previously stopped the scheduler from placing
-      # every replica on the same node - the PodDisruptionBudget below
-      # protects against a voluntary drain, not against a single node
-      # failure taking out every replica at once. ScheduleAnyway (not
-      # DoNotSchedule) so this never blocks scheduling outright - on this
-      # lab's single-node K3s cluster there is only one topology domain to
-      # spread across, so it's a no-op today and a real guardrail the
-      # moment a second node joins.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -58,10 +50,6 @@ spec:
               value: redis:6379
             - name: Catalog__BaseUrl
               value: http://catalog-service
-            # Missing here previously - defaults to KeycloakJwtBearerExtensions'
-            # own InvalidOperationException, which throws during
-            # AddKeycloakJwtBearer's service registration, before this pod
-            # ever reaches a health check. Must match compose.yaml's value.
             - name: Authentication__Authority
               value: http://keycloak:8080/realms/orders-lab
             - name: InstanceId
@@ -80,16 +68,6 @@ spec:
               value: http://pyroscope:4040
             - name: PYROSCOPE_APPLICATION_NAME
               value: cart-service
-            # The CLR profiler attach variables - moved out of the Dockerfile's
-            # own ENV (where they used to be unconditional and applied to
-            # every environment, Compose included, regardless of
-            # PYROSCOPE_PROFILING_ENABLED above) so a build with no
-            # profiling configuration - Compose - genuinely runs with no
-            # profiler attached, instead of CORECLR_ENABLE_PROFILING loading
-            # one at process startup and only Pyroscope's own
-            # PYROSCOPE_PROFILING_ENABLED (read after that point) deciding
-            # whether it does anything. The .so files themselves stay baked
-            # into the image - only the decision to attach lives here now.
             - name: CORECLR_ENABLE_PROFILING
               value: "1"
             - name: CORECLR_PROFILER

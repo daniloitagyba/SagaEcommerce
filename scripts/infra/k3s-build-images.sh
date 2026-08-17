@@ -5,11 +5,6 @@ script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_directory=$(cd -- "$script_directory/../.." && pwd)
 compose_directory="$project_directory/compose"
 
-# Must match kubernetes/overlays/local/kustomization.yaml's `newTag` for
-# every image - the K3s Deployments/Rollout use imagePullPolicy: Never, so
-# unlike Compose (which has its own `build:` block and self-heals on
-# `docker compose up`), a tag mismatch here means the pod finds nothing
-# locally and sits in ImagePullBackOff.
 local_tag=local
 services=(orders-api orders-worker payments-service catalog-service inventory-service cart-service storefront-service)
 
@@ -20,11 +15,6 @@ done
 cd "$compose_directory"
 docker compose --profile compose-apps build "${services[@]}"
 
-# Read back from `compose config` rather than assumed, and retagged to the
-# one fixed tag the K3s overlay expects - so this and compose.yaml's own
-# image: value can't drift apart even though they serve different purposes
-# (compose.yaml's tag names a local build, :dev; the K3s overlay needs one
-# fixed, predictable tag regardless of what Compose calls it).
 built_images=$(docker compose --profile compose-apps config --format json |
   jq -r '.services | to_entries[] | select(.value.image != null and (.value.image | startswith("saga-ecommerce/"))) | "\(.key) \(.value.image)"')
 

@@ -5,13 +5,7 @@ namespace Orders.Infrastructure.Persistence;
 
 public sealed partial class EfOrderStatusRepository
 {
-    /// <summary>
-    /// The campaign-budget mirror of ReleaseCouponAsync - unconditional,
-    /// same as its coupon counterpart: the guarded WHERE clause is what
-    /// makes calling this for every cancellation safe even when no
-    /// campaign was ever claimed for the order, rather than needing the
-    /// caller to first check row.CampaignCode.
-    /// </summary>
+    /// <summary>Unconditionally releases a campaign budget claim, mirroring ReleaseCouponAsync's guarded-WHERE no-op-if-none-claimed shape.</summary>
     private async Task ReleaseCampaignAsync(Guid orderId, CancellationToken cancellationToken)
     {
         await dbContext.Database.ExecuteSqlInterpolatedAsync(

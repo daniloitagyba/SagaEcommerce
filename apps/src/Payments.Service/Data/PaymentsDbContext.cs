@@ -40,17 +40,12 @@ public sealed class PaymentsDbContext(DbContextOptions<PaymentsDbContext> option
         payment.Property(item => item.SettledAt).HasColumnName("settled_at");
         payment.Property(item => item.SettlementReason).HasColumnName("settlement_reason").HasMaxLength(256);
         payment.Property(item => item.RefundedAmount).HasColumnName("refunded_amount").HasPrecision(18, 2).IsRequired();
-        // The expiry sweeper scans exactly this - authorizations
-        // past their window - so it is a hot-path index, not reporting.
         payment.HasIndex(item => new { item.State, item.AuthorizationExpiresAt })
             .HasDatabaseName("ix_payments_pending_authorizations");
         payment.HasIndex(item => item.OrderId)
             .IsUnique()
             .HasDatabaseName("ux_payments_primary_order_id")
             .HasFilter("is_primary");
-        // The risk rules read a customer's recent history on
-        // every decision, so this index is on the hot path, not a
-        // reporting convenience.
         payment.HasIndex(item => new { item.CustomerId, item.DecidedAt })
             .HasDatabaseName("ix_payments_customer_history");
     }
@@ -96,9 +91,6 @@ public sealed class PaymentsDbContext(DbContextOptions<PaymentsDbContext> option
     }
 }
 
-// Schema-only entity: rows are written through raw SQL (see InboxStore) so a
-// single ON CONFLICT DO NOTHING statement can share the Payment+Outbox
-// transaction; EF Core only needs this shape to generate the migration.
 public sealed class InboxRecord
 {
     public string ConsumerName { get; init; } = string.Empty;

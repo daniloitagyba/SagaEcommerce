@@ -19,10 +19,6 @@ namespace Orders.IntegrationTests;
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class PaymentMessageProcessorTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
-    // Confluent.SchemaRegistry ships no mock client, and ISchemaRegistryClient
-    // has 24+ members - hand-rolling a fake risks subtly wrong schema-ID
-    // behavior. Redpanda bundles a Confluent-compatible registry alongside
-    // its broker, so this gets a real, ephemeral registry per test run.
     private readonly RedpandaContainer _redpanda =
         new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v26.2.1").Build();
     private CachedSchemaRegistryClient _schemaRegistryClient = null!;
@@ -40,7 +36,6 @@ public sealed class PaymentMessageProcessorTests(PostgresFixture fixture) : IAsy
 
         var services = new ServiceCollection();
         services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(connectionString));
-        // The processor resolves the risk evaluator per message from its own scope, so it must be registered here too.
         services.Configure<PaymentRiskOptions>(_ => { });
         services.AddScoped<PaymentRiskEvaluator>();
         services.AddScoped<PaymentDecisionCoordinator>();
@@ -63,9 +58,6 @@ public sealed class PaymentMessageProcessorTests(PostgresFixture fixture) : IAsy
         _schemaRegistryClient.Dispose();
     }
 
-    // A scored risk policy replaced the bare amount threshold:
-    // 49.90 scores FIRST_PURCHASE(20), under 60; 5000.00 scores
-    // HIGH_VALUE(50)+FIRST_PURCHASE(20)=70, over it. Same outcome, better reason.
     [Theory]
     [InlineData(49.90, true)]
     [InlineData(5000.00, false)]

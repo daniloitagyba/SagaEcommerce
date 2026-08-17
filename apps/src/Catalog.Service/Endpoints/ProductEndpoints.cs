@@ -35,18 +35,13 @@ public static class ProductEndpoints
         group.MapGet("/by-sku/{sku}", GetBySkuAsync);
         group.MapGet("/bestsellers", GetBestsellersAsync);
         group.MapGet("/{id}", GetByIdAsync);
-        // Writes are catalog:admin-gated; every GET above stays open - browsing the catalog is not a privileged action.
         group.MapPost("", CreateAsync).RequireAuthorization("catalog:admin");
         group.MapPut("/{id}", UpdateAsync).RequireAuthorization("catalog:admin");
 
         return endpoints;
     }
 
-    /// <summary>
-    /// Not private: Catalog.UnitTests exercises this directly - a caller
-    /// asking for skip=-5 or limit=10000 must not turn into a
-    /// negative-offset or unbounded Mongo query.
-    /// </summary>
+    /// <summary>Clamps skip/limit query params to safe, bounded values.</summary>
     internal static (int Skip, int Limit) NormalizeListQuery(int? skip, int? limit) =>
         (Math.Max(skip ?? 0, 0), Math.Clamp(limit ?? 20, 1, 100));
 
@@ -111,11 +106,6 @@ public static class ProductEndpoints
         var products = await repository.FindBySkusAsync(ranked.Select(entry => entry.Sku).ToArray(), cancellationToken);
         var productsBySku = products.ToDictionary(product => product.Sku, StringComparer.OrdinalIgnoreCase);
 
-        // Rank order comes from Redis, not from any query MongoDB can
-        // express - the $in batch above replaced what used to be one
-        // FindBySkuAsync round-trip per ranked entry (up to 50 sequential
-        // queries); reassemble in the Redis-given order here rather than
-        // trusting whatever order Mongo returned the batch in.
         var items = new List<object>(ranked.Count);
         foreach (var entry in ranked)
         {
@@ -137,11 +127,7 @@ public static class ProductEndpoints
         return product is null ? Results.NotFound() : Results.Ok(product);
     }
 
-    /// <summary>
-    /// Not private: Catalog.UnitTests exercises this directly. Null (not a
-    /// bool) so the caller returns the exact same ValidationProblem
-    /// dictionary this produces - one source of truth for the error shape.
-    /// </summary>
+    /// <summary>Validates a create-product request, returning field errors or null if valid.</summary>
     internal static IReadOnlyDictionary<string, string[]>? ValidateCreateProductRequest(CreateProductRequest request) =>
         string.IsNullOrWhiteSpace(request.Name)
             || string.IsNullOrWhiteSpace(request.CategorySlug)

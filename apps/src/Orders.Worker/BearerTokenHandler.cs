@@ -3,11 +3,7 @@ using System.Net.Http.Headers;
 namespace Orders.Worker;
 
 /// <summary>
-/// Attaches orders-api-clients' own client_credentials
-/// token to a request before it leaves this service - the one piece
-/// KeycloakTokenProvider by itself doesn't do. Shared by both
-/// anti-entropy-payments and anti-entropy-inventory (AntiEntropySweeper's
-/// two cross-service reads) so the token is fetched, and cached, once.
+/// Adds an access token to requests.
 /// </summary>
 public sealed class BearerTokenHandler(KeycloakTokenProvider tokenProvider) : DelegatingHandler
 {

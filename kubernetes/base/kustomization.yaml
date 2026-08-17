@@ -31,9 +31,6 @@ labels:
       app.kubernetes.io/part-of: saga-ecommerce
       app.kubernetes.io/managed-by: kustomize
 patches:
-  # Migration Jobs run at wave -1. Their configuration, credentials and DNS
-  # Services must exist first on a clean namespace, not merely happen to be
-  # left over from an earlier deployment.
   - target:
       version: v1
       kind: ConfigMap

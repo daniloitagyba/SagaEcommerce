@@ -35,8 +35,6 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
         var item = InventoryItem.Create("SKU-TEST-001", 10, DateTimeOffset.UtcNow);
         item.TryReserve(4, DateTimeOffset.UtcNow);
         dbContext.InventoryItems.Add(item);
-        // Keep the warehouse source of truth and its compatibility projection
-        // aligned: both start at Available=6/Reserved=4.
         var warehouseStock = WarehouseStock.Create("SKU-TEST-001", "WH-TEST", 10, reorderPoint: 0, DateTimeOffset.UtcNow);
         warehouseStock.TryReserve(4, DateTimeOffset.UtcNow);
         dbContext.WarehouseStocks.Add(warehouseStock);
@@ -65,7 +63,6 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
         var outboxMessage = await dbContext.OutboxMessages.SingleAsync();
         var reply = JsonSerializer.Deserialize<InventoryReservationCommitReplied>(outboxMessage.Payload, SerializerOptions)!;
 
-        // Available stays at 6 (never returns) - Reserved drops from 4 to 0.
         Assert.Equal(6, item.AvailableQuantity);
         Assert.Equal(0, item.ReservedQuantity);
         Assert.True(reply.Committed);
@@ -88,7 +85,6 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
         var outboxMessage = await dbContext.OutboxMessages.SingleAsync();
         var reply = JsonSerializer.Deserialize<InventoryReservationReleaseReplied>(outboxMessage.Payload, SerializerOptions)!;
 
-        // Available returns to the original 10 - Reserved drops back to 0.
         Assert.Equal(10, item.AvailableQuantity);
         Assert.Equal(0, item.ReservedQuantity);
         Assert.True(reply.Released);
@@ -97,7 +93,6 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
     [Fact]
     public async Task CommitAndReleaseReuseTheSameReservationIdWithoutInboxCollision()
     {
-        // Commit and Release use a different inbox consumer_name suffix than Reserve, so reusing the ReservationId isn't mistaken for a duplicate.
         var processor = CreateProcessor();
         var reservationId = Guid.NewGuid();
 
@@ -111,9 +106,6 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
         var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
         var item = await dbContext.InventoryItems.SingleAsync(i => i.Sku == "SKU-TEST-001");
 
-        // Started at Available=6/Reserved=4 (from InitializeAsync); Reserve
-        // 2 more (Available=4/Reserved=6), then Commit those same 2
-        // (Available stays 4, Reserved drops to 4).
         Assert.Equal(4, item.AvailableQuantity);
         Assert.Equal(4, item.ReservedQuantity);
     }
@@ -205,9 +197,6 @@ public sealed class InventorySettlementMessageProcessorTests(PostgresFixture fix
             var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
             var item = InventoryItem.Create("SKU-MULTI-WH", 6, DateTimeOffset.UtcNow);
             dbContext.InventoryItems.Add(item);
-            // WH-LOW has the least available stock - the warehouse the pre-fix
-            // TryRestockAsync would always have picked regardless of which
-            // warehouse a purchase order was actually raised for.
             dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-MULTI-WH", "WH-LOW", 1, reorderPoint: 0, DateTimeOffset.UtcNow));
             dbContext.WarehouseStocks.Add(WarehouseStock.Create("SKU-MULTI-WH", "WH-HIGH", 5, reorderPoint: 0, DateTimeOffset.UtcNow));
             await dbContext.SaveChangesAsync();

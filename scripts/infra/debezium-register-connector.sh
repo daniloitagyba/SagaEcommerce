@@ -20,11 +20,6 @@ postgres_password=$(
     grep --only-matching --perl-regexp 'Password=\K[^;]+'
 )
 
-# The Debezium REST API's published host port doesn't actually bind on this
-# server despite `docker inspect` showing correct HostConfig.PortBindings -
-# the same Docker networking quirk already documented for Alertmanager in
-# Milestone 16. Worked around the same way: call the API from inside the
-# container itself rather than via the host port.
 cd "$compose_directory"
 docker compose exec -T debezium curl \
   --fail --silent --show-error \

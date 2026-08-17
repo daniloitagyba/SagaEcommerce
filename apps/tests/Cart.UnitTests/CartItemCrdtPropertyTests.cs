@@ -3,20 +3,7 @@ using CsCheck;
 
 namespace Cart.UnitTests;
 
-/// <summary>
-/// The actual mathematical content of "this is a CRDT" -
-/// commutativity, associativity and idempotence of Merge, proven against
-/// randomly generated states rather than asserted by inspection, plus the
-/// two behavioural properties the whole exercise exists for: no
-/// resurrection, and add-wins-over-a-concurrent-remove.
-///
-/// record-synthesized Equals does not help here - HashSet and Dictionary
-/// don't override Equals (reference equality), so two independently built
-/// CartItemCrdt values with identical content compare unequal by the
-/// language's own default. StructurallyEqual below is this file's own
-/// comparer, used everywhere Assert.Equal would otherwise silently pass or
-/// fail for the wrong reason.
-/// </summary>
+/// <summary>The mathematical content of "this is a CRDT" - commutativity, associativity and idempotence of Merge, proven against randomly generated states, plus the two behavioural properties the exercise exists for: no resurrection, and add-wins-over-a-concurrent-remove.</summary>
 public class CartItemCrdtPropertyTests
 {
     private static bool StructurallyEqual(CartItemCrdt a, CartItemCrdt b) =>
@@ -29,12 +16,7 @@ public class CartItemCrdtPropertyTests
         Gen.Select(Gen.OneOfConst("replica-a", "replica-b", "replica-c"), Gen.Long[0, 1000])
             .Select(t => new CartDot(t.Item1, t.Item2));
 
-    /// <summary>
-    /// Builds an arbitrary reachable CartItemCrdt by folding a random
-    /// sequence of Increase/Decrease/Remove operations from a small pool of
-    /// replicas - not an arbitrary bag of fields, which could describe a
-    /// state Merge could never actually produce.
-    /// </summary>
+    /// <summary>Builds an arbitrary reachable CartItemCrdt by folding a random sequence of Increase/Decrease/Remove operations from a small pool of replicas - not an arbitrary bag of fields, which could describe a state Merge could never actually produce.</summary>
     private static Gen<CartItemCrdt> GenState =>
         Gen.Select(Gen.OneOfConst("replica-a", "replica-b", "replica-c"), Gen.Int[1, 20], Gen.Int[0, 2])
             .List[0, 15]
@@ -105,9 +87,6 @@ public class CartItemCrdtPropertyTests
     [Fact]
     public void SequentialAddThenRemoveOnTheSameReplicaNeverResurrectsUnderAnyMerge()
     {
-        // The canonical case: one replica adds, then removes, entirely on
-        // its own - a second replica that never touched this SKU merging
-        // in afterwards must never bring it back.
         Gen.Select(GenState, Gen.Int[1, 20]).Sample(t =>
         {
             var (untouched, quantity) = t;
@@ -122,13 +101,9 @@ public class CartItemCrdtPropertyTests
     [Fact]
     public void AConcurrentAddSurvivesARemoveThatNeverObservedIt()
     {
-        // Replica B removes everything it has seen (nothing, in this case -
-        // it starts from empty, modelling "never synced this SKU").
-        // Replica A concurrently adds. The dot A minted was never in B's
-        // tombstone set, so it must survive the merge - add wins.
         Gen.Int[1, 50].Sample(quantity =>
         {
-            var replicaARemoved = CartItemCrdt.Empty.Remove(); // observed nothing, tombstones nothing
+            var replicaARemoved = CartItemCrdt.Empty.Remove();
             var replicaBAdded = CartItemCrdt.Empty.Increase("replica-b", quantity, dotCounter: 0);
 
             var merged = CartItemCrdt.Merge(replicaARemoved, replicaBAdded);
@@ -139,12 +114,6 @@ public class CartItemCrdtPropertyTests
     [Fact]
     public void AConcurrentAddSurvivesARemoveOfAnEarlierVersionOfTheSameItem()
     {
-        // The Dynamo-paper shopping-cart scenario itself: the item already
-        // exists (dot 0). Replica A observes it and removes it (tombstones
-        // dot 0). Concurrently, replica B increases the same SKU - a fresh
-        // dot (1) neither replica has reconciled yet. After merging, the
-        // increase must survive: A's remove could only tombstone what A had
-        // actually seen, and dot 1 postdates that.
         var original = CartItemCrdt.Empty.Increase("replica-a", 1, dotCounter: 0);
 
         var replicaARemoved = original.Remove();
@@ -153,6 +122,6 @@ public class CartItemCrdtPropertyTests
         var merged = CartItemCrdt.Merge(replicaARemoved, replicaBIncreased);
 
         Assert.True(merged.IsPresent);
-        Assert.Equal(3, merged.EffectiveQuantity); // 1 (original) + 2 (B's increase) - A's remove only tombstoned dot 0's original contribution to *presence*, not the counter.
+        Assert.Equal(3, merged.EffectiveQuantity);
     }
 }

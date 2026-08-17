@@ -36,21 +36,21 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
 
-      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
+      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
         with:
           version: v1.34.1
 
@@ -105,17 +105,12 @@ jobs:
         run: |
           overlay="kubernetes/overlays/${TARGET_ENVIRONMENT}"
           mkdir -p "$overlay"
-          # shellcheck disable=SC1091
           source promotion/images.env
           {
             printf 'apiVersion: kustomize.config.k8s.io/v1beta1\n'
             printf 'kind: Kustomization\n'
             printf 'resources:\n  - ../../base\n'
             if [[ "$TARGET_ENVIRONMENT" == "staging" ]]; then
-              # The staging target is the K3s lab. Reuse only its external
-              # infrastructure endpoints and connectivity proof. Referencing
-              # the whole local overlay would also inherit local tags and
-              # imagePullPolicy: Never, which makes registry digests unusable.
               printf '  - ../lab-infrastructure\n'
             fi
             printf 'images:\n'

@@ -6,10 +6,6 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Same guard Orders.Api already carries, where
-// one unregistered IProducer took the whole outbox down while the service
-// went on reporting healthy - a background loop cannot fail loudly on its
-// own, so the failure has to happen at startup instead.
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateOnBuild = true;
@@ -42,22 +38,12 @@ builder.Services.AddOptions<CatalogClientOptions>()
 
 builder.Services.AddSingleton<CartStore>();
 builder.Services.AddSingleton(TimeProvider.System);
-// Add-to-cart for a SKU not already in the cart needs this call to
-// succeed (CartEndpoints.PutItemAsync has no fallback for a new line
-// item), unlike the best-effort treatment other services give a Catalog
-// lookup that only enriches an existing read.
 builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CatalogClientOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl);
 }).AddCriticalHttpResilience();
 
-// A cart used to be readable and clearable by anyone who
-// could guess or enumerate its cartId - there was no owner to check
-// because there was no identity at all. Requiring authentication and
-// deriving the cart's key from the caller (CartEndpoints.GetCustomerId)
-// removes the enumeration surface entirely rather than guarding it: there
-// is no longer a client-supplied id that names someone else's cart.
 builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "cart-service");
 builder.Services.AddAuthorization();
 

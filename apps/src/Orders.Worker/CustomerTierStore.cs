@@ -4,19 +4,10 @@ using NpgsqlTypes;
 namespace Orders.Worker;
 
 /// <summary>
-/// Records a completed order and lets standing climb, and reverses that
-/// contribution if the order is later cancelled or fully returned. Records
-/// on <em>confirmation</em>, not creation, or placing and cancelling would
-/// have been the cheapest route to Gold on its own - but recording early
-/// was not, by itself, enough: confirm-then-cancel still credited spend
-/// permanently until ReverseCompletedOrderAsync closed that gap too (see
-/// OrderStatusStore.ApplySideEffectsAsync's own comment on the Cancelled
-/// branch for the state-graph reasoning). Raw Npgsql, matching this
-/// worker's other writes.
+/// Maintains customer tiers from completed orders.
 /// </summary>
 public sealed class CustomerTierStore
 {
-    // One statement: increment and re-derive tier together, or two concurrent confirmations could each miss the other's contribution.
     private const string RecordSql = """
         UPDATE customers
         SET lifetime_spend = lifetime_spend + @amount,
@@ -29,13 +20,6 @@ public sealed class CustomerTierStore
         WHERE id = @id;
         """;
 
-    // Mirrors Orders.Domain.Customer.ReverseCompletedOrder: subtracts spend
-    // and floors at zero the same way CouponRedemptionStore's release does
-    // for redemption_count, but deliberately does NOT re-derive tier -
-    // taking a discount away retroactively generates support tickets; real
-    // loyalty programmes review downward on a schedule, not on the instant
-    // a refund posts. A customer keeps whatever standing a since-reversed
-    // order already earned them.
     private const string ReverseSql = """
         UPDATE customers
         SET lifetime_spend = GREATEST(lifetime_spend - @amount, 0),
@@ -52,12 +36,7 @@ public sealed class CustomerTierStore
         ExecuteAsync(connection, transaction, RecordSql, customerId, amount, cancellationToken);
 
     /// <summary>
-    /// Reverses a completed order's contribution to standing - a
-    /// cancellation of an already-Confirmed order, or a full return, must
-    /// not leave the customer permanently credited for spend that was
-    /// given back. A <em>partial</em> return does not call this: the
-    /// customer kept most of the order, and there is no policy yet for
-    /// pro-rating standing down for a partial refund.
+    /// Reverses a completed order's contribution to standing.
     /// </summary>
     public Task ReverseCompletedOrderAsync(
         NpgsqlConnection connection,
@@ -95,8 +74,7 @@ public sealed class CustomerTierStore
 }
 
 /// <summary>
-/// Mirrors Orders.Domain.CustomerTiers - Orders.Worker deliberately doesn't
-/// reference Orders.Domain, so these are duplicated with a test pinning the two together.
+/// Mirrors Orders.Domain.CustomerTiers.
 /// </summary>
 public static class CustomerTierThresholds
 {

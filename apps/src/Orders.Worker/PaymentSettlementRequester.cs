@@ -7,15 +7,7 @@ using NpgsqlTypes;
 namespace Orders.Worker;
 
 /// <summary>
-/// Asks Payments to finish what the authorization started -
-/// capture the money at Shipped, or release the hold on
-/// cancellation.
-///
-/// <para>
-/// Requests are inserted into Orders' transactional outbox on the same
-/// connection and transaction as the status change. Delivery is owned by
-/// the API's outbox publisher and can be retried without losing the command.
-/// </para>
+/// Requests payment settlement.
 /// </summary>
 public sealed class PaymentSettlementRequester
 {
@@ -43,11 +35,7 @@ public sealed class PaymentSettlementRequester
     }
 
     /// <summary>
-    /// The order was cancelled - let Payments decide whether
-    /// that means voiding a hold or refunding a capture (see
-    /// Payment.TryCancel). Replaces the old RequestVoidAsync call on this
-    /// path, which only fired for methods that leave a hold - Pix is
-    /// captured immediately, so cancelling it needs a refund, not a void.
+    /// Settles a cancelled order payment.
     /// </summary>
     public Task RequestCancellationAsync(
         NpgsqlConnection connection,

@@ -3,14 +3,6 @@ using NetArchTest.Rules;
 
 namespace Services.ArchitectureTests;
 
-// Guardrail: Payments.Service.Domain and Inventory.Service.Domain both
-// follow the same aggregate pattern Orders.Domain does - private
-// constructor, static factory, private-set properties - so this codifies
-// it here too. Cart.Service.Domain and Catalog.Service.Domain are
-// deliberately excluded: CartLineItem is an immutable record (no state to
-// protect beyond what the record already guarantees), and Product/Category
-// are plain MongoDB-mapped documents with no business invariants of their
-// own, unlike the other two services' transactional aggregates.
 public class DomainEncapsulationTests
 {
     public static IEnumerable<object[]> EntityTypeCases()
@@ -48,7 +40,6 @@ public class DomainEncapsulationTests
     [Fact]
     public void AtLeastOneEntityTypeIsCoveredByThisGuardrail()
     {
-        // Guards the two rules below from passing trivially if every entity were renamed to a record or moved out of these namespaces.
         Assert.NotEmpty(EntityTypeCases());
     }
 

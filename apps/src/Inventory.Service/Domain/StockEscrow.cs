@@ -1,26 +1,6 @@
 namespace Inventory.Service.Domain;
 
-/// <summary>
-/// Splits one warehouse's stock of one SKU into N
-/// independently-lockable buckets, so concurrent reservations against the
-/// same (Sku, Warehouse) can be decided in parallel instead of serializing
-/// on one counter. A prior measurement found the ceiling this answers: a SKU
-/// maps to one Kafka partition (so a flash sale on one SKU is handled by
-/// exactly one consumer, one row, one lock at a time) precisely because
-/// <see cref="WarehouseStock"/>'s read-then-write has no locking of its
-/// own - correctness depends entirely on nothing else touching the row
-/// concurrently. Escrow answers "what if a hot SKU's stock were many rows
-/// instead of one" without needing a schema change to prove the algorithm:
-/// <see cref="TryReserve"/> reuses <see cref="StockAllocator"/> wholesale,
-/// treating each bucket as a candidate the exact same way a real warehouse
-/// already is - "prefer one, split only when the preferred one alone can't
-/// cover it" is the identical policy at a finer grain.
-///
-/// Immutable and pure, like <see cref="StockAllocator"/> itself: a
-/// reservation decision is a function of the current buckets and the
-/// request, provable with the same property-testing approach the rest of
-/// this domain already uses instead of asserted by inspection.
-/// </summary>
+/// <summary>Splits one warehouse's stock of one SKU into N independently-lockable buckets so concurrent reservations can be decided in parallel.</summary>
 public sealed class StockEscrow
 {
     private readonly IReadOnlyList<int> _buckets;
@@ -54,12 +34,7 @@ public sealed class StockEscrow
 
     private static StockEscrow FromBuckets(IReadOnlyList<int> buckets) => new(buckets);
 
-    /// <summary>
-    /// Consistent hash routing: the same key (a reservation id, a customer
-    /// id - anything that varies per request) always prefers the same
-    /// bucket, so repeated small requests for one SKU spread across
-    /// buckets roughly evenly instead of piling onto bucket zero.
-    /// </summary>
+    /// <summary>Consistent hash routing so the same key always prefers the same bucket.</summary>
     public static int PreferredBucket(string key, int bucketCount) =>
         (int)((uint)key.GetHashCode() % (uint)bucketCount);
 
@@ -70,14 +45,7 @@ public sealed class StockEscrow
         public static ReservationPlan Unfulfillable => new(false, []);
     }
 
-    /// <summary>
-    /// Tries to fill <paramref name="quantity"/> starting from
-    /// <paramref name="preferredBucket"/>, borrowing from the nearest
-    /// siblings (by circular distance, so bucket 0's nearest neighbour past
-    /// the last index wraps to the first) only when the preferred bucket
-    /// alone can't cover it. Does not mutate <c>this</c> - see
-    /// <see cref="Apply"/>.
-    /// </summary>
+    /// <summary>Tries to fill <paramref name="quantity"/> starting from <paramref name="preferredBucket"/>, borrowing from nearest siblings; does not mutate <c>this</c>.</summary>
     public ReservationPlan TryReserve(int preferredBucket, int quantity)
     {
         if (preferredBucket < 0 || preferredBucket >= BucketCount)

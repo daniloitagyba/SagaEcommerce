@@ -2,13 +2,7 @@ using Cart.Service.Domain;
 
 namespace Cart.UnitTests;
 
-/// <summary>
-/// CartCrdtState composes CartItemCrdt key-wise across a
-/// whole cart - these pin the map-level behaviour specifically (which SKU
-/// a merge affects, that unrelated SKUs are untouched, that ToLineItems
-/// only ever surfaces what's actually live) on top of the per-item CRDT
-/// laws CartItemCrdtPropertyTests already proves.
-/// </summary>
+/// <summary>CartCrdtState composes CartItemCrdt key-wise across a whole cart - these pin the map-level behaviour (which SKU a merge affects, that unrelated SKUs are untouched, that ToLineItems only surfaces what's live) on top of the per-item CRDT laws CartItemCrdtPropertyTests already proves.</summary>
 public class CartCrdtStateTests
 {
     private static readonly CartItemMetadata Book = new("Livro", 39.90m, "BRL", DateTimeOffset.UtcNow);
@@ -47,7 +41,6 @@ public class CartCrdtStateTests
         var firstAdd = new CartItemMetadata("Livro Original", 39.90m, "BRL", DateTimeOffset.UtcNow);
         var state = CartCrdtState.Empty.Increase("SKU-A", "replica-a", 1, 0, firstAdd);
 
-        // A second Increase while the item is still present must not re-snapshot metadata.
         var reinforced = state.Increase("SKU-A", "replica-a", 1, 1, new CartItemMetadata("Different Name", 999m, "BRL", DateTimeOffset.UtcNow));
 
         Assert.Equal("Livro Original", reinforced.ToLineItems().Single().ProductName);
@@ -107,10 +100,6 @@ public class CartCrdtStateTests
     [Fact]
     public void AConcurrentAddOnOneReplicaSurvivesARemoveOnAnotherThatNeverSawIt()
     {
-        // The map-level version of CartItemCrdtPropertyTests'
-        // add-wins case: replica A never learned about SKU-A at all
-        // (empty state), so its "remove everything I've seen" is a no-op
-        // for it; replica B added it. The merge must keep it.
         var replicaAknowsNothing = CartCrdtState.Empty.Remove("SKU-A");
         var replicaBAdded = CartCrdtState.Empty.Increase("SKU-A", "replica-b", 3, 0, Book);
 

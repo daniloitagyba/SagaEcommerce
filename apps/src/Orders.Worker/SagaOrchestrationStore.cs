@@ -7,36 +7,8 @@ using Polly.Registry;
 namespace Orders.Worker;
 
 /// <summary>
-/// Postgres-backed replacement for the in-memory
-/// SagaOrchestrationTracker that didn't survive a pod restart. Raw Npgsql,
-/// matching OrderEventStoreAppender/OrderProjectionStore - EF only owns
-/// this table's schema. TryAdvanceAsync is the
-/// general-purpose "move to the next step" operation, gated on the row's
-/// CURRENT step matching what the caller expects, so a stale or duplicate
-/// reply for an already-passed step is a no-op rather than corrupting state.
-///
-/// A saga now tracks every line of the order, not just the
-/// largest by value - <see cref="SagaOrchestrationRecord.Lines"/> is one
-/// row per SKU in `saga_orchestration_lines`, each with its own
-/// ReservationId and its own Reserved/Committed/Released outcome. The
-/// parent row's Step still drives the order-level 4-step state machine
-/// unchanged (that's what the TLA+ model and the
-/// deterministic simulation both verify, and neither needed to change for
-/// multi-line orders - they model "the reservation step succeeded" as one
-/// abstract event, never how many concrete reservations that required).
-/// What's new is that each of those four steps now waits for every line's
-/// reply, not one, before the parent row is allowed to advance -
-/// RecordLineOutcomeAsync records one line's answer, and the caller
-/// re-reads every line via the returned snapshot to decide whether all of
-/// them have now answered.
+/// Stores saga orchestration state in PostgreSQL.
 /// </summary>
-// Split across two files to stay under the 500-line module-size budget,
-// the same physical-split-not-different-concern pattern
-// InventoryReservationMessageProcessor uses for its own split: this file
-// owns tracking/advancing/completing a saga row, and
-// SagaOrchestrationStore.Timeout.cs owns SagaTimeoutSweeper's claim path
-// plus MarkParkedAsync - the write that keeps a backordered order out of
-// that claim in the first place.
 public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, ResiliencePipelineProvider<string> pipelineProvider)
 {
     private const string InsertParentSql = """
@@ -78,13 +50,6 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
         ORDER BY order_id, line_index;
         """;
 
-    // Writes (CAS-guarded transactions and single-statement guarded
-    // updates) use the no-retry transactional pipeline - see
-    // ResilienceExtensions.PostgresTransactionPipeline's own comment for
-    // why blindly retrying a whole transaction can mask a successful
-    // commit's own caller-visible side effects. Pure reads below
-    // (SelectLinesAsync/GetLinesAsync) keep the retrying PostgresPipeline
-    // instead - a read has no masking risk, and benefits from the retry.
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
     private readonly ResiliencePipeline _readPipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
 
@@ -219,12 +184,7 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
     }
 
     /// <summary>
-    /// Deletes the parent row (and, via ON DELETE CASCADE, its lines) only
-    /// if it's still on <paramref name="expectedCurrentStep"/>, returning a
-    /// snapshot of the lines as they stood immediately before deletion -
-    /// callers use that snapshot (e.g. "which lines were actually
-    /// Reserved") to decide what compensation, if any, still needs
-    /// publishing after this call.
+    /// Deletes a saga at the expected step.
     /// </summary>
     public Task<SagaOrchestrationRecord?> TryCompleteAsync(
         Guid orderId,
@@ -240,23 +200,7 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
         TryCompleteCoreAsync(orderId, expectedCurrentStep, commandFactory, null, cancellationToken);
 
     /// <summary>
-    /// Same as TryCompleteAndQueueAsync, but also applies an order-status
-    /// transition (or several - see OrderSagaReplyConsumer's own commit
-    /// callback for CommitInventory, which needs up to two) inside the
-    /// very transaction that deletes the saga row, via
-    /// OrderStatusStore.TryTransitionWithinTransactionAsync.
-    ///
-    /// Introduced at Milestone 91: before this, callers deleted the saga
-    /// row in one transaction (committed here) and then called
-    /// OrderStatusStore.TryCancelAsync/TryConfirmAsync/TryTransitionAsync
-    /// afterwards, in a second, separate transaction. A crash between the
-    /// two left the order stuck in a non-terminal status with no saga row
-    /// left to time out again - see
-    /// docs/roadmap-milestones-91-99.md, "durable claim, non-durable act".
-    /// Worse, a Kafka redelivery of the very reply that would have driven
-    /// the second call landed on `parent is null` (the saga row was
-    /// already gone) and silently dropped the status transition instead of
-    /// retrying it - the exact case a redelivery is supposed to make safe.
+    /// Completes a saga and transitions its order.
     /// </summary>
     public Task<SagaOrchestrationRecord?> TryCompleteAndResolveAsync(
         Guid orderId,
@@ -312,14 +256,7 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
     }
 
     /// <summary>
-    /// Records one line's outcome for whichever field the caller names
-    /// (Reserved/Committed/Released), guarded by "the field is still
-    /// unset" the same way TryAdvanceAsync guards on Step - a redelivered
-    /// reply for a line that already has an answer, or a late reply for an
-    /// order whose saga row (and so whose line rows, via cascade) is
-    /// already gone, is a no-op. Returns the full up-to-date line list for
-    /// the order so the caller can decide whether every line has now
-    /// answered - or null if the order/line no longer exists at all.
+    /// Records a saga line outcome.
     /// </summary>
     public async Task<IReadOnlyList<SagaLineRecord>?> RecordLineOutcomeAsync(
         Guid orderId,

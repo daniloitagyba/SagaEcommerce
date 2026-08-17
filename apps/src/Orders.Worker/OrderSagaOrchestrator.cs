@@ -9,13 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Orders.Worker;
 
 /// <summary>
-/// An explicit orchestrator for the same order-created event
-/// the choreographed saga already reacts to - a second, additive consumer
-/// group on orders.created.v1. Where Payments.Service's choreographed
-/// consumer autonomously decides on seeing OrderCreated, this orchestrator
-/// explicitly requests a decision and owns the timeout if one never
-/// arrives. Only kicks off step 1 of the 4-step saga;
-/// OrderSagaReplyConsumer drives every subsequent transition as replies arrive.
+/// Starts order sagas.
 /// </summary>
 public sealed class InvalidSagaMessageException(string message, Exception? innerException = null)
     : Exception(message, innerException);
@@ -43,10 +37,6 @@ public sealed class OrderSagaOrchestrator(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // Previously logged and silently dropped the message - now
-            // rethrown so KafkaConsumerHost's retry/dead-letter machinery
-            // actually sees it instead of the offset just auto-committing
-            // over a message nobody ever acted on.
             SagaOrchestratorLog.InvalidMessage(logger, exception);
             throw new InvalidSagaMessageException("The Kafka message is not a valid OrderCreated event.", exception);
         }
@@ -55,15 +45,10 @@ public sealed class OrderSagaOrchestrator(
 
         if (orderCreated.LinesOrEmpty.Count == 0)
         {
-            // An amount-only order has nothing to reserve - inventing a SKU is exactly the behaviour this was built to remove.
             SagaOrchestratorLog.SkippedOrderWithoutLines(logger, orderCreated.OrderId, orderCreated.CorrelationId);
             return;
         }
 
-        // Every line gets its own reservation, not just the
-        // largest by value - SagaOrchestrationState.Lines is one row per
-        // SKU, each with its own ReservationId, so Commit/Release act on
-        // the specific line they're replying to.
         var lines = orderCreated.LinesOrEmpty
             .Select(line => new SagaReservationLine(Guid.NewGuid(), line.Sku, line.Quantity))
             .ToList();

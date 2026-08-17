@@ -14,27 +14,11 @@ public sealed class OrderOutboxEventDispatcher(
         return message.EventType switch
         {
             nameof(OrderCreated) => PublishOrderCreatedAsync(message, cancellationToken),
-            // AdvanceFulfillmentHandler queues this in the same transaction
-            // as the status CAS (EfOrderStatusRepository.TryTransitionAsync) -
-            // the read-model projection otherwise never learns about a
-            // warehouse move or a shopper's self-service cancellation, only
-            // ever about OrderCreated/PaymentDecided.
             nameof(OrderStatusChanged) => PublishOrderStatusChangedAsync(message, cancellationToken),
-            // The fulfilment API queues these in the same
-            // transaction as the status change, so they ride the outbox
-            // rather than being produced inline - a capture command must
-            // not survive a rolled-back "Shipped".
             nameof(PaymentCaptureRequested) => PublishCaptureAsync(message, cancellationToken),
-            // Replaces PaymentVoidRequested - a cancellation
-            // may need to void a hold or refund a capture, decided by
-            // Payments from the payment's own state.
             nameof(PaymentCancellationRequested) => PublishCancellationAsync(message, cancellationToken),
-            // A return queues both, in the same transaction
-            // as the return itself. A post-commit
-            // cancellation queues a restock the same way.
             nameof(PaymentRefundRequested) => PublishRefundAsync(message, cancellationToken),
             nameof(InventoryRestockRequested) => PublishRestockAsync(message, cancellationToken),
-            // A cancellation from Backordered queues this instead of a restock - nothing was ever committed to give back.
             nameof(BackorderCancellationRequested) => PublishBackorderCancellationAsync(message, cancellationToken),
             _ => throw new JsonException($"Unsupported outbox event type '{message.EventType}'.")
         };

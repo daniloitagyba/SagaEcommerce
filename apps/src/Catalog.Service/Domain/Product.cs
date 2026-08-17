@@ -1,15 +1,6 @@
 namespace Catalog.Service.Domain;
 
-/// <summary>
-/// MongoDB-backed rather than another Postgres table, since
-/// product attributes are genuinely heterogeneous per category (a t-shirt
-/// has size/color, a laptop has RAM/CPU) - a relational schema means EAV,
-/// JSONB, or one table per category, all worse fits than a document.
-/// Attributes stays a flat string/string map to keep the API simple.
-/// The Id-as-ObjectId mapping moved to a BsonClassMap in
-/// Catalog.Service.Data, so this type carries no MongoDB.Bson dependency,
-/// matching the domain-purity rule Orders.Domain enforces.
-/// </summary>
+/// <summary>A catalog product, MongoDB-backed to accommodate heterogeneous per-category attributes.</summary>
 public sealed class Product
 {
     private const int MaxNameLength = 200;
@@ -50,15 +41,7 @@ public sealed class Product
         return product;
     }
 
-    /// <summary>
-    /// Called from Create and from ProductRepository's write path - the
-    /// only other construction route is CatalogSeeder's object-initializer
-    /// syntax (every setter here is public, matching MongoDB.Driver's own
-    /// POCO mapping conventions), which bypassed Create and every invariant
-    /// below entirely. Also normalizes Sku/Currency casing in place so
-    /// "sku-001" and "SKU-001" collide against the unique index instead of
-    /// silently persisting as two distinct documents.
-    /// </summary>
+    /// <summary>Validates all invariants and normalizes Sku/Currency casing in place.</summary>
     public void EnsureValid()
     {
         if (string.IsNullOrWhiteSpace(Name) || Name.Length > MaxNameLength)

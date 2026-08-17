@@ -13,14 +13,7 @@ public sealed record RiskAssessment(int Score, bool Approved, IReadOnlyList<Risk
         : string.Join("; ", Signals.Select(signal => $"{signal.Code}(+{signal.Score})"));
 }
 
-/// <summary>
-/// Replaces "decline anything over 1000" with a scored set of
-/// signals that depend on state - this customer's history and buying pace -
-/// which is what makes the payment step genuinely stateful and gives the
-/// inbox deduplication on both saga paths a reason beyond tidiness: a
-/// replayed message would otherwise see its own earlier write and could
-/// reach a different answer. Scored, not boolean, because signals compound.
-/// </summary>
+/// <summary>Scores a payment decision from signals dependent on the customer's history and buying pace.</summary>
 public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<PaymentRiskOptions> options)
 {
     private readonly PaymentRiskOptions _options = options.Value;
@@ -49,24 +42,11 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
                 _options.HighValueScore));
         }
 
-        // An unknown customer stays unknown, not scored as a first purchase - it may just be a request that lost its CustomerId.
         if (string.IsNullOrWhiteSpace(customerId))
         {
             return Assess(signals);
         }
 
-        // The account's true first-ever payment date - NEW_ACCOUNT/
-        // FIRST_PURCHASE need exactly that, which a bounded lookback window
-        // (like the one HistoryMaxRows applies below) cannot answer. Used
-        // to load every DecidedAt for the customer and Min() it client-side
-        // regardless of provider, an unbounded read that grew with the
-        // customer's entire order history on every single checkout. Same
-        // provider split as the bounded history query just below: on
-        // PostgreSQL, MIN(decided_at) now runs server-side against
-        // ix_payments_customer_history and returns one row; SQLite's EF
-        // provider still can't translate MIN()/ORDER BY over a
-        // DateTimeOffset column at all, so the lightweight test provider
-        // keeps the client-side fallback.
         DateTimeOffset? firstSeen;
         if (string.Equals(
                 dbContext.Database.ProviderName,
@@ -95,7 +75,6 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
             return Assess(signals);
         }
 
-        // An account that appeared minutes ago and is already ordering again isn't returning - FIRST_PURCHASE has already stopped firing by then.
         if (now - firstSeen.Value < TimeSpan.FromMinutes(_options.NewAccountWindowMinutes))
         {
             signals.Add(new RiskSignal(
@@ -104,12 +83,6 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
                 _options.NewAccountScore));
         }
 
-        // These signals intentionally use the most recent bounded sample.
-        // Take() without an order returned an arbitrary provider-dependent
-        // subset: once a customer had more than HistoryMaxRows payments,
-        // fresh velocity and address changes could disappear while old rows
-        // kept influencing the decision. Id is the deterministic tie-breaker
-        // for payments decided at the same instant.
         var historyQuery = dbContext.Payments
             .AsNoTracking()
             .Where(payment => payment.IsPrimary && payment.CustomerId == customerId)
@@ -126,11 +99,6 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
                 "Microsoft.EntityFrameworkCore.Sqlite",
                 StringComparison.Ordinal))
         {
-            // SQLite stores DateTimeOffset as text and its EF provider
-            // cannot translate ordering over it. This branch exists for
-            // the lightweight test provider only; production PostgreSQL
-            // performs the ordering and limit server-side against
-            // ix_payments_customer_history.
             history = (await historyQuery.ToListAsync(cancellationToken))
                 .OrderByDescending(payment => payment.DecidedAt)
                 .ThenByDescending(payment => payment.Id)
@@ -156,7 +124,6 @@ public sealed class PaymentRiskEvaluator(PaymentsDbContext dbContext, IOptions<P
                 _options.VelocityScore));
         }
 
-        // Only meaningful against a customer with a shipping history - scoring absence as mismatch would flag every address-less order.
         if (shippingPostalPrefix.Length > 0)
         {
             var knownPrefixes = history

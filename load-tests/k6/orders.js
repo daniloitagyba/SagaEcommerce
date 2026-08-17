@@ -8,11 +8,6 @@ const profileName = __ENV.PROFILE || 'smoke';
 const baseUrl = (__ENV.BASE_URL || '').replace(/\/$/, '');
 const runId = __ENV.RUN_ID || `${Date.now()}`;
 const accessToken = __ENV.ACCESS_TOKEN || '';
-// Milestone 39: direct pod IPs, not the Service ClusterIP - hedging needs to
-// race two DIFFERENT backend replicas, and a single client connection to a
-// K8s Service VIP is load-balanced by kube-proxy at the TCP-connection
-// level, not per-request, so requests through it can't be steered to a
-// specific replica.
 const podIps = (__ENV.ORDERS_API_POD_IPS || '').split(',').map((ip) => ip.trim()).filter(Boolean);
 const hedgeDelayMs = Number(__ENV.HEDGE_DELAY_MS || '20');
 
@@ -24,11 +19,6 @@ if (!accessToken) {
   throw new Error('ACCESS_TOKEN is required (see scripts/keycloak-get-token.sh).');
 }
 
-// Milestone 26: orders-api now requires a bearer token on every /orders
-// request. One token, fetched once by scripts/k6-run.sh before k6 starts,
-// is reused for the whole run rather than refetched per-VU/per-iteration -
-// the realm's 900s access token lifespan comfortably covers every profile's
-// total duration (soak, the longest, runs 5m20s including graceful stop).
 const authHeaders = { Authorization: `Bearer ${accessToken}` };
 
 const commonThresholds = {
@@ -219,11 +209,6 @@ const profiles = {
   hedged: {
     scenarios: {
       orders: {
-        // Milestone 38's cluster-wide distributed rate limiter (150 req/10s
-        // on /orders) is a real, separate protective layer this profile has
-        // to respect, not bypass - low VU count keeps total request volume
-        // (4 HTTP calls per iteration: 2 creates + 2 reads) comfortably
-        // under that limit rather than measuring 429s instead of hedging.
         executor: 'constant-vus',
         vus: 2,
         duration: '45s',
@@ -306,8 +291,6 @@ export function setup() {
     }
   }
 
-  // Give the Worker time to process the seed orders (and invalidate any
-  // not-yet-populated cache entries) before the cached-read workload starts.
   sleep(2);
   return { orderIds };
 }
@@ -430,13 +413,6 @@ function createOrderDirect(pod, label, iterationId) {
   return response.status === 201 ? response.json('id') : null;
 }
 
-// Milestone 39: real hedging, not "always fire twice" - the second request
-// only goes out if the first hasn't answered within hedgeDelayMs, racing
-// k6/timers' setTimeout against the in-flight primary request's own
-// Promise. Both requests target DIFFERENT replicas (pickTwoDistinctPods),
-// since hedging against the same backend that's already slow wouldn't
-// help - the whole point is routing around one replica having a bad
-// moment while the others are fine.
 async function hedgedGet(orderId, tags) {
   const [podA, podB] = pickTwoDistinctPods();
   const primary = http
@@ -472,11 +448,6 @@ async function hedgedWorkload() {
   const iterationId = `${runId}-${exec.vu.idInTest}-${exec.scenario.iterationInTest}`;
   const anyPod = podIps[Math.floor(Math.random() * podIps.length)];
 
-  // Two freshly-created orders, one per strategy - a brand new order's
-  // first read is a cache miss (Milestone 9's cache-aside is never
-  // populated by the create path itself), giving both strategies a real
-  // Postgres-backed read to work with instead of a sub-millisecond Redis
-  // hit that leaves no tail latency to hedge against.
   const unhedgedOrderId = createOrderDirect(anyPod, 'unhedged', iterationId);
   const hedgedOrderId = createOrderDirect(anyPod, 'hedged', iterationId);
 

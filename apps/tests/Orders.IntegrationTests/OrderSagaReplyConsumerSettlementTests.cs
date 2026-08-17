@@ -13,14 +13,7 @@ using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// Reproduces the exact race this reconciliation exists to close -
-/// an authorization expires (the sweeper, or a capture command that arrives
-/// too late) after the order has already shipped. Before it was added,
-/// nothing consumed payments.settlement-replied.v1 at all: the order would
-/// sit in Shipped forever, eventually Delivered, having never been charged,
-/// with no record anywhere that it went wrong.
-/// </summary>
+/// <summary>Reproduces the race this reconciliation exists to close: an authorization expires after the order has already shipped. Before this consumer existed, the order sat in Shipped forever, never charged, with no record it went wrong.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class OrderSagaReplyConsumerSettlementTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
@@ -89,15 +82,7 @@ public sealed class OrderSagaReplyConsumerSettlementTests(PostgresFixture fixtur
         Assert.Equal(OrderStatuses.Shipped, status);
     }
 
-    /// <summary>
-    /// The gap finding 8 closed: before RequiresReconciliation existed,
-    /// this consumer only recognized State == Expired by name, so a refund
-    /// mismatch reply for any other state (Voided here - a return's refund
-    /// request landing on a payment whose hold was already released some
-    /// other way) reached this exact method, with this exact shape, and was
-    /// silently dropped - the return had already been accepted and
-    /// restocked, but nothing ever told the saga the money never moved.
-    /// </summary>
+    /// <summary>The gap finding 8 closed: before RequiresReconciliation existed, this consumer only recognized State == Expired by name, so a refund mismatch reply for any other state was silently dropped.</summary>
     [Fact]
     public async Task AShippedOrderMovesToFulfillmentHoldWhenARefundMismatchesAVoidedPayment()
     {
@@ -116,10 +101,6 @@ public sealed class OrderSagaReplyConsumerSettlementTests(PostgresFixture fixtur
         _dbContext.Orders.Add(order);
         await _dbContext.SaveChangesAsync();
 
-        // Test fixture only: jumps the row straight to Shipped rather than
-        // walking every legal transition, since this test is about the
-        // settlement-reply reaction, not the lifecycle itself (that's
-        // OrderStatusTransitionTests).
         await using var command = _dataSource.CreateCommand("UPDATE orders SET status = 'Shipped' WHERE id = @id");
         command.Parameters.AddWithValue("id", order.Id);
         await command.ExecuteNonQueryAsync();

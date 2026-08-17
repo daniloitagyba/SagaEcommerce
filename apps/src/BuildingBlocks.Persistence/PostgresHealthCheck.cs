@@ -4,10 +4,7 @@ using Npgsql;
 
 namespace BuildingBlocks;
 
-// Type-activated (registered via AddTypeActivatedCheck, not AddCheck) so
-// every service can share one implementation while still supplying its own
-// connection-string name - "Orders", "Inventory", "Payments" - as a
-// constructor argument DI itself can't resolve.
+/// <summary>Type-activated Postgres health check shared across services, each supplying its own connection-string name.</summary>
 public sealed class PostgresHealthCheck(IConfiguration configuration, string connectionStringName) : IHealthCheck
 {
     private readonly string _connectionString = configuration.GetConnectionString(connectionStringName)

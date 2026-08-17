@@ -17,12 +17,7 @@ internal static partial class StorefrontLog
     public static partial void CartClearFailedAfterCheckout(ILogger logger, string cartId, string orderId, Exception exception);
 }
 
-/// <summary>
-/// This lab's genuine BFF fan-out - every other Storefront.Service
-/// endpoint (ProxyEndpoints) is a 1:1 reverse proxy. GetProductSummaryAsync
-/// calls Catalog and Inventory in parallel (see ProductSummaryOptions for
-/// why Inventory is hedged); CheckoutAsync turns a cart into an order.
-/// </summary>
+/// <summary>The BFF fan-out endpoints; every other Storefront.Service endpoint is a 1:1 reverse proxy.</summary>
 public static class StorefrontEndpoints
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -51,10 +46,6 @@ public static class StorefrontEndpoints
             ? GetHedgedJsonOrNullAsync(inventoryClient, $"/inventory/{Uri.EscapeDataString(sku)}", hedgeDelayMs, cancellationToken)
             : GetJsonOrNullAsync(inventoryClient, $"/inventory/{Uri.EscapeDataString(sku)}", cancellationToken);
 
-        // Awaited separately, not via Task.WhenAll: Inventory only enriches
-        // an otherwise-complete Catalog response, and WhenAll would fail
-        // the whole request if Inventory faults even though Catalog (which
-        // determines whether the SKU exists) answered fine.
         object? product;
         bool catalogUnavailable;
         try
@@ -98,15 +89,7 @@ public static class StorefrontEndpoints
         return Results.Ok(new { product, inventory, degraded = inventoryUnavailable });
     }
 
-    /// <summary>
-    /// Fires the primary request; if it hasn't answered within
-    /// <paramref name="hedgeDelayMs"/>, fires a second one at the same
-    /// backend (the K8s Service load-balances new connections, so it has a
-    /// real chance of landing on a different pod) and takes whichever
-    /// finishes first. The loser is cancelled rather than left running -
-    /// measured to matter, since uncancelled losers pile up and contend for
-    /// the same connection pool. Safe here because it's a read-only GET.
-    /// </summary>
+    /// <summary>Fires the primary request, then a hedge after <paramref name="hedgeDelayMs"/>, and takes whichever finishes first; the loser is cancelled.</summary>
     private static async Task<object?> GetHedgedJsonOrNullAsync(
         HttpClient client,
         string requestUri,
@@ -142,18 +125,18 @@ public static class StorefrontEndpoints
         return await response.Content.ReadFromJsonAsync<object>(cancellationToken);
     }
 
-    /// <summary>Mirrors Orders.Api's ShippingAddressRequest shape - Storefront has no reference to that assembly to reuse it directly.</summary>
+    /// <summary>Mirrors Orders.Api's ShippingAddressRequest shape.</summary>
     internal sealed record CheckoutShippingAddress(string? Line1, string? City, string? Region, string? PostalCode);
 
     internal sealed record CheckoutRequest(
         string? CouponCode,
-        /// <summary>Card, Pix, or Boleto. Null defaults to Pix, same as Orders.Api.</summary>
+        /// <summary>Card, Pix, or Boleto; null defaults to Pix.</summary>
         string? PaymentMethod = null,
         CheckoutShippingAddress? ShippingAddress = null);
 
     internal sealed record CartSnapshot(string CartId, IReadOnlyList<CartSnapshotItem> Items, long Version);
 
-    /// <summary>UnitPrice travels with the snapshot so this layer can assert an ExpectedSubtotal without a second Catalog round trip.</summary>
+    /// <summary>Carries UnitPrice so this layer can assert an ExpectedSubtotal without a second Catalog round trip.</summary>
     internal sealed record CartSnapshotItem(string Sku, int Quantity, decimal UnitPrice);
 
     internal sealed record CheckoutOrderRequest(
@@ -165,25 +148,7 @@ public static class StorefrontEndpoints
 
     internal sealed record CheckoutOrderItem(string Sku, int Quantity);
 
-    /// <summary>
-    /// Cart.Service and Orders.Api know nothing of each other; this turns
-    /// "what's in this shopper's cart" into Orders.Api's checkout call.
-    ///
-    /// Forwards the shopper's own bearer token to Orders.Api
-    /// rather than minting a service-account one - replacing a design
-    /// where Storefront authenticated as itself and simply asserted
-    /// whatever customerId the request body carried, which any caller
-    /// could set to anyone. Orders.Api now derives the order's customerId
-    /// from that same forwarded token's claims, so there is nothing left
-    /// for this layer to assert on the shopper's behalf. One fewer trusted
-    /// intermediary: Orders.Api validates the shopper's own token directly,
-    /// the same JWKS-backed check every other caller goes through, not a
-    /// second-hand claim Storefront re-signs.
-    ///
-    /// The cart is cleared only after Orders.Api accepts the order -
-    /// clearing it first and having the order call then fail would strand
-    /// the shopper with an empty cart and nothing purchased.
-    /// </summary>
+    /// <summary>Turns a shopper's cart into an Orders.Api order, forwarding the shopper's own bearer token and clearing the cart only after the order is accepted.</summary>
     internal static async Task CheckoutAsync(
         CheckoutRequest request,
         HttpContext httpContext,
@@ -202,9 +167,6 @@ public static class StorefrontEndpoints
             return;
         }
 
-        // Cart.Service resolves "/carts/me" from this same
-        // forwarded token - there is no cartId left to pass, the cart IS
-        // the shopper's, the same way the order about to be created is.
         var cartClient = httpClientFactory.CreateClient("cart");
         CartSnapshot? cart;
         try
@@ -214,9 +176,6 @@ public static class StorefrontEndpoints
             using var cartResponse = await cartClient.SendAsync(cartRequest, cancellationToken);
             if (cartResponse.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
-                // Authentication/authorization is a caller outcome, not a
-                // dependency outage. Preserve the upstream status and
-                // challenge headers instead of converting it into 503.
                 await ProxyEndpoints.WriteResponseAsync(httpContext, cartResponse, cancellationToken);
                 return;
             }
@@ -247,13 +206,6 @@ public static class StorefrontEndpoints
 
         var response = await PostOrderAsync(ordersClient, orderRequest, httpContext.Request, authorization, cart, cancellationToken);
 
-        // A moved catalog price is not the shopper's fault, and until now
-        // had no resolution short of removing and re-adding every affected
-        // item. One automatic reprice-and-retry, entirely server-side: the
-        // frontend that called this endpoint sees either the success it
-        // originally asked for, or - if the reprice itself fails, or prices
-        // moved again in the meantime - the exact same Price Changed 409 it
-        // already knows how to show, never a new failure mode.
         if (await IsPriceMismatchAsync(response, cancellationToken))
         {
             var repricedCart = await TryRepriceCartAsync(cartClient, httpContext.Request, cart, logger, cancellationToken);
@@ -270,9 +222,6 @@ public static class StorefrontEndpoints
         {
             if (response.IsSuccessStatusCode)
             {
-                // Buffered so the order id can be read for the log line below
-                // and the body still relayed to the client afterwards - a
-                // stream can only be read once otherwise.
                 await response.Content.LoadIntoBufferAsync(cancellationToken);
                 var orderId = await TryReadOrderIdAsync(response, cancellationToken);
 
@@ -286,14 +235,10 @@ public static class StorefrontEndpoints
                 }
                 catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
                 {
-                    // The order already succeeded - a failure to clear the cart
-                    // afterwards must never read back as a checkout failure.
                     StorefrontLog.CartClearFailedAfterCheckout(logger, "me", orderId ?? "unknown", exception);
                 }
             }
 
-            // Relayed to the client exactly as Orders.Api answered, same as
-            // every route in ProxyEndpoints.
             await ProxyEndpoints.WriteResponseAsync(httpContext, response, cancellationToken);
         }
     }
@@ -310,21 +255,8 @@ public static class StorefrontEndpoints
         {
             Content = JsonContent.Create(orderRequest, options: JsonOptions)
         };
-        // Idempotency-Key excluded: this endpoint always overrides it with
-        // the deterministic key computed below, never the caller-supplied
-        // one - see that key's own comment for why.
         ProxyEndpoints.CopyForwardedRequestHeaders(incomingRequest, upstreamRequest, excludeHeaderName: "Idempotency-Key");
 
-        // Deterministic, not client-generated - this exact
-        // cart state ("this shopper, this cart generation, this version") checks out at most
-        // once. A double-submitted click carries the identical version and
-        // replays instead of double-charging; adding or removing an item
-        // bumps the version - including a repriced item, see
-        // TryRepriceCartAsync - so a genuinely new checkout after the cart
-        // changed is never blocked by a stale key. The subject comes from the
-        // same forwarded token, read without verifying it - only
-        // uniqueness per shopper matters here, and Orders.Api verifies the
-        // token itself regardless of what this layer assumed about it.
         var idempotencyKey = StorefrontCheckoutPolicy.BuildIdempotencyKey(authorization, cart);
         if (idempotencyKey is not null)
         {
@@ -334,15 +266,7 @@ public static class StorefrontEndpoints
         return await ordersClient.SendAsync(upstreamRequest, cancellationToken);
     }
 
-    /// <summary>
-    /// Orders.Api's own distinguishing signal for this specific 409 - see
-    /// OrderEndpoints' PriceMismatch mapping - not just any Conflict, which
-    /// also covers a lost coupon slot and an idempotency-key reuse, neither
-    /// of which a reprice-and-retry would ever resolve. Buffers the content
-    /// so it can still be read again (by the retry decision here, and by
-    /// WriteResponseAsync afterwards if no retry happens) - the same
-    /// pattern the success branch below already uses for the same reason.
-    /// </summary>
+    /// <summary>Detects Orders.Api's Price Changed 409, distinct from other Conflict causes, buffering the response for re-reading.</summary>
     private static async Task<bool> IsPriceMismatchAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         if (response.StatusCode != HttpStatusCode.Conflict)
@@ -363,15 +287,7 @@ public static class StorefrontEndpoints
         }
     }
 
-    /// <summary>
-    /// Refreshes every cart line's price via Cart.Service's refresh-price
-    /// endpoint (CartEndpoints.RefreshItemPriceAsync), then re-reads the
-    /// cart so the retry above prices against what Orders.Api will actually
-    /// charge this time. Null on any failure - Cart.Service unreachable, or
-    /// a SKU no longer resolvable in the catalog at all - so the caller
-    /// falls back to relaying the original Price Changed response rather
-    /// than guessing at a cart this couldn't actually bring current.
-    /// </summary>
+    /// <summary>Refreshes every cart line's price then re-reads the cart; returns null on any failure.</summary>
     private static async Task<CartSnapshot?> TryRepriceCartAsync(
         HttpClient cartClient,
         HttpRequest incomingRequest,

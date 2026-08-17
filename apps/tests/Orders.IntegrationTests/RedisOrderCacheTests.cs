@@ -39,13 +39,6 @@ public sealed class RedisOrderCacheTests : IAsyncLifetime
     {
         var cache = new RedisOrderCache(_connectionMultiplexer!, _pipelineProvider, Options.Create(new CacheOptions()));
 
-        // The 150ms Redis timeout is deliberately tight for production; on
-        // a noisy CI runner sharing Testcontainers Redis with other test
-        // assemblies, a round trip can occasionally miss that window and
-        // the cache degrades exactly as designed (bypass, re-run the
-        // factory) - correct behavior, but CI jitter impersonating a slow
-        // Redis. Retried with a fresh order id each attempt, not a looser
-        // timeout, so a real regression still fails every attempt.
         for (var attempt = 1; attempt <= 3; attempt++)
         {
             var orderId = Guid.NewGuid();
@@ -66,10 +59,6 @@ public sealed class RedisOrderCacheTests : IAsyncLifetime
             var firstLookup = await cache.GetOrCreateAsync(orderId, Factory, CancellationToken.None);
             var secondLookup = await cache.GetOrCreateAsync(orderId, Factory, CancellationToken.None);
 
-            // Either lookup can degrade to Bypassed under CI jitter (see comment
-            // above) - both must be re-checked before retrying, not just the
-            // second, or a slow *first* round trip throws here and skips the
-            // retry loop entirely instead of falling through to `continue`.
             if ((firstLookup.Result != CacheLookupResult.Miss || secondLookup.Result != CacheLookupResult.Hit)
                 && attempt < 3)
             {

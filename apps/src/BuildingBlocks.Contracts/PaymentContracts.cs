@@ -1,11 +1,6 @@
 namespace BuildingBlocks;
 
-/// <summary>
-/// How the shopper is paying, and whether the two-phase authorize/capture
-/// flow applies at all: a card is <em>authorized</em> then later
-/// <em>captured</em>; Pix is an immediate transfer with nothing to capture.
-/// A single "approved: true" boolean can't express either distinction.
-/// </summary>
+/// <summary>How the shopper is paying, and whether the two-phase authorize/capture flow applies.</summary>
 public static class PaymentMethods
 {
     /// <summary>Two-phase: authorize a hold now, capture when the goods ship.</summary>
@@ -14,58 +9,30 @@ public static class PaymentMethods
     /// <summary>Single-phase: an instant transfer, captured the moment it is approved.</summary>
     public const string Pix = "Pix";
 
-    /// <summary>
-    /// A printed slip the shopper pays at a bank, days later or never.
-    /// Two-phase like a card, but for the opposite reason - no hold exists,
-    /// only an unpaid invoice - which is why it doesn't share Card's
-    /// <c>Authorized</c> state.
-    /// </summary>
+    /// <summary>A printed slip the shopper pays at a bank, days later or never.</summary>
     public const string Boleto = "Boleto";
 
     public static bool IsSupported(string? method) =>
         method is Card or Pix or Boleto;
 
-    /// <summary>
-    /// Whether the money still has to be moved by a later, explicit step.
-    /// True for a card (capture the hold) and a boleto (the shopper pays
-    /// the slip); false for Pix, which is already settled on approval.
-    /// </summary>
+    /// <summary>Whether the money still has to be moved by a later, explicit step.</summary>
     public static bool RequiresCapture(string method) =>
         method is Card or Boleto;
 
-    /// <summary>
-    /// The state an approved payment starts in. A card holds someone's
-    /// money; a boleto holds nothing and merely waits.
-    /// </summary>
+    /// <summary>The state an approved payment starts in.</summary>
     public static string PendingStateFor(string method) =>
         string.Equals(method, Boleto, StringComparison.Ordinal)
             ? PaymentStates.AwaitingPayment
             : PaymentStates.Authorized;
 }
 
-/// <summary>
-/// The life of a payment, replacing the single
-/// <c>Approved</c> boolean.
-///
-///   Declined                                       (risk rules said no - terminal)
-///   Captured                                       (Pix: approved is the same instant as paid)
-///   Authorized     ──capture──► Captured           (Card: the money moves when the order ships)
-///                  ──void────► Voided              (the order was cancelled)
-///                  ──expire──► Expired             (nobody ever captured; the hold lapsed)
-///   AwaitingPayment──capture──► Captured           (Boleto: the shopper paid the slip)
-///                  ──void────► Voided              (the order was cancelled before payment)
-///                  ──expire──► Expired             (the slip's due date passed unpaid)
-/// </summary>
+/// <summary>The life cycle states of a payment, replacing a single Approved boolean.</summary>
 public static class PaymentStates
 {
     public const string Declined = "Declined";
     public const string Authorized = "Authorized";
 
-    /// <summary>
-    /// A boleto has been issued and not yet paid. Distinct
-    /// from <see cref="Authorized"/> because no money is held - if this
-    /// expires, nothing is released, the shopper simply never paid.
-    /// </summary>
+    /// <summary>A boleto has been issued and not yet paid.</summary>
     public const string AwaitingPayment = "AwaitingPayment";
     public const string Captured = "Captured";
     public const string Voided = "Voided";
@@ -79,51 +46,20 @@ public static class PaymentStates
         state is Declined or Captured or Voided or Expired or Refunded;
 }
 
-/// <summary>
-/// Orders asks Payments to actually charge an authorization it is holding.
-/// Plain JSON, like the saga's other command/reply pairs - an internal
-/// request between two known parties, not a domain event others evolve
-/// against independently.
-/// </summary>
+/// <summary>Orders asks Payments to actually charge an authorization it is holding.</summary>
 public sealed record PaymentCaptureRequested(
     Guid OrderId,
     string CorrelationId,
     DateTimeOffset RequestedAt);
 
-/// <summary>
-/// The order was cancelled - settle whatever this payment
-/// actually is, whichever way that turns out to require. Deliberately not
-/// "void": a Pix payment is <c>Captured</c> the instant it is approved, so
-/// cancelling it has to give money back, not release a hold that was never
-/// placed. Orders does not have to know which of the two applies - that
-/// depends on the payment's current state, which only Payments.Service
-/// holds - so this single command replaces the method-keyed void dispatch
-/// that used to skip Pix entirely (see <see cref="PaymentMethods.RequiresCapture"/>
-/// and Payment.TryCancel).
-/// </summary>
+/// <summary>The order was cancelled; settle whatever this payment actually is, whichever way that requires.</summary>
 public sealed record PaymentCancellationRequested(
     Guid OrderId,
     string Reason,
     string CorrelationId,
     DateTimeOffset RequestedAt);
 
-/// <summary>
-/// The outcome of a capture, cancellation, refund, or the
-/// authorization sweep's bulk expiry. One reply type for all of them so the
-/// consumer has a single shape to handle - <see cref="State"/> says which
-/// terminal state the payment actually reached.
-///
-/// <see cref="RequiresReconciliation"/> is what tells
-/// OrderSagaReplyConsumer.HandleSettlementRepliedAsync whether this reply
-/// needs the saga's attention (move the order to FulfillmentHold - a
-/// human has to look) or is just the ordinary reply to a settlement
-/// that applied exactly as requested. Without it, that consumer could
-/// only single out PaymentStates.Expired by name - every other way a
-/// capture or refund can fail to apply (the hold was already Voided or
-/// Declined, a refund exceeds what's left to give back) reached the same
-/// consumer with the same shape and was silently ignored, so the saga
-/// never learned money that should have moved never did.
-/// </summary>
+/// <summary>The outcome of a capture, cancellation, refund, or the authorization sweep's bulk expiry.</summary>
 public sealed record PaymentSettlementReplied(
     Guid OrderId,
     Guid PaymentId,

@@ -1,12 +1,6 @@
 namespace Inventory.Service;
 
-/// <summary>
-/// Closes the loop left open when WarehouseReplenishmentNeeded was first
-/// emitted - it finally has a consumer. LeadTimeSeconds is this lab's usual
-/// compression of a real supplier's lead time (days) into something a lab
-/// session can actually watch happen, the same trade already made for a
-/// boleto's due date.
-/// </summary>
+/// <summary>Policy for consuming WarehouseReplenishmentNeeded and placing purchase orders.</summary>
 public sealed class ReplenishmentOptions
 {
     public const string SectionName = "Replenishment";
@@ -18,11 +12,6 @@ public sealed class ReplenishmentOptions
 
     public int ReceivingSweepBatchSize { get; init; } = 50;
 
-    /// <summary>
-    /// A purchase order requests enough to bring available stock up to
-    /// ReorderPoint times this multiplier, not merely back to the reorder
-    /// point itself - restocking to exactly the threshold that just
-    /// triggered the alert would cross it again on the very next sale.
-    /// </summary>
+    /// <summary>Multiplier of ReorderPoint that a purchase order restocks up to.</summary>
     public int TargetMultiplier { get; init; } = 3;
 }

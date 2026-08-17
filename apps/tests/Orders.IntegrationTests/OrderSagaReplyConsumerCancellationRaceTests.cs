@@ -13,16 +13,7 @@ using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// The Created/Backordered-origin operator-cancellation
-/// race named as an open gap - an order
-/// cancelled from outside the saga (an operator's fulfilment endpoint, or a
-/// shopper's self-service cancellation, both landing in
-/// EfOrderStatusRepository) while the orchestrated saga is still mid-flight
-/// on the very same order. FlagInFlightSagaAsCancelledAsync is what marks
-/// the row; these tests drive the other half, proving OrderSagaReplyConsumer
-/// actually reacts to the flag instead of finishing the saga as if nothing happened.
-/// </summary>
+/// <summary>The Created/Backordered-origin operator-cancellation race: an order cancelled from outside the saga while it is still mid-flight. Proves OrderSagaReplyConsumer reacts to the cancellation flag instead of finishing as if nothing happened.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class OrderSagaReplyConsumerCancellationRaceTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
@@ -85,7 +76,6 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests(PostgresFixture 
         await consumer.DispatchAsync(ReservationReply(orderId, lineA, "SKU-A", reserved: true), CancellationToken.None);
         await consumer.DispatchAsync(ReservationReply(orderId, lineB, "SKU-B", reserved: true), CancellationToken.None);
 
-        // Gone, not sitting at DecidePayment waiting for a decision nobody asked for any more.
         Assert.Equal(0, await SagaRowCountAsync(orderId));
 
         var releasedIds = (await QueuedPayloadsAsync(orderId, _options.ReleaseRequestedTopic))
@@ -105,7 +95,6 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests(PostgresFixture 
         await consumer.DispatchAsync(CommitReply(orderId, lineA, "SKU-A", committed: true), CancellationToken.None);
         await consumer.DispatchAsync(CommitReply(orderId, lineB, "SKU-B", committed: false), CancellationToken.None);
 
-        // Still Cancelled - the commit reply must never move it to Confirmed or FulfillmentHold.
         Assert.Equal(OrderStatuses.Cancelled, await CurrentOrderStatusAsync(orderId));
 
         var queued = await QueuedPayloadsAsync(orderId, _options.RestockRequestedTopic);
@@ -137,12 +126,7 @@ public sealed class OrderSagaReplyConsumerCancellationRaceTests(PostgresFixture 
         return (orderId, lineA, lineB);
     }
 
-    /// <summary>
-    /// The same two writes EfOrderStatusRepository.TryTransitionAsync makes
-    /// in one transaction when an operator or shopper cancels an order from
-    /// Created - the order flips to Cancelled, and the still-in-flight saga
-    /// row (if any) is flagged, not touched.
-    /// </summary>
+    /// <summary>The same two writes EfOrderStatusRepository.TryTransitionAsync makes when an operator or shopper cancels an order from Created.</summary>
     private async Task CancelFromOutsideTheSagaAsync(Guid orderId)
     {
         await using (var command = _dataSource.CreateCommand("UPDATE orders SET status = 'Cancelled' WHERE id = @id"))

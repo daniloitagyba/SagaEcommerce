@@ -3,13 +3,7 @@ using Payments.Service.Domain;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// The authorize/capture state machine, splitting "approved"
-/// (was one boolean before) from "money moved", so a hold placed at
-/// checkout and funds taken at shipment become distinct states. The guards
-/// below keep a redelivered capture command from charging twice - the same
-/// reasoning as the inbox, applied to a state transition.
-/// </summary>
+/// <summary>The authorize/capture state machine, splitting "approved" from "money moved" so a checkout hold and shipment-time funds capture become distinct states; the guards prevent a redelivered capture command from charging twice.</summary>
 public class PaymentAuthorizationTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 6, 12, 0, 0, TimeSpan.Zero);
@@ -32,7 +26,6 @@ public class PaymentAuthorizationTests
     [Fact]
     public void AnApprovedPixIsCapturedOutrightWithNoHoldToExpire()
     {
-        // Pix is instant: modelling it as Authorized would create a hold no capture command would ever settle.
         var payment = Authorize(PaymentMethods.Pix);
 
         Assert.Equal(PaymentStates.Captured, payment.State);
@@ -63,7 +56,6 @@ public class PaymentAuthorizationTests
         Assert.Equal(PaymentStates.Captured, payment.State);
         Assert.Equal(capturedAt, payment.SettledAt);
 
-        // A redelivered capture command must not charge the customer a second time.
         Assert.False(payment.TryCapture(Now.AddMinutes(6)));
         Assert.Equal(capturedAt, payment.SettledAt);
     }
@@ -77,9 +69,7 @@ public class PaymentAuthorizationTests
         Assert.Equal(PaymentStates.Voided, payment.State);
         Assert.Equal("order cancelled", payment.SettlementReason);
 
-        // A void that arrives after the void is a no-op...
         Assert.False(payment.TrySettleWithoutCapture(PaymentStates.Expired, "sweeper", Now.AddMinutes(2)));
-        // ...and so is a capture: released money cannot be taken back.
         Assert.False(payment.TryCapture(Now.AddMinutes(3)));
         Assert.Equal(PaymentStates.Voided, payment.State);
     }
@@ -91,7 +81,6 @@ public class PaymentAuthorizationTests
         payment.TryCapture(Now.AddMinutes(1));
 
         Assert.False(payment.TrySettleWithoutCapture(PaymentStates.Voided, "order cancelled", Now.AddMinutes(2)));
-        // The expiry sweeper depends on this: a payment captured between the sweeper's claim and update is left alone, not expired.
         Assert.False(payment.TrySettleWithoutCapture(PaymentStates.Expired, "window elapsed", Now.AddHours(2)));
         Assert.Equal(PaymentStates.Captured, payment.State);
     }
@@ -99,7 +88,6 @@ public class PaymentAuthorizationTests
     [Fact]
     public void APixPaymentIsAlreadySettledSoCaptureIsANoOp()
     {
-        // Orders only sends capture for methods that need it, but the domain guard is what makes that an optimisation, not a requirement.
         var payment = Authorize(PaymentMethods.Pix);
 
         Assert.False(payment.TryCapture(Now.AddMinutes(1)));
@@ -120,7 +108,6 @@ public class PaymentAuthorizationTests
     [Fact]
     public void AnApprovedBoletoWaitsForPaymentRatherThanHoldingMoney()
     {
-        // Deliberately not Authorized - nothing is held, the shopper has a slip and may never pay it.
         var payment = Authorize(PaymentMethods.Boleto);
 
         Assert.Equal(PaymentStates.AwaitingPayment, payment.State);
@@ -137,7 +124,6 @@ public class PaymentAuthorizationTests
         Assert.True(payment.TryCapture(Now.AddMinutes(5)));
         Assert.Equal(PaymentStates.Captured, payment.State);
 
-        // A redelivered capture command must be a no-op, not a second charge.
         Assert.False(payment.TryCapture(Now.AddMinutes(6)));
     }
 
@@ -166,25 +152,12 @@ public class PaymentAuthorizationTests
     [Fact]
     public void AnAlreadyExpiredPaymentCannotBeVoidedEither()
     {
-        // The domain-level half of why Shipped ->
-        // FulfillmentHold -> Cancelled being legal at the OrderStatuses
-        // level (a shipped order whose capture actually failed, then
-        // cancelled by an operator) can never produce a real double
-        // settlement - once the sweeper has expired the hold, neither a
-        // late capture nor a later void can move money, because both
-        // share the same IsAwaitingSettlement guard.
         var payment = Authorize(PaymentMethods.Card);
         payment.TrySettleWithoutCapture(PaymentStates.Expired, "sweeper", Now.AddMinutes(35));
 
         Assert.False(payment.TrySettleWithoutCapture(PaymentStates.Voided, "order cancelled", Now.AddMinutes(40)));
         Assert.Equal(PaymentStates.Expired, payment.State);
     }
-
-    // TryCancel replaces the method-gated void dispatch that
-    // used to skip Pix entirely (a Pix payment is Captured the instant it's
-    // approved, so cancelling it must refund, not void a hold that was
-    // never placed). One entry point, and the payment's own current state
-    // - not the payment method - decides which of void or refund applies.
 
     [Fact]
     public void CancellingAnAuthorizedCardVoidsTheHold()
@@ -209,9 +182,6 @@ public class PaymentAuthorizationTests
     [Fact]
     public void CancellingACapturedPixRefundsItInFullRatherThanVoidingNothing()
     {
-        // The bug this closes: a Pix payment has no hold to void
-        // - it was Captured the instant it was approved - so the only way
-        // to make a cancelled order stop owing money for it is a refund.
         var payment = Authorize(PaymentMethods.Pix);
         Assert.Equal(PaymentStates.Captured, payment.State);
 
@@ -239,8 +209,6 @@ public class PaymentAuthorizationTests
     [InlineData(PaymentMethods.Boleto)]
     public void CancellingADeclinedPaymentIsANoOpNotAMismatch(string method)
     {
-        // Nothing was ever approved - there is genuinely nothing to move,
-        // not a guard failure that needs anyone's attention.
         var payment = Authorize(method, approved: false);
 
         Assert.False(payment.TryCancel("order cancelled", Now.AddMinutes(1)));

@@ -8,14 +8,7 @@ using Orders.Application.UseCases.GetOrder;
 
 namespace Orders.Api.Grpc;
 
-/// <summary>
-/// A gRPC transport for the same read GetByIdAsync (REST)
-/// already serves - same handler, same cache, same database, no
-/// duplicated business logic. Exists to demonstrate a real, concrete
-/// consequence of HTTP/2 for the mesh: Linkerd load-balances gRPC calls
-/// per request, not per connection the way it does for a REST client's
-/// long-lived HTTP/1.1 keep-alive connection.
-/// </summary>
+/// <summary>A gRPC transport for the same order read that the REST GetByIdAsync endpoint serves.</summary>
 [Authorize(Policy = OrdersAuthorizationPolicies.Read)]
 public sealed class OrderQueryGrpcService(GetOrderHandler handler, IConfiguration configuration)
     : OrderQuery.OrderQueryBase
@@ -34,19 +27,11 @@ public sealed class OrderQueryGrpcService(GetOrderHandler handler, IConfiguratio
         }
         catch (InfrastructureUnavailableException exception)
         {
-            // gRPC has its own status vocabulary - IExceptionHandler (the
-            // REST 503 this mirrors, InfrastructureUnavailableExceptionHandler)
-            // is ASP.NET Core middleware and never runs for a gRPC call, so
-            // this needs its own translation rather than relying on the
-            // exception reaching that pipeline uncaught.
             throw new RpcException(new Status(StatusCode.Unavailable, exception.Message));
         }
 
         var httpContext = context.GetHttpContext();
 
-        // Same 404-hides-ownership reasoning as the REST
-        // GetByIdAsync this service mirrors - a gRPC transport for the same
-        // read is still the same read, and inherits the same gap otherwise.
         if (result.Order is null || !httpContext.MayAccess(result.Order.CustomerId))
         {
             throw new RpcException(new Status(StatusCode.NotFound, $"Order '{id}' was not found."));
@@ -58,9 +43,6 @@ public sealed class OrderQueryGrpcService(GetOrderHandler handler, IConfiguratio
         {
             Id = order.Id.ToString(),
             CustomerId = order.CustomerId,
-            // Same conversion OrdersDbContext's own value converter uses for
-            // this exact column (amount_cents) - not a cast, since a decimal
-            // amount has no exact double representation.
             AmountCents = (long)Math.Round(order.Amount * 100, MidpointRounding.AwayFromZero),
             Currency = order.Currency,
             Status = order.Status,

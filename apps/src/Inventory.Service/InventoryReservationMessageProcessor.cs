@@ -21,11 +21,6 @@ public enum MessageProcessingResult
 public sealed class InvalidReservationMessageException(string message, Exception? innerException = null)
     : Exception(message, innerException);
 
-// Split across two files to stay under the 500-line module-size budget:
-// this one owns reserve/commit/release/restock, and
-// InventoryReservationMessageProcessor.Backorders.cs owns the
-// backorder-release path - the most self-contained concern here,
-// only ever called from ProcessSettlementAsync's restock branch below.
 public sealed partial class InventoryReservationMessageProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<InventoryKafkaOptions> kafkaOptions,
@@ -36,8 +31,6 @@ public sealed partial class InventoryReservationMessageProcessor(
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly InventoryKafkaOptions _kafkaOptions = kafkaOptions.Value;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
-    // No-retry transactional pipeline, not the retrying PostgresPipeline -
-    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     public async Task<MessageProcessingResult> ProcessAsync(
@@ -94,9 +87,6 @@ public sealed partial class InventoryReservationMessageProcessor(
                 return MessageProcessingResult.Duplicate;
             }
 
-            // The transaction-scoped SKU lock above spans every topic and every
-            // replica. Kafka ordering alone cannot do that because reserve,
-            // commit, release and restock are separate topics.
             var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
             var itemExists = await dbContext.InventoryItems.AnyAsync(i => i.Sku == request.Sku, ct);
 
@@ -104,9 +94,6 @@ public sealed partial class InventoryReservationMessageProcessor(
                 ? await allocationStore.TryReserveAsync(request.ReservationId, request.Sku, request.Quantity, processedAt, ct)
                 : WarehouseAllocationStore.ReservationDecision.Refused;
 
-            // A backorder is only worth recording when a restock could someday
-            // fill it. An unknown SKU will never restock - there is nothing to
-            // wait for - so that case still fails outright, exactly as it always did.
             var backordered = !decision.Reserved && itemExists;
             if (backordered)
             {
@@ -157,11 +144,7 @@ public sealed partial class InventoryReservationMessageProcessor(
             Activity.Current?.TraceStateString));
     }
 
-    /// <summary>
-    /// Same transaction as the reservation that caused each crossing, so a
-    /// rollback cannot leave a replenishment alert for stock that was never
-    /// actually drawn down.
-    /// </summary>
+    /// <summary>Enqueues replenishment signals in the same transaction as the reservation that caused each crossing.</summary>
     private void EnqueueReplenishmentSignals(
         InventoryDbContext dbContext,
         IReadOnlyList<WarehouseStock> crossedReorderPoint,
@@ -243,20 +226,7 @@ public sealed partial class InventoryReservationMessageProcessor(
             cancellationToken);
     }
 
-    /// <summary>
-    /// Returned units go back on the shelf.
-    ///
-    /// Reuses the same inbox-dedup / mutate / reply shape as commit and
-    /// release, but the mutation is different in kind: those two draw down
-    /// a <em>held</em> quantity, while a return is putting back stock that
-    /// left inventory entirely when the sale committed. There is no
-    /// reservation to find, so the mutation succeeds unless a caller-named
-    /// warehouse has no stock row for the sku (should not happen in
-    /// practice - the replenishment loop only ever names a warehouse it
-    /// already knows stocks the sku) - the inbox is what stops a
-    /// redelivered restock inflating stock a second time, exactly as it
-    /// does for the other three.
-    /// </summary>
+    /// <summary>Returned units go back on the shelf; reuses the same inbox-dedup / mutate / reply shape as commit and release.</summary>
     public async Task<MessageProcessingResult> ProcessRestockAsync(
         ConsumeResult<string, string> consumeResult,
         CancellationToken cancellationToken)
@@ -287,9 +257,6 @@ public sealed partial class InventoryReservationMessageProcessor(
             warehouseCode);
     }
 
-    // Commit, release, and restock share the same transactional inbox/outbox
-    // boundary. WarehouseAllocationStore owns the stock mutation and keeps
-    // InventoryItem synchronized as a compatibility projection.
     private async Task<MessageProcessingResult> ProcessSettlementAsync(
         ConsumeResult<string, string> consumeResult,
         Guid reservationId,
@@ -351,10 +318,6 @@ public sealed partial class InventoryReservationMessageProcessor(
                 return MessageProcessingResult.Duplicate;
             }
 
-            // Replay only the recorded allocation. Guessing a warehouse for an
-            // unknown reservation could settle stock held by a different order;
-            // absence is therefore an explicit failed reply, never a fallback
-            // mutation of the compatibility projection.
             var allocationStore = scope.ServiceProvider.GetRequiredService<WarehouseAllocationStore>();
             var succeeded = settleAllocation
                 ? await allocationStore.TrySettleReservationAsync(reservationId, commitAllocation, processedAt, ct)
@@ -377,11 +340,6 @@ public sealed partial class InventoryReservationMessageProcessor(
 
             dbContext.OutboxMessages.Add(outboxMessage);
 
-            // Only the restock path can clear a backorder, and
-            // only after the aggregate row above has actually been restocked -
-            // releasing against a stale AvailableQuantity would just refuse
-            // every waiting order again. Same allocationStore instance the
-            // restock above used, so it sees its own write.
             if (!settleAllocation && succeeded)
             {
                 await ReleaseBackordersAsync(dbContext, allocationStore, sku, processedAt, ct);

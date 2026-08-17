@@ -1,16 +1,3 @@
-# Milestone 37: a genuinely different fault from anything tried before in
-# this lab - Toxiproxy (Milestone 10) injects latency/timeouts on a proxied
-# hop, Chaos Mesh's PodChaos (Milestone 31) kills a process outright. This
-# is neither: a real network partition (iptables DROP, both directions)
-# between orders-worker and Kafka specifically, while Postgres and Redis
-# stay fully reachable - the CAP-theorem scenario of "this node can't reach
-# one dependency but is otherwise healthy," which behaves very differently
-# from "this node is completely gone."
-#
-# Kafka isn't a Kubernetes pod (it runs in the docker-compose stack, bridged
-# into K3s via a fixed IP - see kubernetes/overlays/local/infrastructure-
-# endpoints.yaml), so this uses externalTargets rather than a pod selector.
-# Applied ad hoc for the game day, not left running.
 apiVersion: chaos-mesh.org/v1alpha1
 kind: NetworkChaos
 metadata:

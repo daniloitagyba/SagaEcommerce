@@ -6,10 +6,7 @@ using Orders.Domain.Pricing;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// Loyalty standing, and the geography that shipping and tax
-/// actually depend on.
-/// </summary>
+/// <summary>Loyalty standing, and the geography that shipping and tax actually depend on.</summary>
 public class CustomerTierTests
 {
     private static readonly Currency Brl = Currency.FromCode("BRL");
@@ -49,7 +46,6 @@ public class CustomerTierTests
     [Fact]
     public void AFullRefundTakesBackTheSpendButNotTheStanding()
     {
-        // Deliberate asymmetry: spend reverses, but tier doesn't - retroactively taking a discount away generates support tickets.
         var customer = Customer.Create("customer-1", DateTimeOffset.UtcNow);
         customer.RecordCompletedOrder(1_200m);
         Assert.Equal(CustomerTiers.Silver, customer.Tier);
@@ -64,7 +60,6 @@ public class CustomerTierTests
     [Fact]
     public void TheWorkersTierThresholdsMatchTheDomains()
     {
-        // Orders.Worker deliberately doesn't reference Orders.Domain, so its SQL thresholds are a second copy - this stops the two drifting.
         Assert.Equal(CustomerTiers.SilverThreshold, Orders.Worker.CustomerTierThresholds.Silver);
         Assert.Equal(CustomerTiers.GoldThreshold, Orders.Worker.CustomerTierThresholds.Gold);
         Assert.Equal(CustomerTiers.Bronze, Orders.Worker.CustomerTierThresholds.BronzeName);
@@ -95,7 +90,6 @@ public class CustomerTierTests
     [Fact]
     public void TheTierDiscountStacksWithACouponAndTheEngineStillCapsTheTotal()
     {
-        // Five independent rules, none aware of the others - the cap keeps them from together exceeding the order.
         var options = new PricingOptions
         {
             CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["books"] = 80m },
@@ -107,7 +101,6 @@ public class CustomerTierTests
         var breakdown = Engine(options).Price(
             new PricingRequest("customer-1", Brl, [Line(100m)], coupon, gold));
 
-        // 50 + 80 + 7 = 137% asked for; 100% applied.
         Assert.Equal(new Money(100m, Brl), breakdown.DiscountTotal);
         Assert.Equal(new Money(0m, Brl), breakdown.GrandTotal);
     }
@@ -116,13 +109,12 @@ public class CustomerTierTests
     [InlineData("01310-100", "SP", 14.90)]
     [InlineData("22041-001", "RJ", 19.90)]
     [InlineData("66000-000", "PA", 49.90)]
-    [InlineData("99999-999", "XX", 34.90)]  // outside every known zone
+    [InlineData("99999-999", "XX", 34.90)]
     public void ShippingFollowsTheDestination(string postalCode, string region, decimal expected)
     {
         var address = new ShippingAddress("Rua A, 1", "Cidade", region, postalCode);
         var destination = new PricingDestination(address.Region, address.PostalPrefix);
 
-        // Below the free-shipping threshold so the zone cost actually shows.
         var breakdown = Engine(new PricingOptions { TaxRatePercentage = 0m })
             .Price(new PricingRequest("customer-1", Brl, [Line(50m)], Destination: destination));
 
@@ -138,14 +130,13 @@ public class CustomerTierTests
         var inSaoPaulo = Engine().Price(new PricingRequest("customer-1", Brl, [Line(1_000m)], Destination: sp));
         var inRio = Engine().Price(new PricingRequest("customer-1", Brl, [Line(1_000m)], Destination: rj));
 
-        Assert.Equal(new Money(180m, Brl), inSaoPaulo.TaxTotal);  // 18%
-        Assert.Equal(new Money(200m, Brl), inRio.TaxTotal);       // 20%
+        Assert.Equal(new Money(180m, Brl), inSaoPaulo.TaxTotal);
+        Assert.Equal(new Money(200m, Brl), inRio.TaxTotal);
     }
 
     [Fact]
     public void AnOrderWithNoAddressStillPricesOnTheOldFlatTerms()
     {
-        // The amount-only checkout shape has no destination and still has to work.
         var breakdown = Engine().Price(new PricingRequest("customer-1", Brl, [Line(50m)]));
 
         Assert.Equal(new Money(19.90m, Brl), breakdown.ShippingTotal);

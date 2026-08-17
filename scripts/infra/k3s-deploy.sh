@@ -11,60 +11,24 @@ for command_name in docker kubectl; do
   command -v "$command_name" >/dev/null
 done
 
-# Apply any pending Compose infra config (e.g. new Kafka topics added to
-# kafka-init's command) before deploying application code that depends on it.
-# kafka-init is a one-shot container: it only reruns when its own config
-# changes are applied via `up`, never automatically just because app code
-# changed, so skipping this step can silently leave new topics uncreated.
 (cd "$compose_directory" && docker compose up --detach --wait)
 
 "$script_directory/init-payments-db.sh"
 
 kubectl apply --filename "$project_directory/kubernetes/base/namespace.yaml"
 
-# Kubernetes Jobs are immutable once created and never rerun just because the
-# image they reference changed underneath the same tag - unlike Deployments,
-# `kubectl apply` on an already-Completed Job is a silent no-op. Without this,
-# a schema change added after a migration Job's name was last bumped would
-# never actually apply; deleting first forces a fresh run every deploy, which
-# is safe because EF Core migrations are themselves idempotent (and the
-# Catalog seed is idempotent by its own no-op-if-already-seeded check).
-# Every one-shot Job in kubernetes/base belongs here, not just orders/payments -
-# catalog-seed-m40/inventory-migrations-m41/inventory-seed-m41 were missing
-# from this list entirely, so a schema or seed-data change to those two
-# services never actually applied on redeploy.
 kubectl delete job orders-migrations-m7 payments-migrations-m12 \
   catalog-seed-m40 inventory-migrations-m41 inventory-seed-m41 \
   --namespace "$namespace" --ignore-not-found
 
 kubectl apply --kustomize "$overlay_directory"
 
-# orders-runtime is no longer provisioned imperatively (Milestone 17): it's a
-# SealedSecret committed to kubernetes/base, applied above like every other
-# manifest, and decrypted in-cluster by the sealed-secrets controller a
-# moment later. Wait for that decryption before the Jobs/Pods below start
-# mounting it. If POSTGRES_PASSWORD ever changes, re-seal and commit rather
-# than recreating the Secret imperatively - see
-# docs/gitops/milestone-17-sealed-secrets.md.
 for _ in $(seq 1 30); do
   kubectl get secret orders-runtime --namespace "$namespace" >/dev/null 2>&1 && break
   sleep 2
 done
 kubectl get secret orders-runtime --namespace "$namespace" >/dev/null
 
-# Deployments use a static image tag with imagePullPolicy: IfNotPresent, so
-# rebuilding an image under the same tag leaves the Pod template unchanged and
-# `kubectl apply` is a no-op - the already-running Pod keeps serving the old
-# image. Forcing a rollout restart every deploy ensures rebuilt code is always
-# picked up, mirroring the Job-recreation fix above for the same class of bug.
-# Previously only orders-worker/payments-service were restarted here, even
-# though k3s-build-images.sh rebuilds :local images for all seven app
-# services - catalog-service/inventory-service/cart-service/storefront-service
-# silently kept serving whatever image they started with, no matter how many
-# times this script ran after a code change to any of the four.
-# orders-api is an Argo Rollout (Milestone 15) and is normally reconciled by
-# Argo CD rather than this script; "kubectl rollout restart" doesn't support
-# its kind, so it's restarted via its own restartAt field instead.
 kubectl rollout restart \
   deployment/orders-worker deployment/payments-service \
   deployment/catalog-service deployment/inventory-service \
@@ -103,9 +67,6 @@ kubectl wait \
   --for=condition=complete \
   job/catalog-seed-m40 \
   --timeout=180s
-# orders-api is an Argo Rollout (Milestone 15), not a Deployment - it has no
-# "rollout status" support and is normally reconciled by Argo CD, not this
-# script. Poll for full availability rather than assuming a Deployment.
 for _ in $(seq 1 90); do
   desired=$(kubectl get rollout orders-api --namespace "$namespace" --output jsonpath='{.spec.replicas}' 2>/dev/null)
   available=$(kubectl get rollout orders-api --namespace "$namespace" --output jsonpath='{.status.availableReplicas}' 2>/dev/null)

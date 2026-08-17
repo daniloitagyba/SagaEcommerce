@@ -4,11 +4,7 @@ using FluentValidation.Results;
 namespace Orders.Application.UseCases.CreateOrder;
 
 /// <summary>
-/// A hand-rolled Dictionary-building validator was replaced with
-/// FluentValidation, once the request grew a conditional shape (line items
-/// vs. the legacy amount-only form) plus per-item rules needing indexed
-/// error keys like Items[2].Quantity. The static Validate/Normalize
-/// surface is kept so no caller outside this file had to change.
+/// Validates order creation commands.
 /// </summary>
 public sealed class CreateOrderCommandRules : AbstractValidator<CreateOrderCommand>
 {
@@ -53,15 +49,12 @@ public sealed class CreateOrderCommandRules : AbstractValidator<CreateOrderComma
                 .MaximumLength(64).WithMessage("CouponCode must not exceed 64 characters.")
                 .When(command => !string.IsNullOrWhiteSpace(command.CouponCode));
 
-            // An unrecognised method is rejected, not silently defaulted to Pix - charging differently than requested is worse than refusing.
             RuleFor(command => command.PaymentMethod!)
                 .Must(BuildingBlocks.PaymentMethods.IsSupported)
                 .WithMessage($"PaymentMethod must be one of: {BuildingBlocks.PaymentMethods.Card}, {BuildingBlocks.PaymentMethods.Pix}, {BuildingBlocks.PaymentMethods.Boleto}.")
                 .When(command => !string.IsNullOrWhiteSpace(command.PaymentMethod));
         });
 
-        // The original amount-only shape: the client states the amount because there
-        // are no line items to price it from.
         When(command => !command.IsLineItemCheckout, () =>
         {
             RuleFor(command => command.Amount)

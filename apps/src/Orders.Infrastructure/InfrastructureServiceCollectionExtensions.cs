@@ -62,7 +62,6 @@ public static class InfrastructureServiceCollectionExtensions
 
             return new ProducerBuilder<string, byte[]>(config).Build();
         });
-        // A second producer, keyed string/string - OrderCreated is Avro (byte[]), settlement commands are plain JSON, and IProducer can't carry both.
         services.AddSingleton<IProducer<string, string>>(serviceProvider =>
         {
             var options = serviceProvider.GetRequiredService<IOptions<KafkaOptions>>().Value;

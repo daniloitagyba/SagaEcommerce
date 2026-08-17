@@ -17,9 +17,7 @@ public interface IOrderCache
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Drops the cached order so the next read sees the new
-    /// status - needed once the fulfilment API started changing status too,
-    /// not just Orders.Worker via its own IOrderCacheInvalidator.
+    /// Drops the cached order so the next read sees the new status.
     /// </summary>
     Task InvalidateAsync(Guid id, CancellationToken cancellationToken);
 }

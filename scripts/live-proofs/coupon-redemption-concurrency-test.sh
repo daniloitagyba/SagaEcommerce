@@ -1,22 +1,4 @@
 #!/usr/bin/env bash
-# Live proof for Milestone 67: a coupon limited to N redemptions cannot be
-# redeemed more than N times, no matter how many checkouts race for the
-# last slot.
-#
-# This is the coupon analogue of Milestone 41's oversell test. The problem
-# is the same shape - a finite pool, concurrent claimants - but the
-# mechanism is different, and that contrast is the point:
-#
-#   - Inventory serialises by Kafka partition key, so same-SKU requests are
-#     never processed concurrently in the first place and the domain object
-#     needs no lock at all.
-#   - Coupons are claimed on the synchronous HTTP checkout path, where
-#     there is no partition to hide behind. Correctness comes from a single
-#     guarded UPDATE (see EfOrderRepository.TryReserveCouponAsync) that
-#     evaluates the limit and the increment as one atomic operation.
-#
-# A read-then-write implementation passes at low concurrency and fails
-# here, which is exactly why this test exists.
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -83,8 +65,6 @@ echo
 
 failed=0
 
-# The invariant. Anything above the limit is an over-redemption, which is
-# the money-losing bug this whole mechanism exists to prevent.
 if [ "$created" -gt "$redemption_limit" ]; then
   echo "FAIL: ${created} checkouts succeeded against a limit of ${redemption_limit} - the coupon was over-redeemed."
   failed=1
@@ -95,8 +75,6 @@ if [ "$reserved" -gt "$redemption_limit" ]; then
   failed=1
 fi
 
-# The counter and the rows must agree: a drift means the increment and the
-# redemption row stopped being written in the same transaction.
 if [ "$counter" != "$reserved" ]; then
   echo "FAIL: coupons.redemption_count (${counter}) disagrees with the redemption rows (${reserved})."
   failed=1
@@ -107,8 +85,6 @@ if [ "$other" -ne 0 ]; then
   failed=1
 fi
 
-# Guards against the test passing trivially: if the limit was never
-# actually contended, it proved nothing.
 if [ "$created" -lt "$redemption_limit" ]; then
   echo "FAIL: only ${created} of ${redemption_limit} slots were claimed - the limit was never reached, so nothing was proven."
   failed=1

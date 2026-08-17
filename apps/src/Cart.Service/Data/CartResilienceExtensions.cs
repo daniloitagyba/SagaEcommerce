@@ -7,11 +7,7 @@ namespace Cart.Service.Data;
 
 public static class CartResilienceExtensions
 {
-    /// <summary>
-    /// A dedicated pipeline, not BuildingBlocks' shared "redis" one - see
-    /// CartStore's class comment for why a cache-oriented 150ms fast-fail
-    /// timeout is the wrong choice when Redis has no fallback behind it.
-    /// </summary>
+    /// <summary>Registers a dedicated resilience pipeline for the cart store, separate from the shared Redis one.</summary>
     public static IServiceCollection AddCartRedisResilience(this IServiceCollection services)
     {
         return services.AddResiliencePipeline(CartStore.ResiliencePipelineName, builder =>

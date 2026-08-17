@@ -6,12 +6,6 @@ using Orders.Infrastructure.Data;
 
 namespace Orders.Infrastructure.Data.Migrations;
 
-// Raw SQL, no EF model impact - order_event_version_seq is a plain
-// Postgres sequence, and order_summaries.version is deliberately NOT
-// mapped as an EF property (OrderSummary/ConfigureOrderSummary are
-// untouched): EF only ever emits explicit column lists, never SELECT *, so
-// an extra column it doesn't know about is invisible and harmless to it.
-// OrderProjectionStore (already raw Npgsql, not EF) is the only reader/writer.
 [DbContext(typeof(OrdersDbContext))]
 [Migration("20260816140000_AddOrderEventVersion")]
 public sealed class AddOrderEventVersion : Migration

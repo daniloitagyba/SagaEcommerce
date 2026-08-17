@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 80: Catalog.Service's MongoDB has had a persistent volume
-# since Milestone 40 (mongodb-data:/data/db) but no backup and no proven
-# restore path - "the disk survives" was the entire strategy, the same gap
-# Milestone 27 closed for Postgres. Unlike M27, this drill runs against
-# the LIVE `mongodb` container's real `catalog` database rather than a
-# synthetic isolated cluster: mongodump against a running mongod is a
-# safe, non-blocking, point-in-time operation, so there's no need to
-# stand up a separate instance just to get a realistic data volume to
-# restore. What IS isolated is the restore target - a throwaway container,
-# never the live one - so this drill can never corrupt real catalog data.
-#
-# Usage: mongodb-backup-restore-drill.sh
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

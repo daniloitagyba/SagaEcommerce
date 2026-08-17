@@ -1,12 +1,3 @@
-# NOTE: argocd-cm's resource.exclusions blocks EndpointSlice/Endpoints
-# cluster-wide, so Argo CD reports Synced but NEVER actually applies any
-# EndpointSlice here, even though this file is in the kustomize resource
-# list. Every slice below only exists live because it was applied manually
-# with `kubectl apply -f infrastructure-endpoints.yaml`. Adding a new one
-# here and pushing it is NOT enough - you must also apply it by hand, or
-# the backing Service will have no endpoints and dependents will hang on
-# connection with no Argo-visible signal (see Milestone 40 for the
-# incident this caused with mongodb-compose).
 apiVersion: discovery.k8s.io/v1
 kind: EndpointSlice
 metadata:

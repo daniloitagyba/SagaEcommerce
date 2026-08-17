@@ -9,11 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Orders.Worker;
 
 /// <summary>
-/// Appends to the append-only order_events store - a second,
-/// additive consumer group on the same topics the choreographed CQRS
-/// projector already reads. No inbox dedup here, a deliberate scope
-/// boundary: a redelivered message can append a duplicate event, which the
-/// fold in GetOrderHistoryHandler doesn't guard against either.
+/// Appends order events to the event store.
 /// </summary>
 public sealed class OrderEventStoreProjector(
     IOptions<OrderEventStoreOptions> options,
@@ -68,14 +64,7 @@ public sealed class OrderEventStoreProjector(
     }
 
     /// <summary>
-    /// A warehouse move or a shopper's self-service cancellation
-    /// (AdvanceFulfillmentHandler) - the timeline otherwise only ever
-    /// learned an order's status changed from OrderCreated/PaymentDecided
-    /// above, so this was invisible in GetOrderHistory even after
-    /// OrderProjectionProcessor started reflecting it in /orders/summary.
-    /// "Order" + Status matches OrderConfirmed/OrderCancelled's own naming
-    /// exactly, so GetOrderHistoryHandler's Fold needs no change for those
-    /// two - only the statuses it didn't already fold on are new here.
+    /// Appends a warehouse move or a shopper's self-service cancellation to the timeline.
     /// </summary>
     private async Task AppendOrderStatusChangedAsync(byte[] payload, CancellationToken cancellationToken)
     {

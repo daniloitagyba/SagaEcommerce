@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Orders.Infrastructure.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddSagaCancellationRequestedAt : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<DateTimeOffset>(
@@ -18,7 +16,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 nullable: true);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropColumn(

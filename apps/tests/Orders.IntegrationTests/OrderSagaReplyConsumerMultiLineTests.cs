@@ -13,15 +13,7 @@ using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// A multi-line order now reserves every line, not just the
-/// largest by value - these tests drive OrderSagaReplyConsumer's per-line
-/// aggregation directly (the same testable seam OrderSagaReplyConsumerSettlementTests
-/// uses), proving the two behaviours that only exist because there's more
-/// than one line in flight: the saga waits for every line before advancing,
-/// and an outright rejection on one line releases whichever siblings
-/// already reserved instead of leaving them held forever.
-/// </summary>
+/// <summary>Proves two behaviours that only exist with more than one line in flight: the saga waits for every line before advancing, and an outright rejection on one line releases siblings that already reserved.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class OrderSagaReplyConsumerMultiLineTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {

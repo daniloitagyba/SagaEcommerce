@@ -8,11 +8,6 @@ using Orders.Worker;
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
-// Fail loudly at startup instead of silently at runtime. A
-// missing DI registration used to surface only when first resolved - if
-// that's the outbox dispatcher, it's a background loop logging an
-// exception every poll while the service reports healthy and delivers
-// nothing. ValidateOnBuild trades a slower boot for refusing to start instead.
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateOnBuild = true;
@@ -76,14 +71,6 @@ builder.Services.AddOptions<SagaOrchestrationOptions>()
     .Validate(options => options.OutboxMaximumRetryDelaySeconds > 0, "Saga outbox maximum retry delay must be positive.")
     .Validate(options => options.OutboxClaimWindowSeconds > 0, "Saga outbox claim window must be positive.")
     .Validate(options => options.OutboxMaximumAttempts > 0, "Saga outbox maximum attempts must be positive.")
-    // Ties the saga's own timeout to the retry budget a single reservation
-    // round trip can legitimately consume downstream - see
-    // docs/roadmap-milestones-91-99.md, "the saga timeout is shorter than
-    // the system's own retry budget". Without this, a future change to
-    // either option (raising MessageProcessing:MaximumAttempts to ride out
-    // a flakier dependency, say) can silently reopen the exact gap
-    // Milestone 91 closed: SagaTimeoutSweeper firing while the target
-    // consumer is still legitimately retrying, not stuck.
     .Validate<IOptions<MessageProcessingOptions>>(
         (sagaOptions, processingOptions) =>
             sagaOptions.TimeoutSeconds * 1000L
@@ -145,8 +132,6 @@ builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, 
     client.BaseAddress = new Uri(options.BaseUrl);
 }).AddBestEffortHttpResilience();
 
-// Dedicated least-privilege machine identity: only the Payments/Inventory
-// read roles required by the anti-entropy sweep.
 builder.Services.AddOptions<KeycloakOptions>()
     .Bind(builder.Configuration.GetSection(KeycloakOptions.SectionName))
     .Validate(options => !string.IsNullOrWhiteSpace(options.ClientSecret), "Keycloak client secret is required.")
@@ -154,10 +139,6 @@ builder.Services.AddOptions<KeycloakOptions>()
 builder.Services.AddHttpClient<KeycloakTokenProvider>();
 builder.Services.AddTransient<BearerTokenHandler>();
 
-// The anti-entropy sweep's two cross-service reads.
-// Both now authenticate as the service identity
-// above - BearerTokenHandler attaches the token before the resilience
-// pipeline's retries run, so a retried request is still authenticated.
 builder.Services.AddOptions<AntiEntropyOptions>()
     .Bind(builder.Configuration.GetSection(AntiEntropyOptions.SectionName))
     .Validate(options => options.SweepIntervalSeconds > 0, "Anti-entropy sweep interval must be positive.")
@@ -216,11 +197,6 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         [options.OrderCreatedTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
 });
-// Which saga(s) this instance answers to - see SagaMode's own comment.
-// Orchestration is the default (and every deployed Compose/Kubernetes
-// configuration's explicit value) because it includes the inventory
-// reservation step the choreographed path skips entirely; Both remains
-// available for a side-by-side comparison.
 var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Orchestration);
 
 if (sagaMode is SagaMode.Choreography or SagaMode.Both)
@@ -262,10 +238,6 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 
 builder.Services.AddSingleton<SagaOrchestrationStore>();
 
-// Defaults to Kubernetes (today's real deployment target); Compose sets
-// LeaderElection__Mode=SingleNode, since there's no cluster there to hold
-// a Lease against and orders-worker always runs at replicas: 1 anyway -
-// see LeaderElectionMode's doc comment.
 var leaderElectionMode = builder.Configuration.GetValue("LeaderElection:Mode", LeaderElectionMode.Kubernetes);
 if (leaderElectionMode is LeaderElectionMode.SingleNode)
 {
@@ -287,8 +259,6 @@ if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
         var options = serviceProvider.GetRequiredService<IOptions<SagaOrchestrationOptions>>().Value;
         var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
         var processor = serviceProvider.GetRequiredService<OrderSagaOrchestrator>();
-        // Request-side (OrderCreatedTopic, Avro/byte[]) - see the reply-side
-        // consumer below for the string-valued counterpart.
         var deadLetterPublisher = new KafkaDeadLetterPublisher<byte[]>(
             serviceProvider.GetRequiredService<IProducer<string, string>>(),
             options.DeadLetterTopic,
@@ -305,8 +275,6 @@ if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
         var options = serviceProvider.GetRequiredService<IOptions<SagaOrchestrationOptions>>().Value;
         var processingOptions = serviceProvider.GetRequiredService<IOptions<MessageProcessingOptions>>().Value;
         var processor = serviceProvider.GetRequiredService<OrderSagaReplyConsumer>();
-        // Reply-side (the five *Replied topics, JSON/string) - see the
-        // request-side consumer above for the byte[]-valued counterpart.
         var deadLetterPublisher = new KafkaDeadLetterPublisher<string>(
             serviceProvider.GetRequiredService<IProducer<string, string>>(),
             options.DeadLetterTopic,
@@ -347,12 +315,6 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         [options.OrderCreatedTopic, options.PaymentResultTopic, options.OrderStatusChangedTopic], options.DeadLetterTopic,
         processingOptions, processor.AppendAsync, deadLetterPublisher.PublishAsync, logger);
 });
-// KafkaHealthCheck must be a singleton, not the transient default
-// AddCheck<T> would otherwise register - see that class's own comment.
-// Kafka stays gated on "ready" here (unlike Orders.Api/Payments.Service/
-// Inventory.Service - see docs/roadmap-milestones-91-99.md): this worker's
-// entire job is consuming Kafka, so "not ready without it" is the correct
-// readiness signal, not a self-inflicted one.
 builder.Services.AddSingleton<KafkaHealthCheck>();
 builder.Services.AddHealthChecks()
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["ready"])

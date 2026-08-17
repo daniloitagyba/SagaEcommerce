@@ -1,11 +1,4 @@
 ---
-# Milestone 28: reproduces this lab's host + cluster-addon layer from code
-# instead of the imperative "curl | sh, helm install" commands scattered
-# across the last dozen milestones' terminal history. Deliberately stops at
-# the addon layer - application manifests (kubernetes/base,
-# kubernetes/overlays/local) are Argo CD's job (Milestone 15), not this
-# playbook's; running this against a fresh host still needs
-# scripts/infra/k3s-deploy.sh and the Argo CD bootstrap Application afterward.
 - name: Provision the lab host and cluster add-on layer
   hosts: lab
   become: false

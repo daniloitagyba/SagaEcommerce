@@ -3,17 +3,7 @@ using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// The orchestrated saga and the event-sourced read side originally left
-/// dedup out of scope, noting a real
-/// orchestrator would need InboxStore-style dedup. This proves the
-/// alternative - Kafka's transactional producer/consumer API - delivers
-/// exactly-once for a Kafka-to-Kafka hop, and why that guarantee still
-/// doesn't extend to a Postgres write in the same logical step (that half
-/// still needs Outbox+Inbox). A process crash between produce and
-/// offset-commit is simulated by aborting the transaction, which a
-/// downstream read_committed consumer sees identically to a real crash.
-/// </summary>
+/// <summary>Proves Kafka's transactional producer/consumer API delivers exactly-once for a Kafka-to-Kafka hop; that guarantee does not extend to a Postgres write in the same logical step, which still needs Outbox+Inbox.</summary>
 public sealed class KafkaTransactionsTests : IAsyncLifetime
 {
     private readonly RedpandaContainer _redpanda =
@@ -46,7 +36,6 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
         };
         using var outputProducer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = bootstrapServers }).Build();
 
-        // Attempt 1: consume, produce, "crash" before committing the offset - what a plain at-least-once loop risks.
         using (var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build())
         {
             consumer.Subscribe(inputTopic);
@@ -54,11 +43,9 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
             Assert.NotNull(result);
             await outputProducer.ProduceAsync(outputTopic, new Message<string, string> { Key = result.Message.Key, Value = $"processed:{result.Message.Value}" });
             outputProducer.Flush(TimeSpan.FromSeconds(5));
-            // No commit here - simulates the crash.
             consumer.Close();
         }
 
-        // Attempt 2 ("after restart"): offset was never committed, so the same message is redelivered - this time committed.
         using (var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build())
         {
             consumer.Subscribe(inputTopic);
@@ -71,7 +58,7 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
         }
 
         var outputCount = await CountMessagesAsync(bootstrapServers, outputTopic, IsolationLevel.ReadCommitted);
-        Assert.Equal(2, outputCount); // the duplicate: one crash-orphaned write, one real one
+        Assert.Equal(2, outputCount);
     }
 
     [Fact]
@@ -98,7 +85,6 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
             IsolationLevel = IsolationLevel.ReadCommitted
         };
 
-        // Attempt 1: begin, produce, register the offset, then abort ("crash") - nothing produced in an aborted transaction is ever visible.
         using (var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build())
         using (var producer = new ProducerBuilder<string, string>(new ProducerConfig
         {
@@ -121,7 +107,6 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
             consumer.Close();
         }
 
-        // Attempt 2: a new consumer resumes from the last COMMITTED offset, unchanged by the abort, so the message is redelivered - this time committed.
         using (var consumer = new ConsumerBuilder<string, string>(consumerConfig).Build())
         using (var producer = new ProducerBuilder<string, string>(new ProducerConfig
         {
@@ -145,7 +130,7 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
         }
 
         var outputCount = await CountMessagesAsync(bootstrapServers, outputTopic, IsolationLevel.ReadCommitted);
-        Assert.Equal(1, outputCount); // the aborted attempt left no trace - no duplicate
+        Assert.Equal(1, outputCount);
     }
 
     [Fact]
@@ -179,7 +164,6 @@ public sealed class KafkaTransactionsTests : IAsyncLifetime
             var start = DateTimeOffset.UtcNow;
             for (var i = 0; i < messageCount; i++)
             {
-                // One transaction per message - the worst case, matching this test's one-message-per-saga-step shape, not a batched transaction.
                 producer.BeginTransaction();
                 producer.Produce(txnTopic, new Message<string, string> { Key = $"k{i}", Value = $"v{i}" });
                 producer.CommitTransaction();

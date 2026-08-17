@@ -12,17 +12,7 @@ using Polly.Registry;
 
 namespace Inventory.IntegrationTests;
 
-/// <summary>
-/// End to end at the persistence layer -
-/// ReplenishmentRequestProcessor turning a WarehouseReplenishmentNeeded
-/// signal into a Requested purchase order, and
-/// PurchaseOrderReceivingSweeper turning a due one into an actual restock
-/// command on the outbox. What happens after the outbox row is dispatched
-/// (the produce to inventory.restock-requested.v1, and
-/// InventoryReservationMessageProcessor.ProcessRestockAsync picking it back
-/// up) is exactly the already-tested restock/backorder-release
-/// path - not re-tested here.
-/// </summary>
+/// <summary>End to end at the persistence layer: ReplenishmentRequestProcessor turning a signal into a Requested purchase order, and PurchaseOrderReceivingSweeper turning a due one into a restock command on the outbox.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class ReplenishmentTests(PostgresFixture fixture) : IAsyncLifetime
 {
@@ -53,7 +43,6 @@ public sealed class ReplenishmentTests(PostgresFixture fixture) : IAsyncLifetime
     public async Task AReplenishmentSignalRequestsEnoughToReachTheTargetMultiple()
     {
         var processor = CreateRequestProcessor();
-        // 4 available, reorder point 5, multiplier 3 -> target 15, request 15 - 4 = 11.
         var result = await processor.ProcessAsync(
             CreateSignalConsumeResult(Guid.NewGuid(), "SKU-A", "WH-SP", available: 4, reorderPoint: 5), CancellationToken.None);
 
@@ -121,7 +110,6 @@ public sealed class ReplenishmentTests(PostgresFixture fixture) : IAsyncLifetime
             await dbContext.SaveChangesAsync();
         }
 
-        // Lead time already elapsed (5 minutes ago vs. a 1-second window).
         var sweeper = CreateReceivingSweeper(leadTimeSeconds: 1);
         await sweeper.SweepAsync(CancellationToken.None);
 
@@ -136,10 +124,7 @@ public sealed class ReplenishmentTests(PostgresFixture fixture) : IAsyncLifetime
         var request = JsonSerializer.Deserialize<InventoryRestockRequested>(outboxMessage.Payload, SerializerOptions)!;
         Assert.Equal("SKU-D", request.Sku);
         Assert.Equal(12, request.Quantity);
-        // The purchase order's own id stands in for OrderId - there is no real customer order behind a replenishment restock.
         Assert.Equal(purchaseOrderId, request.OrderId);
-        // The whole point of the loop: the restock names the warehouse the
-        // purchase order was actually raised for, so it cannot land anywhere else.
         Assert.Equal("WH-SP", request.WarehouseCode);
     }
 

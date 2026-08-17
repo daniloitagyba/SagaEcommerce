@@ -6,10 +6,6 @@ using Orders.Infrastructure.Data;
 
 namespace Orders.Infrastructure.Data.Migrations;
 
-// Raw SQL, no EF model impact - one row per named check
-// (AntiEntropySweeper's own check-name strings), read/written only via
-// raw Npgsql by that class. See AntiEntropySweeper's own comment on the
-// two checks that use it.
 [DbContext(typeof(OrdersDbContext))]
 [Migration("20260816150000_AddAntiEntropyProgress")]
 public sealed class AddAntiEntropyProgress : Migration

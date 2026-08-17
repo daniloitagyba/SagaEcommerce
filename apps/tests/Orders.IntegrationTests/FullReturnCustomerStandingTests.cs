@@ -8,17 +8,7 @@ using Polly.Registry;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// Regression coverage for
-/// docs/architecture/audit-2026-08-15-domain-and-business-rules-review.md's
-/// finding 1: a full return used to leave the customer permanently
-/// credited with the standing a since-refunded order earned them, because
-/// Customer.ReverseCompletedOrder had no production caller at all.
-/// EfOrderReturnRepository.SaveReturnAsync now reverses it when
-/// markOrderReturned is true - gated on the same Delivered -> Returned
-/// race guard that also queues the OrderStatusChanged event, so a losing
-/// concurrent request cannot reverse it twice.
-/// </summary>
+/// <summary>Regression coverage for docs/architecture/audit-2026-08-15-domain-and-business-rules-review.md's finding 1: a full return used to leave the customer permanently credited with standing from a since-refunded order.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class FullReturnCustomerStandingTests(PostgresFixture fixture) : IAsyncLifetime
 {
@@ -49,12 +39,6 @@ public sealed class FullReturnCustomerStandingTests(PostgresFixture fixture) : I
 
         await using (var dbContext = new OrdersDbContext(_dbOptions))
         {
-            // RecordCompletedOrder is exactly what OrderStatusStore/
-            // EfOrderStatusRepository call when this order was originally
-            // confirmed - seeding through the same domain method the
-            // production path uses, not a raw UPDATE, so this test
-            // exercises the real round trip: recorded on confirmation,
-            // reversed on full return.
             var customer = Customer.Create(customerId, DateTimeOffset.UtcNow.AddDays(-30));
             customer.RecordCompletedOrder(300m);
             dbContext.Customers.Add(customer);
@@ -73,8 +57,6 @@ public sealed class FullReturnCustomerStandingTests(PostgresFixture fixture) : I
             dbContext.Orders.Add(order);
             await dbContext.SaveChangesAsync();
 
-            // Jumps straight to Delivered - this test is about the return's
-            // side effect on standing, not the lifecycle that gets it there.
             await dbContext.Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE orders SET status = {OrderStatuses.Delivered} WHERE id = {order.Id}");
             orderId = order.Id;
@@ -139,7 +121,6 @@ public sealed class FullReturnCustomerStandingTests(PostgresFixture fixture) : I
             var order = await repository.FindForReturnAsync(orderId, CancellationToken.None);
             Assert.NotNull(order);
 
-            // Returns one of the two units - the order stays open for the rest, per Customer.ReverseCompletedOrder's own doc comment.
             var (orderReturn, rejection, _) = order!.TryReturn(
                 [("SKU-PARTIAL-RETURN-001", 1)], "customer return", ReturnReasonCategory.Unwanted,
                 TimeSpan.FromDays(30), DateTimeOffset.UtcNow);

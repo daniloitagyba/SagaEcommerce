@@ -1,10 +1,6 @@
 namespace Storefront.Service;
 
-/// <summary>
-/// Pure checkout mapping and idempotency policy. HTTP forwarding stays in
-/// the endpoint adapter; decisions that must remain stable across retries
-/// are isolated here and can be tested without an HttpContext.
-/// </summary>
+/// <summary>Pure checkout mapping and idempotency policy, testable without an HttpContext.</summary>
 internal static class StorefrontCheckoutPolicy
 {
     public static StorefrontEndpoints.CheckoutOrderRequest BuildOrderRequest(

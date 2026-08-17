@@ -31,9 +31,6 @@ public sealed class CreateOrderHandler(
             ? null
             : OrderRequestHasher.Compute(command, customerId);
 
-        // PostgreSQL is authoritative and is consulted before any catalog,
-        // customer, or coupon I/O. A replay therefore returns the original
-        // order without re-pricing it, even if today's catalog has changed.
         if (idempotencyKey is not null)
         {
             var existing = await repository.FindIdempotencyAsync(customerId, idempotencyKey, cancellationToken);
@@ -53,12 +50,6 @@ public sealed class CreateOrderHandler(
                 return new CreateOrderResult(null, Guid.Empty, pricingErrors);
             }
 
-            // Compared against the subtotal specifically, not
-            // the grand total - shipping, tax and discounts are expected to
-            // apply and differ from whatever a cart last saw; that isn't a
-            // price change, a moved catalog price is. Durable idempotency
-            // has already been checked above, so this comparison runs only
-            // for a genuinely new request.
             if (command.ExpectedSubtotal is { } expectedSubtotal
                 && expectedSubtotal != checkout!.Breakdown.Subtotal.Amount)
             {
@@ -134,14 +125,10 @@ public sealed class CreateOrderHandler(
         Activity.Current?.SetTag("messaging.message.id", orderCreated.EventId);
         Activity.Current?.SetTag("service.instance.id", command.InstanceId);
 
-        // The coupon's redemption slot is claimed in the same
-        // transaction as the order itself - see CouponReservation for why
-        // it cannot be a separate call.
         var couponReservation = checkout?.CouponCode is { } couponCode
             ? new CouponReservation(couponCode, order.Id, order.CustomerId, createdAt)
             : null;
 
-        // Same reasoning as the coupon reservation - see CampaignReservation.
         var campaignReservation = checkout?.CampaignCode is { } campaignCode
             ? new CampaignReservation(campaignCode, checkout.CampaignAmount, order.Id, createdAt)
             : null;

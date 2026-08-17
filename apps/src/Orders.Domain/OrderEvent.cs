@@ -1,18 +1,13 @@
 namespace Orders.Domain;
 
-/// <summary>
-/// An append-only domain event, the unit of the event store.
-/// Ordering is by Id (a global, Postgres-assigned bigserial - atomically
-/// ordered by construction, unlike a per-order sequence number computed by
-/// the application, which would race under concurrent writers).
-/// </summary>
+/// <summary>An append-only domain event, the unit of the event store, ordered by a Postgres-assigned bigserial Id.</summary>
 public sealed class OrderEvent
 {
     private OrderEvent()
     {
     }
 
-    /// <summary>Test-only construction seam - see AssemblyInfo.cs. Production code never builds this by hand; EF Core materializes it from the event store.</summary>
+    /// <summary>Test-only construction seam; production code never builds this by hand.</summary>
     internal static OrderEvent ForTesting(long id, Guid orderId, string eventType, string payload, DateTimeOffset occurredAt) =>
         new()
         {

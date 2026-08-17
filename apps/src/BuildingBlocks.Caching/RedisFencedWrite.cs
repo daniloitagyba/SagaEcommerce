@@ -2,17 +2,7 @@ using StackExchange.Redis;
 
 namespace BuildingBlocks;
 
-/// <summary>
-/// RedisOrderCache takes a
-/// timed Redis lock before slow work and writing the result - the classic
-/// Redlock/Kleppmann hazard, since a holder paused past the lock's timeout
-/// can resume and clobber a second holder's newer write with stale data.
-/// A fencing token closes this: every lock acquisition draws a strictly
-/// increasing ticket (<see cref="NextFenceTokenAsync"/>, a Redis INCR), and
-/// the write (<see cref="FencedSetAsync"/>) is a Lua script that rejects a
-/// write carrying a lower ticket than one already recorded - enforced at
-/// the point of write, the only place that can enforce it.
-/// </summary>
+/// <summary>Fencing-token helpers that reject stale Redis writes from a lock holder that resumes after its lock expired.</summary>
 public static class RedisFencedWrite
 {
     private const string FencedSetScript = """
@@ -33,13 +23,7 @@ public static class RedisFencedWrite
     public static Task<long> NextFenceTokenAsync(this IDatabase database, string fenceSequenceKey) =>
         database.StringIncrementAsync(fenceSequenceKey);
 
-    /// <summary>
-    /// Writes <paramref name="value"/> to <paramref name="valueKey"/> only if
-    /// <paramref name="token"/> is not older than the token of whatever was
-    /// last written there. Returns false when the write was rejected as
-    /// stale - the caller lost a race against a newer holder and should not
-    /// treat its own write as having taken effect.
-    /// </summary>
+    /// <summary>Writes <paramref name="value"/> to <paramref name="valueKey"/> only if <paramref name="token"/> is not older than the last token recorded there.</summary>
     public static async Task<bool> FencedSetAsync(
         this IDatabase database,
         string valueKey,

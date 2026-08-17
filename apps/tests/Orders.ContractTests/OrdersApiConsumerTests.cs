@@ -5,15 +5,7 @@ using PactNet.Matchers;
 
 namespace Orders.ContractTests;
 
-/// <summary>
-/// Consumer-driven contract testing for Orders.Api's REST
-/// surface, complementing the Avro contracts for the Kafka
-/// side. Orders.Worker and Payments.Service coordinate purely through
-/// Kafka, so the one real synchronous boundary worth protecting is
-/// whatever calls POST/GET /orders directly. This half generates the
-/// contract ("pact") against a mock server, never a real Orders.Api;
-/// OrdersApiProviderTests verifies it against the real, deployed service.
-/// </summary>
+/// <summary>Consumer-driven contract testing for Orders.Api's REST surface; generates the pact against a mock server (see OrdersApiProviderTests for the provider-side verification).</summary>
 public sealed class OrdersApiConsumerTests
 {
     private readonly IPactBuilderV3 _pact;
@@ -72,10 +64,6 @@ public sealed class OrdersApiConsumerTests
         });
     }
 
-    // Tests the not-found shape, not "read back an existing order" - the
-    // latter needs Pact's provider-state fixture machinery to line up a
-    // real order id, not worth the test-only API surface. A random,
-    // never-created id 404ing is itself a worthwhile contract, no fixture needed.
     [Fact]
     public async Task GetOrderWhenTheOrderDoesNotExistReturnsNotFound()
     {

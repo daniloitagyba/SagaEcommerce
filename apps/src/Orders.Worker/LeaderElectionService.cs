@@ -6,12 +6,7 @@ using Microsoft.Extensions.Options;
 namespace Orders.Worker;
 
 /// <summary>
-/// What SagaTimeoutSweeper/AntiEntropySweeper gate their work on: exactly
-/// one active instance at a time. Kubernetes uses a real Lease so exactly
-/// one KEDA-scaled replica sweeps; SingleNode (Compose, which always runs
-/// orders-worker at replicas: 1 - see compose.yaml) is always the leader
-/// since there's no one to contend with, which is what actually lets the
-/// sweepers run there at all.
+/// Defines the leader election contract.
 /// </summary>
 public enum LeaderElectionMode
 {
@@ -25,8 +20,7 @@ public interface ILeaderElection
 }
 
 /// <summary>
-/// Always-leader implementation for environments with no real cluster
-/// (Compose) to contend leadership in - see LeaderElectionMode.
+/// Provides leader election for a single instance.
 /// </summary>
 public sealed class SingleNodeLeaderElection : ILeaderElection
 {
@@ -49,12 +43,7 @@ public sealed class LeaderElectionOptions
 }
 
 /// <summary>
-/// Kubernetes Lease-based leader election so exactly one
-/// orders-worker replica actively runs SagaTimeoutSweeper at a time, rather
-/// than every KEDA-scaled replica redundantly polling. Requires
-/// automountServiceAccountToken: true on this pod (a hardening
-/// default flipped back on), scoped tightly: RBAC grants nothing but Lease
-/// objects in this one namespace.
+/// Provides Kubernetes lease-based leader election.
 /// </summary>
 public sealed class LeaderElectionService(
     IOptions<LeaderElectionOptions> options,
@@ -72,12 +61,6 @@ public sealed class LeaderElectionService(
         var retryPeriod = TimeSpan.FromSeconds(_options.RetryPeriodSeconds);
         LeaderElectionServiceLog.Starting(logger, _identity, _options.LeaseName);
 
-        // RunUntilLeadershipLostAsync doesn't retry acquisition on its own,
-        // so this outer loop keeps re-attempting for the pod's lifetime.
-        // Building the Kubernetes client can fail the same way (no
-        // ServiceAccount token outside a real cluster), so it gets the same
-        // catch-log-retry treatment instead of taking the whole process
-        // down via BackgroundServiceExceptionBehavior=StopHost.
         while (!stoppingToken.IsCancellationRequested)
         {
             try

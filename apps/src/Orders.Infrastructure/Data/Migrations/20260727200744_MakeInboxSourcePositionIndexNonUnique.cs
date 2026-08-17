@@ -4,10 +4,8 @@
 
 namespace Orders.Infrastructure.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class MakeInboxSourcePositionIndexNonUnique : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(
@@ -20,7 +18,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 columns: ["consumer_name", "topic", "partition", "offset"]);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(

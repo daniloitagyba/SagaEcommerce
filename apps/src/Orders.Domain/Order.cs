@@ -1,17 +1,6 @@
 namespace Orders.Domain;
 
-/// <summary>
-/// Mirrors BuildingBlocks.OrderStatuses' Created and Delivered constants -
-/// the only two status values this aggregate itself ever compares against
-/// or writes. Orders.Domain cannot reference BuildingBlocks (its csproj
-/// takes only NodaMoney, deliberately, and the domain-purity fitness
-/// functions enforce it), so these are duplicated here rather than passed
-/// in, the same reasoning and the same pattern Orders.Worker's
-/// CustomerTierThresholds already uses to mirror
-/// Orders.Domain.CustomerTiers across its own assembly boundary - "with a
-/// test pinning the two together" applies here too, see
-/// OrderStatusNamesTests.
-/// </summary>
+/// <summary>Mirrors BuildingBlocks.OrderStatuses' Created and Delivered constants for this dependency-free domain.</summary>
 internal static class OrderStatusNames
 {
     public const string Created = "Created";
@@ -30,11 +19,7 @@ public sealed class Order
 
     public string CustomerId { get; private set; } = string.Empty;
 
-    /// <summary>
-    /// The grand total actually charged: Subtotal - DiscountTotal +
-    /// ShippingTotal + TaxTotal. Named "Amount", not "GrandTotal", since
-    /// every consumer already carries that name.
-    /// </summary>
+    /// <summary>The grand total actually charged: Subtotal - DiscountTotal + ShippingTotal + TaxTotal.</summary>
     public decimal Amount { get; private set; }
 
     public string Currency { get; private set; } = string.Empty;
@@ -52,25 +37,16 @@ public sealed class Order
 
     public decimal TaxTotal { get; private set; }
 
-    /// <summary>The coupon the shopper presented, if any - kept so DiscountTotal stays auditable.</summary>
+    /// <summary>The coupon the shopper presented, if any, kept for audit of DiscountTotal.</summary>
     public string? CouponCode { get; private set; }
 
-    /// <summary>The automatic campaign applied, if any - same auditability reasoning as CouponCode.</summary>
+    /// <summary>The automatic campaign applied, if any, kept for audit.</summary>
     public string? CampaignCode { get; private set; }
 
-    /// <summary>
-    /// "Card", "Pix" or "Boleto", deciding whether Payments holds an
-    /// authorization to capture at shipment or charges outright. A plain
-    /// string, not a BuildingBlocks.PaymentMethods reference - Orders.Domain
-    /// must not depend on the messaging contracts' wire format.
-    /// </summary>
+    /// <summary>"Card", "Pix" or "Boleto", deciding whether Payments authorizes now or charges outright.</summary>
     public string PaymentMethod { get; private set; } = DefaultPaymentMethod;
 
-    /// <summary>
-    /// Where it is going. Null on the amount-only shape,
-    /// which has no destination and falls back to flat shipping and the
-    /// global tax rate.
-    /// </summary>
+    /// <summary>Delivery destination; null on the amount-only shape, which falls back to flat shipping and global tax.</summary>
     public ShippingAddress? ShippingAddress { get; private set; }
 
     private const string DefaultPaymentMethod = "Pix";
@@ -80,24 +56,7 @@ public sealed class Order
     /// <summary>Every line fully returned - the point at which the order itself becomes Returned.</summary>
     public bool IsFullyReturned => _lines.Count > 0 && _lines.All(line => line.ReturnableQuantity == 0);
 
-    /// <summary>
-    /// Builds a return for some of this order's units.
-    /// Validation and refund arithmetic share one pass over the same fact -
-    /// how much of each line is still returnable - so it's read only once.
-    ///
-    /// Refunds each line's tax share alongside its goods
-    /// share (previously only LineTotal came back - the discounted goods
-    /// price - leaving the tax on those units permanently kept). And on a
-    /// return that empties the order, <paramref name="reasonCategory"/>
-    /// decides whether outbound shipping comes back too: always for a
-    /// <see cref="ReturnReasonCategory.Defect"/>, only inside
-    /// <paramref name="regretWindow"/> of <see cref="CreatedAt"/> for a
-    /// <see cref="ReturnReasonCategory.Regret"/>, never for
-    /// <see cref="ReturnReasonCategory.Unwanted"/>. The window length is
-    /// configuration; whether this specific return qualifies is computed
-    /// here, from facts only the aggregate holds - the same reasoning that
-    /// keeps the rest of the refund arithmetic in the domain.
-    /// </summary>
+    /// <summary>Builds a return for some of this order's units, validating and computing refunds in one pass.</summary>
     public (OrderReturn? Return, ReturnRejectionReason Rejection, string? OffendingSku) TryReturn(
         IReadOnlyList<(string Sku, int Quantity)> requestedItems,
         string reason,
@@ -109,7 +68,6 @@ public sealed class Order
 
         if (Status != OrderStatusNames.Delivered)
         {
-            // Nothing can come back that never arrived.
             return (null, ReturnRejectionReason.OrderNotDelivered, null);
         }
 
@@ -156,7 +114,6 @@ public sealed class Order
             returnLines.Add(OrderReturnLine.Create(sku, quantity, (goodsRefund + taxRefund).Amount));
         }
 
-        // Mutate only after every line is validated - no half-returned order.
         for (var index = 0; index < requestedItems.Count; index++)
         {
             var (sku, quantity) = requestedItems[index];
@@ -171,12 +128,7 @@ public sealed class Order
         return (orderReturn, ReturnRejectionReason.None, null);
     }
 
-    /// <summary>
-    /// The original amount-only constructor, kept so k6, Pact and the
-    /// README's quickstart - all still POSTing {customerId, amount,
-    /// currency} - don't break. Subtotal is just the amount; everything
-    /// else is zero.
-    /// </summary>
+    /// <summary>The original amount-only constructor; Subtotal is just the amount and everything else is zero.</summary>
     public static Order Create(string customerId, decimal amount, string currency, DateTimeOffset createdAt)
     {
         EnsureIdentityAndMoney(customerId, amount, currency);
@@ -197,12 +149,7 @@ public sealed class Order
         };
     }
 
-    /// <summary>
-    /// The real checkout path: an order built from priced line items, with
-    /// the totals the pricing engine computed. Amount is derived here rather
-    /// than accepted as a parameter, so no caller can persist a grand total
-    /// that disagrees with the parts it is made of.
-    /// </summary>
+    /// <summary>Builds an order from priced line items; Amount is derived, not accepted, so it always matches its parts.</summary>
     public static Order CreateWithLines(
         string customerId,
         string currency,

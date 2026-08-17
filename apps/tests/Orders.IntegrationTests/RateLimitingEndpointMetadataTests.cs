@@ -7,16 +7,7 @@ using RateLimitingExtensions = OrdersApi::Orders.Api.RateLimiting.RateLimitingEx
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// Three side-effecting writes (cancellation, returns, fulfillment) used to
-/// carry no local RequireRateLimiting metadata at all, while every read did
-/// - each /orders route file called RequireRateLimiting on its own MapGet/
-/// MapPost, and three of them simply never did. Program.cs now applies it
-/// once, to a single MapGroup("/orders") every route file registers onto -
-/// this reads the real ASP.NET Core route table back out of the running
-/// app (not the source files) so a new endpoint added outside that group
-/// fails this test rather than silently repeating the drift.
-/// </summary>
+/// <summary>Three side-effecting writes (cancellation, returns, fulfillment) used to carry no local RequireRateLimiting metadata while every read did. Reads the real ASP.NET Core route table so a new endpoint added outside the shared MapGroup fails this test.</summary>
 public sealed class RateLimitingEndpointMetadataTests : IClassFixture<OrdersApiFactory>
 {
     private readonly OrdersApiFactory _factory;
@@ -33,16 +24,9 @@ public sealed class RateLimitingEndpointMetadataTests : IClassFixture<OrdersApiF
         var ordersEndpoints = dataSource.Endpoints
             .OfType<RouteEndpoint>()
             .Where(endpoint => endpoint.RoutePattern.RawText is { } text
-                // REST routes only - "/orders" itself or "/orders/...". A plain
-                // StartsWith("/orders") also matches the gRPC route's route
-                // pattern ("/orders.OrderQuery/GetOrder", from the .proto's
-                // "orders" package), which carries no local rate limiter by
-                // design - it's a different transport, not one of the seven
-                // REST endpoints Program.cs's shared MapGroup covers.
                 && (text == "/orders" || text.StartsWith("/orders/", StringComparison.Ordinal)))
             .ToList();
 
-        // Guards the rule below from passing trivially if every route were renamed or moved off "/orders".
         Assert.True(
             ordersEndpoints.Count >= 7,
             $"Expected at least 7 /orders endpoints, found {ordersEndpoints.Count} - a route may have moved without this test noticing.");

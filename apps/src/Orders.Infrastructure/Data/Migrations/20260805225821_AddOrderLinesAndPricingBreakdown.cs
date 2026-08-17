@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Orders.Infrastructure.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddOrderLinesAndPricingBreakdown : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<string>(
@@ -90,13 +88,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 table: "order_lines",
                 column: "sku");
 
-            // Backfill: an order that predates this schema has no lines and
-            // no promotions, so its subtotal is simply what was charged.
-            // Without this, every existing row would report subtotal = 0
-            // alongside a non-zero amount - a breakdown that contradicts its
-            // own total, and one that Order.CreateWithLines could never
-            // produce. Amount lives in amount_cents since the earlier
-            // column cutover, hence the division rather than a plain copy.
             migrationBuilder.Sql("""
                 UPDATE orders
                 SET subtotal = ROUND(amount_cents / 100.0, 2)
@@ -104,7 +95,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 """);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(

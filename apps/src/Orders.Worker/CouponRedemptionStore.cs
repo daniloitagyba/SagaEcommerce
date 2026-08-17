@@ -5,26 +5,16 @@ using NpgsqlTypes;
 namespace Orders.Worker;
 
 /// <summary>
-/// Settles a coupon redemption once its order reaches a
-/// terminal state. Without release, every declined payment would burn a
-/// redemption permanently - a 100-use coupon exhausted by 100 failed
-/// checkouts, no sale. Raw Npgsql, not EF, matching OrderStatusStore /
-/// SagaOrchestrationStore: EF owns the schema, not the worker's hot paths.
+/// Settles a coupon redemption once its order reaches a terminal state.
 /// </summary>
 public sealed class CouponRedemptionStore
 {
-    // Guarded on state = 'Reserved', so a redelivered message or a second saga path is a no-op, not a double count.
     private const string ConfirmSql = """
         UPDATE coupon_redemptions
         SET state = @confirmed_state, settled_at = @settled_at
         WHERE code = @code AND order_id = @order_id AND state = @reserved_state;
         """;
 
-    // Releasable from Confirmed as well as Reserved, since
-    // fulfilment states let an order be confirmed and later cancelled - the
-    // original Reserved-only guard silently did nothing in that case,
-    // leaving the slot spent for an order that no longer exists. Released
-    // is still excluded, so a double release can't hand the slot back twice.
     private const string ReleaseSql = """
         WITH released AS (
             UPDATE coupon_redemptions

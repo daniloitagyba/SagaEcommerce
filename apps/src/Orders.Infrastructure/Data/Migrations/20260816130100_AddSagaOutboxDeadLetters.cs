@@ -6,10 +6,6 @@ using Orders.Infrastructure.Data;
 
 namespace Orders.Infrastructure.Data.Migrations;
 
-// The saga outbox's own dead-letter table - see AddSagaOutbox for why
-// saga_outbox_messages itself is raw SQL, not an EF DbSet. Written to (via
-// raw Npgsql) by Orders.Worker's SagaOutboxPublisher.MoveToDeadLetterAsync
-// once a command exhausts SagaOrchestrationOptions.OutboxMaximumAttempts.
 [DbContext(typeof(OrdersDbContext))]
 [Migration("20260816130100_AddSagaOutboxDeadLetters")]
 public sealed class AddSagaOutboxDeadLetters : Migration

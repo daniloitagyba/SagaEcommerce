@@ -1,10 +1,6 @@
 namespace Inventory.Service.Domain;
 
-/// <summary>
-/// Deliberately no optimistic concurrency token and no row lock - TryReserve
-/// is a plain read-then-write, safe only because the Kafka consumer
-/// guarantees at most one in-flight request per Sku (InventoryContracts.cs).
-/// </summary>
+/// <summary>Per-SKU inventory read model with reserve/commit/release/restock operations.</summary>
 public sealed class InventoryItem
 {
     private InventoryItem()
@@ -57,10 +53,7 @@ public sealed class InventoryItem
     }
 
     /// <summary>
-    /// Puts returned units back on the shelf. Distinct from
-    /// TryRelease, which hands back stock only ever <em>held</em> - a
-    /// return means the sale happened and stock already left inventory, so
-    /// there is no ReservedQuantity to draw down. A pure increment; cannot fail.
+    /// Restocks returned units.
     /// </summary>
     public void Restock(int quantity, DateTimeOffset now)
     {
@@ -88,10 +81,7 @@ public sealed class InventoryItem
     }
 
     /// <summary>
-    /// Updates the per-SKU read model from the warehouse rows, which are
-    /// the source of truth for stock ownership. Keeping this projection
-    /// update inside the same database transaction as the warehouse
-    /// mutation prevents the two representations from drifting.
+    /// Updates the SKU stock projection.
     /// </summary>
     public void SynchronizeFromWarehouses(int availableQuantity, int reservedQuantity, DateTimeOffset now)
     {

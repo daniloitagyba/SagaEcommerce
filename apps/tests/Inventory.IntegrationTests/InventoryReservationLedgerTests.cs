@@ -12,15 +12,7 @@ using System.Text.Json;
 
 namespace Inventory.IntegrationTests;
 
-/// <summary>
-/// The permanent ledger's two write sides -
-/// RecordCommittedAsync (WarehouseAllocationStore) writing on a successful
-/// commit, ResolveLedgerOnRestockAsync reducing or removing on a matching
-/// restock - proven through the same InventoryReservationMessageProcessor
-/// entry points the real reserve/commit/release/restock Kafka topics drive,
-/// not called directly, so this exercises the actual wiring in
-/// ProcessSettlementAsync, not just the store methods in isolation.
-/// </summary>
+/// <summary>The permanent ledger's two write sides, proven through the same InventoryReservationMessageProcessor entry points the real Kafka topics drive rather than the store methods in isolation.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class InventoryReservationLedgerTests(PostgresFixture fixture) : IAsyncLifetime
 {
@@ -130,8 +122,6 @@ public sealed class InventoryReservationLedgerTests(PostgresFixture fixture) : I
 
         await processor.ProcessAsync(ReserveConsumeResult(reservationId, orderId, "SKU-LEDGER-001", 4), CancellationToken.None);
         await processor.ProcessCommitAsync(CommitConsumeResult(reservationId, orderId, "SKU-LEDGER-001", 4), CancellationToken.None);
-        // The replenishment loop's restocks carry a purchase order's own
-        // id, never a real customer order id - this is that case.
         await processor.ProcessRestockAsync(RestockConsumeResult(Guid.NewGuid(), Guid.NewGuid(), "SKU-LEDGER-001", 4), CancellationToken.None);
 
         await using var scope = _serviceProvider.CreateAsyncScope();

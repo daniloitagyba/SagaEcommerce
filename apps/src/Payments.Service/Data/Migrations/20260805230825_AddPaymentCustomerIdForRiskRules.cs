@@ -4,10 +4,8 @@
 
 namespace Payments.Service.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddPaymentCustomerIdForRiskRules : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<string>(
@@ -24,7 +22,6 @@ namespace Payments.Service.Data.Migrations
                 columns: ["customer_id", "decided_at"]);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(

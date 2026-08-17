@@ -49,10 +49,6 @@ proxy_disabled=false
 endpointslice_patched=false
 
 restart_workloads() {
-  # orders-api is an Argo Rollout (Milestone 15); "kubectl rollout restart"
-  # only supports Deployment/StatefulSet/DaemonSet, so trigger its equivalent
-  # via restartAt, then poll for full availability the same way orders-worker
-  # is awaited via kubectl rollout status.
   kubectl patch rollout/orders-api --namespace "$namespace" --type merge \
     --patch "{\"spec\":{\"restartAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
   kubectl rollout restart deployment/orders-worker --namespace "$namespace"
@@ -68,11 +64,6 @@ restart_workloads() {
   kubectl rollout status deployment/orders-worker --namespace "$namespace" --timeout=120s
 }
 
-# kubectl apply against a point-in-time backup can hit a resourceVersion conflict
-# with the object's last-applied-configuration annotation, since the object was
-# mutated with `kubectl patch` (not `apply`) in between. Route the endpoint at
-# `address:port` using the same reliable JSON-patch mechanism in both directions
-# instead, so reverting can never conflict on a stale resourceVersion.
 route_endpointslice() {
   local address=$1
   local port=$2
@@ -80,11 +71,6 @@ route_endpointslice() {
     --patch "[{\"op\":\"replace\",\"path\":\"/endpoints/0/addresses/0\",\"value\":\"$address\"},{\"op\":\"replace\",\"path\":\"/ports/0/port\",\"value\":$port}]" >/dev/null
 }
 
-# Freshly restarted pods pay a one-time JIT warmup cost (observed separately as
-# ~500-900ms tail latency on the first dozen requests), which can trip smoke's
-# strict latency thresholds without indicating an actual functional problem. Gate
-# on functional correctness (zero failures, full pipeline convergence) instead of
-# the k6 exit code, and warm up first so the recorded run reflects steady state.
 functional_smoke_check() {
   local log_file=$1
   set +o errexit
@@ -180,10 +166,6 @@ endpointslice_patched=false
 restart_workloads
 
 printf 'Verifying recovery\n'
-# A passthrough Toxiproxy with no active toxics is functionally indistinguishable
-# from the real backend, so a passing smoke run alone cannot prove the revert
-# actually took effect. Assert the EndpointSlice itself is back on the real
-# backend first, independent of whether traffic happens to be flowing.
 current_address=$(kubectl get endpointslice "$endpointslice_name" --namespace "$namespace" --output jsonpath='{.endpoints[0].addresses[0]}')
 current_port=$(kubectl get endpointslice "$endpointslice_name" --namespace "$namespace" --output jsonpath='{.ports[0].port}')
 if [[ "$current_address" != "$real_address" || "$current_port" != "$real_port" ]]; then

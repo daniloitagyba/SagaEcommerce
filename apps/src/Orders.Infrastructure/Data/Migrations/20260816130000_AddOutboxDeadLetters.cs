@@ -6,11 +6,6 @@ using Orders.Infrastructure.Data;
 
 namespace Orders.Infrastructure.Data.Migrations;
 
-// Raw SQL, same as AddSagaOutbox - outbox_dead_letters is never an EF
-// DbSet (OutboxPublisher<TDbContext> writes to it via
-// Database.ExecuteSqlInterpolatedAsync, see BuildingBlocks.Persistence's
-// OutboxPublisher.DeadLetterAsync), so there is nothing here for the model
-// snapshot to track.
 [DbContext(typeof(OrdersDbContext))]
 [Migration("20260816130000_AddOutboxDeadLetters")]
 public sealed class AddOutboxDeadLetters : Migration

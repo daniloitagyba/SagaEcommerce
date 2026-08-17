@@ -4,16 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Inventory.Service;
 
-/// <summary>
-/// Applies an allocation plan to the warehouse network. Reserve draws the
-/// plan and records it; commit and release replay exactly what reserve
-/// recorded rather than guessing which building the stock came from.
-///
-/// Mutating callers hold a transaction-scoped advisory lock for the SKU.
-/// That lock is deliberately acquired by the message processor rather than
-/// inferred from Kafka partitioning: stock changes arrive on several topics,
-/// whose partitions can be assigned to different replicas concurrently.
-/// </summary>
+/// <summary>Applies an allocation plan to the warehouse network.</summary>
 public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
 {
     /// <summary>Which warehouses can supply this SKU, in the allocator's terms.</summary>
@@ -30,28 +21,17 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
             .. stocks.Select(stock => new StockAllocator.Candidate(
                 stock.WarehouseCode,
                 stock.AvailableQuantity,
-                // Priority is the warehouse code's ordinal position for now -
-                // a real network would rank by distance to the destination,
-                // which needs the shipping address to reach this service.
                 WarehousePriority(stock.WarehouseCode)))
         ];
     }
 
-    /// <summary>
-    /// The outcome of applying a plan: whether it went through, and which
-    /// warehouses fell to or below their reorder point as a result.
-    /// </summary>
+    /// <summary>Outcome of applying a plan: whether it went through, and which warehouses fell to or below their reorder point.</summary>
     public sealed record ReservationOutcome(bool Applied, IReadOnlyList<WarehouseStock> CrossedReorderPoint)
     {
         public static ReservationOutcome Refused => new(false, []);
     }
 
-    /// <summary>
-    /// Applies a plan and records it. Returns not-applied when any leg
-    /// fails. The caller's SKU lock normally keeps availability stable, but
-    /// the full validation remains a defensive invariant for direct callers
-    /// and corrupted allocation plans.
-    /// </summary>
+    /// <summary>Applies a plan and records it; returns not-applied when any leg fails.</summary>
     public async Task<ReservationOutcome> TryApplyReservationAsync(
         Guid reservationId,
         string sku,
@@ -69,9 +49,6 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
             .Where(item => item.Sku == sku && warehouseCodes.Contains(item.WarehouseCode))
             .ToDictionaryAsync(item => item.WarehouseCode, StringComparer.Ordinal, cancellationToken);
 
-        // Validate every leg before mutating any tracked entity. Returning
-        // after the first mutation used to leave a partial plan pending in
-        // the DbContext, which the caller then persisted with the reply.
         if (stocks.Count != plan.Lines.Count
             || plan.Lines.Any(line => !stocks.TryGetValue(line.WarehouseCode, out var stock)
                 || line.Quantity <= 0
@@ -86,9 +63,6 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
         {
             var stock = stocks[line.WarehouseCode];
 
-            // Sampled before the reservation, so what is reported is the
-            // moment the warehouse went low - not every subsequent order
-            // that finds it already low.
             var wasStocked = !stock.NeedsReplenishment;
 
             _ = stock.TryReserve(line.Quantity, now);
@@ -105,19 +79,13 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
         return new ReservationOutcome(true, crossed);
     }
 
-    /// <summary>
-    /// The outcome of a full network-plus-aggregate reservation decision.
-    /// </summary>
+    /// <summary>Outcome of a full network-plus-aggregate reservation decision.</summary>
     public sealed record ReservationDecision(bool Reserved, IReadOnlyList<WarehouseStock> CrossedReorderPoint)
     {
         public static ReservationDecision Refused => new(false, []);
     }
 
-    /// <summary>
-    /// The whole decide-then-mutate reservation - network and aggregate
-    /// together - shared by the normal reserve path and backorder release
-    /// so neither can drift from the other's decision.
-    /// </summary>
+    /// <summary>The whole decide-then-mutate reservation, shared by the normal reserve path and backorder release.</summary>
     public async Task<ReservationDecision> TryReserveAsync(
         Guid reservationId,
         string sku,
@@ -159,9 +127,6 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
 
         if (allocations.Count == 0)
         {
-            // Nothing recorded means an unknown or already-settled
-            // reservation. Guessing a warehouse here could settle stock
-            // owned by a different order, so failure is explicit.
             return false;
         }
 
@@ -177,9 +142,6 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
             .ToDictionaryAsync(item => item.WarehouseCode, StringComparer.Ordinal, cancellationToken);
         var item = await dbContext.InventoryItems.SingleOrDefaultAsync(entity => entity.Sku == sku, cancellationToken);
 
-        // As with reserve, validate the entire recorded plan before
-        // applying it. A missing or insufficient later leg must not leave
-        // earlier warehouse rows committed or released.
         if (item is null
             || stocks.Count != warehouseCodes.Length
             || allocations.Any(allocation => !stocks.TryGetValue(allocation.WarehouseCode, out var stock)
@@ -202,16 +164,7 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
         return true;
     }
 
-    /// <summary>
-    /// The permanent half of settlement -
-    /// ReservationAllocation is deleted the moment TrySettleReservationAsync
-    /// replays it (by design, so it doesn't linger); this is what survives,
-    /// specifically so a later anti-entropy sweep can still ask whether the
-    /// order this stock was drawn down for is still one that should have it.
-    /// Called only on a successful commit, never a release - a released
-    /// reservation never drew anything down permanently, so there is
-    /// nothing here for it to leak.
-    /// </summary>
+    /// <summary>Records the permanent half of settlement, called only on a successful commit, never a release.</summary>
     public Task RecordCommittedAsync(
         Guid reservationId, Guid orderId, string sku, int quantity, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -220,21 +173,7 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// The other half: a restock (a return, an operator cancellation, a
-    /// backorder cancellation - anything that gives committed stock back)
-    /// reduces the oldest still-open ledger entries for the same order and
-    /// sku first, deleting one once it reaches zero. Quantity, not a
-    /// specific warehouse or reservation, is what's reconciled here - the
-    /// ledger tracks what a customer order still owes, and a return's
-    /// restock may land in a different warehouse than commit drew from even
-    /// though TryRestockAsync now honours a warehouse code when one is
-    /// given - and the anti-entropy check this feeds only ever asks "does
-    /// this order still have committed stock outstanding," not "which shelf."
-    /// A restock whose order id was never a real customer order (the
-    /// replenishment loop's restocks carry a purchase order's own id) simply
-    /// matches nothing here and is a harmless no-op.
-    /// </summary>
+    /// <summary>Reduces the oldest still-open ledger entries for an order/sku as stock is given back, deleting an entry once it reaches zero.</summary>
     public async Task ResolveLedgerOnRestockAsync(
         Guid orderId, string sku, int quantity, CancellationToken cancellationToken)
     {
@@ -262,18 +201,7 @@ public sealed class WarehouseAllocationStore(InventoryDbContext dbContext)
         }
     }
 
-    /// <summary>
-    /// Restocks the warehouse the caller names, when it names one - the
-    /// replenishment loop always does, since its purchase order was raised
-    /// against the exact warehouse that crossed its reorder point, and
-    /// landing the stock anywhere else leaves that warehouse silently
-    /// under-stocked (the reorder signal is edge-triggered, so it does not
-    /// fire again). When no warehouse is named - a customer return, where
-    /// nothing upstream knows which depot the parcel will land at - falls
-    /// back to the warehouse with the most room, which in this lab is a
-    /// stand-in for "wherever the returns depot routes them"; a real
-    /// network would decide from the return label, not the stock levels.
-    /// </summary>
+    /// <summary>Restocks the warehouse the caller names; falls back to the warehouse with the most room when none is named.</summary>
     public async Task<bool> TryRestockAsync(
         string sku,
         int quantity,

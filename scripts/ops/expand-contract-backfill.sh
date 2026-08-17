@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Mutates every row in `orders` with amount_cents IS NULL, in place, against
-# whatever `compose/` checkout this happens to be run from - there was
-# previously no way to preview the blast radius or confirm the target before
-# the UPDATE loop started, unlike dlq-redrive.sh's --dry-run. Usage:
-#   expand-contract-backfill.sh --dry-run   # count pending rows, mutate nothing
-#   expand-contract-backfill.sh --yes       # skip the interactive confirmation
-#   expand-contract-backfill.sh             # prompts before the first batch
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

@@ -5,27 +5,16 @@ using NpgsqlTypes;
 namespace Orders.Worker;
 
 /// <summary>
-/// The campaign-budget mirror of CouponRedemptionStore - settles a
-/// campaign claim once its order reaches a terminal state, on the saga-
-/// driven path (Saga:Mode=Orchestration, the deployed default). Without
-/// this, a campaign budget claimed by an order that later fails
-/// (declined payment, cancellation) would be spent permanently, and
-/// EfOrderStatusRepository's equivalent release only fires on the
-/// self-service/operator path, not this one.
+/// Settles promotion campaign claims.
 /// </summary>
 public sealed class PromotionCampaignStore
 {
-    // Guarded on state = 'Reserved', same reasoning as CouponRedemptionStore.ConfirmSql.
     private const string ConfirmSql = """
         UPDATE promotion_campaign_claims
         SET state = @confirmed_state, settled_at = @settled_at
         WHERE code = @code AND order_id = @order_id AND state = @reserved_state;
         """;
 
-    // Releasable from Confirmed as well as Reserved - see
-    // CouponRedemptionStore.ReleaseSql's identical reasoning. Floors the
-    // refund at total_budget with LEAST, the release-side mirror of
-    // EfOrderRepository.TryReserveCampaignAsync's own guard.
     private const string ReleaseSql = """
         WITH released AS (
             UPDATE promotion_campaign_claims

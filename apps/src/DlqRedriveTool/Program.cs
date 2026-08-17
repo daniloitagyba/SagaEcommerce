@@ -6,10 +6,6 @@ using System.Text.Json;
 using BuildingBlocks;
 using Confluent.Kafka;
 
-// The five dead-letter topics have been write-only since they
-// were introduced - publishers exist, nothing consumes them. Generic and
-// standalone, not tied to any one service, since every publisher writes
-// the same DeadLetterEnvelope JSON shape and header set.
 if (args.Length == 0 || (args[0] != "inspect" && args[0] != "redrive"))
 {
     Console.Error.WriteLine("Usage: DlqRedriveTool <inspect|redrive> --bootstrap-servers <host:port> --topic <dlq-topic> [--consumer-group <group>] [--max-redrives N] [--dry-run] [--idle-seconds N] [--key-filter <substring>]");
@@ -199,9 +195,6 @@ static async Task<int> RedriveAsync(ToolOptions options, CancellationToken cance
                 && (envelope.OriginalKey is null || !envelope.OriginalKey.Contains(options.KeyFilter, StringComparison.Ordinal)))
             {
                 filteredOut++;
-                // A filtered run has its own deterministic consumer group,
-                // so advancing past an out-of-scope row cannot hide it from
-                // an unfiltered run or a run with another filter.
                 if (!options.DryRun)
                 {
                     consumer.Commit(consumeResult);
@@ -235,7 +228,6 @@ static async Task<int> RedriveAsync(ToolOptions options, CancellationToken cance
 
             if (envelope.OriginalKey is null)
             {
-                // Every producer keys its messages; a null key here would silently break the ordering guarantee on redrive. Flag it instead of guessing.
                 Console.WriteLine($"BLOCKED (null original key, cannot safely re-key): originalTopic={envelope.OriginalTopic}");
                 errored++;
                 break;
@@ -262,9 +254,6 @@ static async Task<int> RedriveAsync(ToolOptions options, CancellationToken cance
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // Stop before a later commit on this partition can leap over
-            // the malformed row. The stable group resumes here after the
-            // operator repairs or removes the poison envelope.
             errored++;
             Console.WriteLine($"ERROR decoding/redriving offset {consumeResult.TopicPartitionOffset}: {exception.Message}");
             break;
@@ -296,11 +285,6 @@ static string BuildRedriveConsumerGroup(string topic, string? keyFilter)
     return $"dlq-redrive-{safeTopic}-filter-{filterHash}";
 }
 
-// Not every *DeadLetterPublisher agrees on the wire format: Orders.Worker
-// and Payments.Service base64-encode the payload (their consumers read
-// byte[], some topics carry Avro); Inventory.Service's are plain string
-// consumers and store raw JSON instead. Try base64 first, fall back to raw
-// UTF-8 rather than assuming one convention.
 static byte[] DecodeOriginalPayload(string originalPayload)
 {
     try
@@ -328,10 +312,6 @@ static IConsumer<string, string> BuildConsumer(string bootstrapServers, string g
     return new ConsumerBuilder<string, string>(config).Build();
 }
 
-// Drains what's currently in the topic and stops - a point-in-time
-// operator action, not a long-running consumer. Idle-seconds of empty
-// polls is the "caught up" signal, since there's no partition assignment
-// to query watermark offsets against before the first poll.
 static async IAsyncEnumerable<ConsumeResult<string, string>> DrainAsync(
     IConsumer<string, string> consumer,
     int idleSeconds,
@@ -397,9 +377,6 @@ internal static class ToolJson
     public static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 }
 
-// Mirrors the wire shape every *DeadLetterPublisher produces - a
-// standalone copy, not a project reference, since this tool has no
-// business depending on any one service's assembly.
 internal sealed record DeadLetterEnvelopeView(
     Guid DeadLetterId,
     string OriginalTopic,

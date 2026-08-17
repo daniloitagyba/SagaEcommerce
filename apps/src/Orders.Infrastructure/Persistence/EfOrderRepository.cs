@@ -23,11 +23,6 @@ public sealed class EfOrderRepository(
         CancellationToken cancellationToken,
         CampaignReservation? campaignReservation = null)
     {
-        // A lost redemption/claim race is reported as a value, not thrown -
-        // the Postgres pipeline retries every exception with no ShouldHandle
-        // predicate, so throwing here would retry an exhausted coupon or
-        // campaign for nothing and could trip the breaker for every other
-        // caller.
         string? redemptionFailure = null;
         string? campaignFailure = null;
         OrderWriteResult? writeResult = null;
@@ -41,12 +36,6 @@ public sealed class EfOrderRepository(
                 writeResult = null;
                 await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-                // A connection can fail while acknowledging COMMIT even
-                // though PostgreSQL committed it. The resilience pipeline
-                // then re-enters this delegate with the same generated
-                // OrderId. Treat that durable row as success instead of
-                // attempting a duplicate insert and returning an error to a
-                // client whose order already exists.
                 if (await dbContext.Orders
                     .AsNoTracking()
                     .AnyAsync(item => item.Id == order.Id, ct))
@@ -135,15 +124,7 @@ public sealed class EfOrderRepository(
             ?? throw new InvalidOperationException("The order transaction completed without a persistence outcome.");
     }
 
-    /// <summary>
-    /// Claims a redemption slot atomically. The guarded
-    /// UPDATE closes the race - checking then incrementing would let N
-    /// concurrent checkouts all read the same count and all pass a limit of
-    /// 1 - same shape as OrderStatusStore's CAS and Inventory's reservation.
-    /// The per-customer limit rides on that UPDATE's row lock: held until
-    /// commit, so every competing redemption of the same coupon is blocked
-    /// behind it by the time this transaction counts existing redemptions.
-    /// </summary>
+    /// <summary>Atomically claims a coupon redemption slot via a guarded UPDATE, closing the check-then-increment race.</summary>
     /// <returns>Null when the slot was claimed; otherwise why it could not be.</returns>
     private async Task<string?> TryReserveCouponAsync(CouponReservation reservation, CancellationToken cancellationToken)
     {
@@ -179,7 +160,6 @@ public sealed class EfOrderRepository(
 
         if (maxPerCustomer is { } limit && customerRedemptions >= limit)
         {
-            // The caller rolls back, undoing the increment above.
             return "this customer has already redeemed it the maximum number of times";
         }
 
@@ -193,12 +173,7 @@ public sealed class EfOrderRepository(
         return null;
     }
 
-    /// <summary>
-    /// Claims a slice of a campaign's budget atomically - the same guarded
-    /// UPDATE shape as TryReserveCouponAsync, decrementing a decimal budget
-    /// instead of an int count. No per-customer limit: a campaign is not
-    /// customer-scoped the way a coupon can be.
-    /// </summary>
+    /// <summary>Atomically claims a slice of a campaign's budget via the same guarded-UPDATE shape as TryReserveCouponAsync, with no per-customer limit.</summary>
     /// <returns>Null when the budget was claimed; otherwise why it could not be.</returns>
     private async Task<string?> TryReserveCampaignAsync(CampaignReservation reservation, CancellationToken cancellationToken)
     {
@@ -232,7 +207,6 @@ public sealed class EfOrderRepository(
     {
         try
         {
-            // Include is required, not an optimisation - AsNoTracking means EF won't lazily fill the lines in later.
             return await _pipeline.ExecuteAsync(
                 async ct => await dbContext.Orders
                     .AsNoTracking()

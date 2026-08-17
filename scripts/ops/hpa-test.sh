@@ -24,9 +24,6 @@ kubectl wait \
   deployment/orders-worker \
   --timeout=120s >/dev/null
 
-# orders-api is an Argo Rollout (Milestone 15), not a Deployment; its
-# HPA-managed minimum replica count is read dynamically rather than assumed,
-# since it has changed across milestones (2 originally, 3 since Milestone 13).
 min_replicas=$(
   kubectl get horizontalpodautoscaler/orders-api \
     --namespace "$namespace" \

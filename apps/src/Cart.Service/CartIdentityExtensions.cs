@@ -1,16 +1,6 @@
 namespace Cart.Service;
 
-/// <summary>
-/// The same preferred_username-first identity read
-/// Orders.Api's CallerIdentityExtensions uses - this
-/// service has no reference to Orders.Api's assembly, so the handful of
-/// lines are duplicated here rather than shared, the same tradeoff this
-/// codebase already made for the JWT-bearer wiring itself. Keeping the
-/// same claim priority matters: an order's customerId and a cart's key
-/// must agree on who "customer-42" is, or the cart Storefront reads while
-/// building a checkout request would belong to someone else's identity
-/// than the order it's about to become.
-/// </summary>
+/// <summary>Resolves the caller's customer id from the preferred_username claim, falling back to sub.</summary>
 public static class CartIdentityExtensions
 {
     public static string GetCustomerId(this HttpContext context) =>

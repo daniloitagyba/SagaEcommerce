@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Inventory.Service.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddMultiWarehouseStock : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
@@ -48,20 +46,6 @@ namespace Inventory.Service.Data.Migrations
                 table: "reservation_allocations",
                 column: "reservation_id");
 
-            // Seeds the warehouse network from the single-warehouse stock
-            // that already exists, into WH-SP, plus a second warehouse with
-            // a slice of it - so the split path is reachable the moment this
-            // migration lands rather than only after somebody hand-edits
-            // rows. Expand, not replace: inventory_items stays as it was, so
-            // the existing reads keep working while the allocator becomes
-            // the source of truth for reservations.
-            // The existing stock is SPLIT across the two warehouses, never
-            // duplicated: WH-RJ takes a third and WH-SP keeps the remainder,
-            // so the network holds exactly what inventory_items already
-            // claimed. Seeding WH-RJ with extra units would have been easier
-            // and would have quietly conjured a third more stock into
-            // existence, leaving the aggregate row and the network
-            // disagreeing about how much there is.
             migrationBuilder.Sql("""
                 INSERT INTO warehouse_stock (sku, warehouse_code, available_quantity, reserved_quantity, reorder_point, updated_at)
                 SELECT sku, 'WH-SP', available_quantity - (available_quantity / 3), reserved_quantity, GREATEST(available_quantity / 10, 2), NOW()
@@ -77,7 +61,6 @@ namespace Inventory.Service.Data.Migrations
                 """);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(

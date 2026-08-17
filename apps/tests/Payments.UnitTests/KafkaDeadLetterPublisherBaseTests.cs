@@ -5,19 +5,7 @@ using Confluent.Kafka;
 
 namespace Payments.UnitTests;
 
-/// <summary>
-/// KafkaDeadLetterPublisher&lt;TValue&gt; - shared by every dead-letter
-/// publisher call site in the codebase (Payments/Orders.Worker/Inventory
-/// alike, each constructing it directly at its own KafkaConsumerHost
-/// registration - see Payments.Service/Program.cs) - had no coverage
-/// anywhere despite being the one place that decides what actually
-/// reaches a dead-letter topic when processing fails. Tested here
-/// byte[]-valued with base64 encoding (exercises the encodePayload path,
-/// not just a string passthrough), against a fake
-/// IProducer&lt;string, string&gt; that just records what it was asked to
-/// produce - no broker involved, the envelope-building logic has no
-/// dependency on one.
-/// </summary>
+/// <summary>KafkaDeadLetterPublisher&lt;TValue&gt; is shared by every dead-letter publisher call site in the codebase (Payments/Orders.Worker/Inventory) and had no coverage; tested here byte[]-valued with base64 encoding against a fake IProducer that just records what it was asked to produce, no broker involved.</summary>
 public sealed class KafkaDeadLetterPublisherBaseTests
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);

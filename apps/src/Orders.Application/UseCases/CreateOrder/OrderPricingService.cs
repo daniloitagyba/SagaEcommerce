@@ -11,17 +11,14 @@ public sealed record PricedCheckout(
     string Currency,
     IReadOnlyList<OrderLineDraft> Lines,
     PricingBreakdown Breakdown,
-    /// <summary>Set only when a coupon was resolved and found eligible - the checkout must then claim a redemption slot for it.</summary>
+    /// <summary>Set only when a coupon was resolved and found eligible.</summary>
     string? CouponCode,
-    /// <summary>Set only when a campaign was resolved and found eligible - the checkout must then claim its budget.</summary>
+    /// <summary>Set only when a campaign was resolved and found eligible.</summary>
     string? CampaignCode = null,
     decimal CampaignAmount = 0m);
 
 /// <summary>
-/// Turns "SKU + quantity" into a priced order. The catalog
-/// lookup happens here, server-side - a client posting a SKU and quantity
-/// gets today's catalog price regardless of what it thinks the price is,
-/// revalidating whatever Cart.Service snapshotted when the item was added.
+/// Turns a SKU+quantity request into a priced order using today's server-side catalog price.
 /// </summary>
 public sealed class OrderPricingService(
     ICatalogClient catalogClient,
@@ -50,7 +47,6 @@ public sealed class OrderPricingService(
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
-                // Without a price there is no order - surfaced as an infrastructure fault (503), not a validation error, since retrying is correct here.
                 throw new InfrastructureUnavailableException(
                     "Catalog.Service is currently unavailable, so the order cannot be priced.",
                     exception);
@@ -77,7 +73,6 @@ public sealed class OrderPricingService(
 
         if (currencyCodes.Count > 1)
         {
-            // A multi-currency order has no single total to charge - reject rather than invent an exchange rate.
             errors["Items"] = [$"All items must share one currency, but the catalog returned {string.Join(", ", currencyCodes)}."];
             return (null, errors);
         }
@@ -108,7 +103,6 @@ public sealed class OrderPricingService(
             (running, line) => running + line.LineSubtotal);
         var evaluatedAt = timeProvider.GetUtcNow();
 
-        // Resolve the coupon before pricing, never during - keeps the rules engine free of I/O.
         ResolvedCoupon? resolvedCoupon = null;
         if (!string.IsNullOrWhiteSpace(command.CouponCode))
         {
@@ -117,7 +111,6 @@ public sealed class OrderPricingService(
 
             if (rejection != CouponRejectionReason.None)
             {
-                // A bad coupon fails the checkout instead of being silently dropped - now that coupons expire and run out, the shopper deserves to know why.
                 errors[nameof(CreateOrderCommand.CouponCode)] =
                     [CouponEligibility.Describe(rejection, command.CouponCode.Trim().ToUpperInvariant())];
                 return (null, errors);
@@ -126,13 +119,8 @@ public sealed class OrderPricingService(
             resolvedCoupon = coupon;
         }
 
-        // Unlike a coupon, nobody typed a campaign code - it's resolved the
-        // same automatic way as customer tier, so a campaign that no longer
-        // qualifies (expired, budget spent) is simply absent, not a
-        // checkout-failing error.
         var resolvedCampaign = await ResolveCampaignAsync(subtotal.Amount, evaluatedAt, cancellationToken);
 
-        // Customer standing and destination resolved here too, so the rules stay pure functions of facts, never a repository lookup.
         var customer = await customerRepository.GetOrCreateAsync(command.CustomerId!, cancellationToken);
         var destination = command.ShippingAddress is { IsComplete: true } address
             ? new PricingDestination(address.Region, address.PostalPrefix)
@@ -159,10 +147,6 @@ public sealed class OrderPricingService(
                 breakdown.LineTaxes[index].Amount))
             .ToList();
 
-        // The budget is claimed for what the order actually received, not
-        // the campaign's nominal amount - if the exclusivity reduction or
-        // the subtotal cap dropped or shrank it, claiming the nominal
-        // amount would debit budget for a discount nobody got.
         var appliedCampaign = resolvedCampaign is null
             ? null
             : breakdown.Discounts.FirstOrDefault(discount => discount.Code == resolvedCampaign.Code);

@@ -67,8 +67,6 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
         allocation.Property(entity => entity.WarehouseCode).HasColumnName("warehouse_code").HasMaxLength(16).IsRequired();
         allocation.Property(entity => entity.Quantity).HasColumnName("quantity").IsRequired();
         allocation.Property(entity => entity.AllocatedAt).HasColumnName("allocated_at").IsRequired();
-        // Commit and release look the allocation up by reservation - without
-        // this they would scan, on the saga's hot path.
         allocation.HasIndex(entity => entity.ReservationId).HasDatabaseName("ix_reservation_allocations_reservation");
     }
 
@@ -84,8 +82,6 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
         entry.Property(item => item.Sku).HasColumnName("sku").HasMaxLength(64).IsRequired();
         entry.Property(item => item.Quantity).HasColumnName("quantity").IsRequired();
         entry.Property(item => item.CommittedAt).HasColumnName("committed_at").IsRequired();
-        // ResolveLedgerOnRestockAsync's whole query shape: every still-open
-        // entry for an (order, sku) pair, oldest first.
         entry.HasIndex(item => new { item.OrderId, item.Sku })
             .HasDatabaseName("ix_inventory_reservation_ledger_order_sku");
     }
@@ -102,8 +98,6 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
         backorder.Property(entity => entity.Quantity).HasColumnName("quantity").IsRequired();
         backorder.Property(entity => entity.CorrelationId).HasColumnName("correlation_id").HasMaxLength(128).IsRequired();
         backorder.Property(entity => entity.RequestedAt).HasColumnName("requested_at").IsRequired();
-        // The release path's whole query shape: oldest-first per SKU. Without
-        // this it is a sequential scan every time a restock lands.
         backorder.HasIndex(entity => new { entity.Sku, entity.RequestedAt })
             .HasDatabaseName("ix_backorders_sku_requested_at");
     }
@@ -122,7 +116,6 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
         purchaseOrder.Property(entity => entity.CorrelationId).HasColumnName("correlation_id").HasMaxLength(128).IsRequired();
         purchaseOrder.Property(entity => entity.RequestedAt).HasColumnName("requested_at").IsRequired();
         purchaseOrder.Property(entity => entity.ReceivedAt).HasColumnName("received_at");
-        // The receiving sweep's whole query shape: oldest-still-Requested first.
         purchaseOrder.HasIndex(entity => new { entity.State, entity.RequestedAt })
             .HasDatabaseName("ix_purchase_orders_state_requested_at");
     }
@@ -168,9 +161,6 @@ public sealed class InventoryDbContext(DbContextOptions<InventoryDbContext> opti
     }
 }
 
-// Schema-only entity: rows are written through raw SQL so a single ON
-// CONFLICT DO NOTHING statement can share the InventoryItem+Outbox
-// transaction; EF Core only needs this shape to generate the migration.
 public sealed class InboxRecord
 {
     public string ConsumerName { get; init; } = string.Empty;

@@ -8,6 +8,8 @@ intended design. See the root [`README.md`](../README.md) for the system overvie
 ## architecture
 
 - [Phased implementation roadmap](architecture/implementation-roadmap.md) — prioritized delivery plan and quality-gate promotion criteria
+- [Architecture and engineering improvement plan](architecture/improvement-implementation-plan-2026-08-17.md) — proposed follow-up work for domain correctness, lifecycle ownership, boundaries, and maintainability
+- [Code comment policy](architecture/code-comment-policy.md) — summaries retained; ordinary comments prohibited in application source
 - [Milestone 18: Clean/Hexagonal Architecture Refactor](architecture/milestone-18-clean-architecture.md)
 - [Milestone 36: Kubernetes Lease Leader Election](architecture/milestone-36-leader-election.md)
 - [Milestone 38: Cluster-Wide Distributed Rate Limiting](architecture/milestone-38-distributed-rate-limiting.md)

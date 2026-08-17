@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Orders.Infrastructure.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class IndexOrderSummariesForKeysetPagination : Migration
     {
         private static readonly string[] ProjectedAtOrderIdColumns = { "projected_at", "order_id" };
@@ -13,7 +12,6 @@ namespace Orders.Infrastructure.Data.Migrations
         private static readonly bool[] CustomerIdProjectedAtOrderIdDescending = { false, true, true };
         private static readonly string[] StatusOrderCreatedAtColumns = { "status", "order_created_at" };
 
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(
@@ -33,7 +31,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 descending: ProjectedAtOrderIdDescending);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(

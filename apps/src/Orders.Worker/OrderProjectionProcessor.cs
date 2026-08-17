@@ -136,12 +136,7 @@ public sealed class OrderProjectionProcessor(
     }
 
     /// <summary>
-    /// A warehouse move or a shopper's self-service cancellation
-    /// (AdvanceFulfillmentHandler, via EfOrderStatusRepository's outbox) -
-    /// the only other source of an order's status besides OrderCreated/
-    /// PaymentDecided above. Reuses ProjectPaymentDecidedAsync's plain
-    /// "set the status" write - it was never payment-specific, just named
-    /// for its one caller until now.
+    /// Projects order status changes.
     /// </summary>
     private async Task<MessageProcessingResult> ProcessOrderStatusChangedAsync(
         ConsumeResult<string, byte[]> consumeResult,

@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Orders.Infrastructure.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddPromotionCampaigns : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<string>(
@@ -67,11 +65,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 columns: ["code", "order_id"],
                 unique: true);
 
-            // One seeded campaign, the same reasoning AddCouponLifecycle
-            // seeded SAVE10/SAVE20/HALFOFF: makes the feature demonstrable
-            // out of the box rather than an empty table nobody discovers.
-            // No exclusivity group - stacks with coupons and every
-            // automatic promotion by default, the safest starting choice.
             migrationBuilder.Sql("""
                 INSERT INTO promotion_campaigns (code, description, discount_amount, valid_from, valid_until,
                                                  minimum_order_amount, exclusivity_group, total_budget, budget_remaining)
@@ -82,7 +75,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 """);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(

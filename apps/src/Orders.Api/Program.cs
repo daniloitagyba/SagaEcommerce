@@ -19,21 +19,10 @@ using Orders.Infrastructure.Data;
 var builder = WebApplication.CreateBuilder(args);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
-// gRPC gets its own port (8081) rather than sharing 8080 with
-// REST - the AuthorizationPolicy hardcodes proxyProtocol:
-// HTTP/1 on 8080, so Linkerd rejects real HTTP/2 (gRPC) traffic there.
-// Both ports are cleartext (Linkerd terminates mTLS at the proxy). Both
-// need an explicit ListenAnyIP call: the moment Kestrel gets one explicit
-// Listen call it stops honoring ASPNETCORE_URLS entirely, which silently
-// left 8080 unbound and crash-looped the pod's readiness probe before this
-// was explicit.
 const int RestPort = 8080;
 const int GrpcPort = 8081;
 builder.WebHost.ConfigureKestrel(options =>
 {
-    // Bound both REST and gRPC request bodies at the server before model
-    // binding or application code can allocate an attacker-controlled body.
-    // Current order and query messages are well below this ceiling.
     options.Limits.MaxRequestBodySize = 5 * 1024 * 1024;
     options.ListenAnyIP(RestPort, listenOptions =>
     {
@@ -45,11 +34,6 @@ builder.WebHost.ConfigureKestrel(options =>
     });
 });
 
-// Fail loudly at startup instead of silently at runtime. A
-// missing DI registration used to surface only when first resolved - if
-// that's the outbox dispatcher, it's a background loop logging an
-// exception every poll while the service reports healthy and delivers
-// nothing. ValidateOnBuild trades a slower boot for refusing to start instead.
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateOnBuild = true;
@@ -78,9 +62,6 @@ builder.Services.AddOptions<KafkaOptions>()
 var connectionString = builder.Configuration.GetConnectionString("Orders")
     ?? throw new InvalidOperationException("Connection string 'Orders' is required.");
 
-// The promotion policy (coupon codes, category promotions,
-// free-shipping threshold) is configuration, so a campaign changes without
-// a redeploy. Absent config, PricingOptions' own defaults apply.
 builder.Services.AddOptions<PricingOptions>()
     .Bind(builder.Configuration.GetSection(PricingOptions.SectionName))
     .Validate(options => options.BulkQuantityThreshold > 0, "Bulk quantity threshold must be positive.")
@@ -92,7 +73,6 @@ builder.Services.AddOptions<PricingOptions>()
     .Validate(options => options.TaxRatePercentage is >= 0m and <= 100m, "Tax rate must be between 0 and 100.")
     .Validate(options => options.FreeShippingThreshold >= 0m, "Free-shipping threshold must not be negative.")
     .ValidateOnStart();
-// How long a Regret return still owes shipping. Absent config, ReturnOptions' own 7-day default applies.
 builder.Services.AddOptions<ReturnOptions>()
     .Bind(builder.Configuration.GetSection(ReturnOptions.SectionName))
     .Validate(options => options.RegretWindowDays > 0, "Regret return window must be positive.")
@@ -102,8 +82,6 @@ builder.Services.AddOptions<CatalogClientOptions>()
     .Validate(options => !string.IsNullOrWhiteSpace(options.BaseUrl), "Catalog base URL is required.")
     .ValidateOnStart();
 
-// On checkout's critical path (no catalog, no price), unlike the
-// best-effort treatment Orders.Worker gives this same client for bestsellers.
 builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<CatalogClientOptions>>().Value;
@@ -115,36 +93,14 @@ builder.Services.AddOrdersInfrastructure(builder.Configuration, connectionString
 builder.Services.AddOrdersRateLimiting(builder.Configuration);
 builder.Services.AddGrpc();
 
-// The JWT bearer wiring itself now lives in
-// BuildingBlocks.WebAuthentication, shared with Catalog/Inventory/Cart -
-// only the audience ever differed between them. "orders-api" is a
-// hardcoded-audience protocol mapper (scripts/keycloak-configure-realm.sh),
-// not the client_credentials grant's default "account" audience, so a
-// token minted for another client is rejected on audience alone.
 builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "orders-api");
 builder.Services.AddAuthorizationBuilder()
-    // Orders:admin satisfies both - an admin token needs one role, not three.
     .AddPolicy(OrdersAuthorizationPolicies.Read, policy => policy.RequireRole("orders:read", "orders:write", OrdersAuthorizationPolicies.Admin))
     .AddPolicy(OrdersAuthorizationPolicies.Write, policy => policy.RequireRole("orders:write", OrdersAuthorizationPolicies.Admin))
     .AddPolicy(OrdersAuthorizationPolicies.Admin, policy => policy.RequireRole(OrdersAuthorizationPolicies.Admin));
-// KafkaHealthCheck must be a singleton, not the transient default
-// AddCheck<T> would otherwise register - see that class's own comment.
 builder.Services.AddSingleton<KafkaHealthCheck>();
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Orders"])
-    // Kafka and Redis are deliberately NOT tagged "ready" - the
-    // application layer already treats both as optional and survives
-    // their absence (RedisOrderCache/RedisSlidingWindowRateLimiter fail
-    // open, and POST /orders only ever writes to the transactional
-    // outbox, never to Kafka directly), so gating this pod's Service
-    // membership on either used to turn a Redis blip into a
-    // self-inflicted 100% outage: Kubernetes removed every replica from
-    // the Service at once for a dependency the code was already built to
-    // survive without. They're still probed and exposed - see
-    // /health/dependencies below - just not load-bearing for whether this
-    // pod keeps receiving traffic. See
-    // docs/roadmap-milestones-91-99.md, "readiness is gated on
-    // dependencies the code deliberately treats as optional".
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["live-dependencies"])
     .AddCheck<RedisHealthCheck>("redis", tags: ["live-dependencies"]);
 
@@ -159,15 +115,9 @@ if (args.Contains("--migrate", StringComparer.Ordinal))
 }
 
 app.UseExceptionHandler();
-// First, not last: this used to run after rate limiting and authentication,
-// so the responses most worth tracing during an incident - 429 (shed load),
-// 401/403 (rejected auth) - went out with no correlation id at all.
 app.UseMiddleware<BuildingBlocks.CorrelationIdMiddleware>();
 app.UseRateLimiter();
 app.UseAuthentication();
-// After authentication, not before: DistributedRateLimitingMiddleware keys
-// its bucket by the caller's own identity (customer id, or client_id for a
-// service account), which only exists once auth has populated context.User.
 app.UseMiddleware<DistributedRateLimitingMiddleware>();
 app.UseAuthorization();
 app.Use(async (context, next) =>
@@ -184,10 +134,6 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = registration => registration.Tags.Contains("ready")
 });
-// Informational only - never gates this pod's Service membership. Scraped
-// for alerting (RateLimitingFailedOpen/OrderCacheFailingOpen already cover
-// the consequence; this covers the cause) rather than driving Kubernetes'
-// own routing decisions.
 app.MapHealthChecks("/health/dependencies", new HealthCheckOptions
 {
     Predicate = registration => registration.Tags.Contains("live-dependencies")
@@ -195,11 +141,6 @@ app.MapHealthChecks("/health/dependencies", new HealthCheckOptions
 
 app.MapGet("/", () => Results.Ok(new { service = "Orders.Api", instanceId }));
 
-// One group, one RequireRateLimiting call, for every "/orders"-prefixed
-// endpoint across all six route files - the per-file repetition this
-// replaced is what let three side-effecting writes (cancellation, returns,
-// fulfillment) drift with no local limiter at all while every read kept
-// one. See docs/architecture/audit-2026-08-15-patterns-and-api-layer-review.md.
 var orders = app.MapGroup("/orders").RequireRateLimiting(RateLimitingExtensions.OrdersPolicy);
 orders.MapOrderEndpoints();
 orders.MapFulfillmentEndpoints();

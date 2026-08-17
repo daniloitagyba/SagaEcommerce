@@ -1,17 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Milestone 37 game day: two real network partitions via Chaos Mesh
-# NetworkChaos (iptables DROP, both directions) against external, non-
-# Kubernetes targets (Kafka and Postgres, both reached through the
-# docker-compose/K3s bridge) - a genuinely different fault from Toxiproxy's
-# injected latency (Milestone 10) or PodChaos's process kill (Milestone 31).
-# This is the CAP-theorem scenario: a node stays up and otherwise healthy
-# but loses reachability to exactly one dependency. Measures, rather than
-# assumes, whether health checks correctly detect it, whether the Service
-# correctly routes around it, and whether recovery is automatic once the
-# partition heals.
-
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_directory=$(cd -- "$script_directory/../.." && pwd)
 namespace=${KUBERNETES_NAMESPACE:-orders-lab}

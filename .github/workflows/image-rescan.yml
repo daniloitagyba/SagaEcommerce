@@ -1,13 +1,5 @@
 name: image-rescan
 
-# ci.yml's Trivy scan only runs when a push touches main - a CRITICAL/HIGH
-# CVE disclosed against a base-image layer already baked into a published
-# commit-tagged image goes uncaught until the next code change touches
-# that service. codeql.yml already runs on a weekly cron for the identical
-# reason ("catch new query-pack rules against unchanged code"); this closes
-# the same gap for container images. It re-scans the immutable image from the
-# newest application-changing commit rather than rebuilding, so promotion
-# verifies the exact artifact it will resolve to a digest.
 on:
   schedule:
     - cron: "0 6 * * 2"
@@ -35,19 +27,19 @@ jobs:
     env:
       IMAGE: ghcr.io/daniloitagyba/saga-ecommerce/${{ matrix.service }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
 
       - name: resolve the latest revision that produced application images
         run: |
@@ -65,7 +57,7 @@ jobs:
           echo "IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
 
       - name: scan for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ env.IMAGE }}@${{ env.IMAGE_DIGEST }}
           format: table

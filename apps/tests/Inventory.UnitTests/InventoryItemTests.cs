@@ -2,12 +2,7 @@ using Inventory.Service.Domain;
 
 namespace Inventory.UnitTests;
 
-/// <summary>
-/// InventoryItem's own reserve/commit/release/restock guards,
-/// pure and needing no database - previously exercised only indirectly
-/// through the Postgres-backed message processor tests, which prove the
-/// Kafka/EF wiring around this but not these guard conditions in isolation.
-/// </summary>
+/// <summary>InventoryItem's own reserve/commit/release/restock guards, pure and needing no database, in isolation from the Kafka/EF wiring.</summary>
 public class InventoryItemTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 8, 12, 0, 0, TimeSpan.Zero);
@@ -94,16 +89,13 @@ public class InventoryItemTests
     [Fact]
     public void PartiallyCommittingThenReleasingTheRemainderClearsReservedEntirely()
     {
-        // The saga's real shape: some of a reservation ships (commit), the
-        // rest is cancelled (release) - both must draw from the same
-        // ReservedQuantity without either overdrawing it.
         var item = InventoryItem.Create("SKU-A", 10, Now);
         item.TryReserve(10, Now);
 
         Assert.True(item.TryCommit(6, Now.AddMinutes(1)));
         Assert.True(item.TryRelease(4, Now.AddMinutes(2)));
 
-        Assert.Equal(4, item.AvailableQuantity); // the 4 released units, back on the shelf
+        Assert.Equal(4, item.AvailableQuantity);
         Assert.Equal(0, item.ReservedQuantity);
     }
 

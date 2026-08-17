@@ -8,19 +8,10 @@ namespace Orders.Api.Endpoints;
 
 public sealed record CreateReturnItemRequest(string? Sku, int Quantity);
 
-/// <summary>
-/// ReasonCategory drives refund policy (does shipping come
-/// back on a complete return) and defaults to Unwanted - the one category
-/// that owes nothing beyond the goods and their tax, so an old or
-/// unspecified request keeps getting exactly what it got before,
-/// not a shipping refund it never asked for.
-/// </summary>
+/// <summary>A request to return part of a delivered order; ReasonCategory defaults to Unwanted.</summary>
 public sealed record CreateReturnRequest(IReadOnlyList<CreateReturnItemRequest>? Items, string? Reason, string? ReasonCategory);
 
-/// <summary>
-/// A customer (or support agent) sending part of a delivered
-/// order back.
-/// </summary>
+/// <summary>Endpoint for a customer or support agent to return part of a delivered order.</summary>
 public static class ReturnEndpoints
 {
     public static IEndpointRouteBuilder MapReturnEndpoints(this IEndpointRouteBuilder endpoints)
@@ -79,10 +70,6 @@ public static class ReturnEndpoints
         }
         catch (OrderReturnConflictException)
         {
-            // 409, not 503 - nothing is down; this specific request lost a
-            // race against another write to the same order's lines (most
-            // likely a concurrent return) and needs a fresh read, not a
-            // delayed retry of the same stale one.
             return Results.Problem(
                 detail: "This order was modified by another request. Retry the return.",
                 statusCode: StatusCodes.Status409Conflict,
@@ -96,10 +83,6 @@ public static class ReturnEndpoints
 
         if (result.Rejection != ReturnRejectionReason.None)
         {
-            // 409 for a state problem (not delivered, already returned),
-            // 400 for a request problem (unknown sku, bad quantity) - the
-            // difference is whether resubmitting the same body could ever
-            // succeed.
             var isStateProblem = result.Rejection == ReturnRejectionReason.OrderNotDelivered;
             return Results.Problem(
                 detail: Describe(result.Rejection, result.OffendingSku),

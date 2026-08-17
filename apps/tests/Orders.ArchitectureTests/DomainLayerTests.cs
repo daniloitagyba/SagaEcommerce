@@ -4,7 +4,6 @@ using Orders.Domain;
 
 namespace Orders.ArchitectureTests;
 
-// Fitness functions: Orders.Domain sits at the center of the onion and must stay dependency-free of every outer layer and framework.
 public class DomainLayerTests
 {
     private static readonly Assembly DomainAssembly = typeof(Order).Assembly;
@@ -40,10 +39,6 @@ public class DomainLayerTests
     [Fact]
     public void DomainDoesNotDependOnTheRulesEngine()
     {
-        // Orders.Domain owns the pricing model and the
-        // IPricingEngine contract; Orders.Application owns rule evaluation.
-        // Without this, dropping an NRules Rule next to the model would
-        // make the domain unusable without a Rete network compiled behind it.
         var result = Types.InAssembly(DomainAssembly)
             .ShouldNot()
             .HaveDependencyOnAny("NRules", "FluentValidation")
@@ -55,7 +50,6 @@ public class DomainLayerTests
     [Fact]
     public void ThePricingModelIsReachableFromTheDomain()
     {
-        // Guards the rule above from passing trivially if the pricing model were moved out of Orders.Domain entirely.
         var pricingTypes = Types.InAssembly(DomainAssembly)
             .That()
             .ResideInNamespace("Orders.Domain.Pricing")

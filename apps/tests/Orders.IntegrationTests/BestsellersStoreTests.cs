@@ -38,9 +38,6 @@ public sealed class BestsellersStoreTests : IAsyncLifetime
         var globalTop = await database.SortedSetRangeByScoreWithScoresAsync("bestsellers:global", order: Order.Descending);
         var categoryTop = await database.SortedSetRangeByScoreWithScoresAsync("bestsellers:category:electronics", order: Order.Descending);
 
-        // SKU-1 accumulates across two separate sales (3 + 2 = 5), ties
-        // with SKU-2's single sale of 5 - both sorted sets reflect the
-        // running total, not the last write.
         Assert.Equal(2, globalTop.Length);
         Assert.Equal(5.0, (double)globalTop[0].Score);
         Assert.Equal(5.0, (double)globalTop[1].Score);

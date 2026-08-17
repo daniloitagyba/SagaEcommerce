@@ -9,18 +9,12 @@ public interface IOrderRepository
 }
 
 /// <summary>
-/// Write-side contract for order creation. Kept separate from
-/// IOrderRepository so read/status use cases do not depend on idempotency or
-/// outbox persistence concerns they never use.
+/// Defines the order write contract.
 /// </summary>
 public interface IOrderCreationRepository : IOrderRepository
 {
     /// <summary>
-    /// Persists the order, its outbox event and - when the checkout used a
-    /// coupon and/or qualified for a budget-limited campaign - their
-    /// redemption/budget claims, in one transaction. See
-    /// <see cref="CouponReservation"/> and <see cref="CampaignReservation"/>
-    /// for why neither claim can be a separate call.
+    /// Persists an order and its effects.
     /// </summary>
     Task<OrderWriteResult> AddAsync(
         Order order,

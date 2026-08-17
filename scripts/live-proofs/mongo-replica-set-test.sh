@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 49 live proof: Catalog.Service's MongoDB (compose/compose.yaml's
-# `mongodb` service) runs standalone - no replication, no write concern
-# choice, no read preference, no failover. This runs the real cost/benefit
-# against an isolated 3-node replica set (mongo-rs1/2/3, NOT the live
-# standalone `mongodb` Catalog.Service depends on):
-#
-#   - w:1 vs w:majority write latency, measured, not assumed
-#   - a deliberately-lagging secondary (mongo-rs3, secondaryDelaySecs=5)
-#     proves the classic secondaryPreferred stale-read hazard
-#     deterministically, rather than racing real replication timing
-#
-# Usage: mongo-replica-set-test.sh [doc_count]
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

@@ -5,14 +5,7 @@ namespace Catalog.Service.Data;
 
 public sealed record BestsellerEntry(string Sku, long UnitsSold);
 
-/// <summary>
-/// The read side of the bestsellers projection - Orders.Worker
-/// (RedisBestsellersStore) is the only writer, on every confirmed saga.
-/// Ranking data lives entirely in Redis; this only reads it, then asks
-/// MongoDB (ProductRepository) for the product details to display next to
-/// the rank. Two stores, two jobs: Redis for "who's winning right now",
-/// MongoDB for "what is this product".
-/// </summary>
+/// <summary>Reads the bestsellers projection ranking from Redis; product details are read separately from MongoDB.</summary>
 public sealed class BestsellersReader(IConnectionMultiplexer connectionMultiplexer)
 {
     public async Task<IReadOnlyList<BestsellerEntry>> GetTopAsync(string? categorySlug, int limit, CancellationToken cancellationToken)

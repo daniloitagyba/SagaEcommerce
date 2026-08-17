@@ -1,62 +1,13 @@
-# Deliberately left as "local-distributed-lab" through both the earlier
-# rename to "distributed-ecommerce" and this one to "saga-ecommerce": this
-# is Docker Compose's project name, used to prefix every container/network/
-# volume that doesn't have an explicit name override - including the
-# Postgres/Kafka/MongoDB data volumes already holding this lab's live data.
-# Changing it would make `docker compose` look for differently-labeled
-# containers and volumes than the ones actually running, stranding the
-# existing data behind old labels rather than migrating it. A real rename
-# of this would need a deliberate stop-and-relabel procedure, not a text
-# substitution - see scripts/infra/verify-compose-network-names.sh, the guard
-# this exact class of drift got a script for last time.
 name: local-distributed-lab
 
-# orders-worker and payments-service must agree on this value - Payments'
-# choreographed consumer autonomously decides on OrderCreated when
-# Saga:Mode is Choreography/Both, while orders-worker's orchestrator
-# explicitly requests a decision when it's Orchestration/Both. Mismatched
-# modes mean either nobody reserves inventory (Payments alone never
-# touches it) or Payments decides twice for one order. Nothing enforced
-# this before beyond a comment on each of the two lines telling a reader
-# to go check the other file by hand.
 x-saga-mode: &saga-mode Orchestration
 
-# The one place this address is written. Every consumer/producer in this
-# system binds its own options class to its own config section (Kafka,
-# PaymentResultKafka, OrderProjectionKafka, SagaOrchestration,
-# OrderEventStore, PaymentDecisionRequest, PaymentSettlement - one per
-# consumer group, so each can carry its own topics/consumer-group/DLQ
-# independently), which used to mean this literal string was retyped 15
-# times across this file alone. This is the exact bug class that has
-# recurred five times in this repo's history (Redis__ConnectionString,
-# four separate Kafka BootstrapServers sections, and
-# Authentication__Authority twice) - every recurrence fixed at the typo,
-# never at the fact that there were 15+ places to typo it in. Every
-# *__BootstrapServers line below now points at this one anchor instead.
 x-kafka-bootstrap: &kafka-bootstrap kafka:9092
 
-# Every app image below is tagged :dev, not a milestone name. These tags
-# used to be frozen at whatever milestone last touched each service
-# (cart-service sat on a debugging tag, :milestone-42-cart-redis-timeout-fix,
-# through the entire CRDT cart rework in Milestone 86) because Compose only
-# rebuilds a tag when told to, and the README's own quickstart never passed
-# --build. A user who re-pulled this repo and re-ran `docker compose up`
-# kept running old code with no error and no signal that anything was
-# stale. `:dev` names what these images are (a local build, never pushed
-# anywhere) instead of when they were last rebuilt - `docker compose
-# --profile compose-apps up --build` is what actually keeps it current now.
 x-api-common: &api-common
   image: saga-ecommerce/orders-api:dev
   profiles: ["compose-apps"]
   restart: unless-stopped
-  # Note: orders-api-1/orders-api-2 below each redefine their own
-  # `environment:` block, and a service-level key always wins over the one
-  # merged in via `<<: *api-common` - YAML's merge key doesn't deep-merge
-  # nested maps, it just fills in keys the service doesn't already have. So
-  # anything added to `environment:` here has no effect on either of them;
-  # only `migrations` (which defines a narrower `environment:` of its own
-  # too) is in the same boat. Real environment values for all three live in
-  # each service's own block below, not here.
   depends_on:
     migrations:
       condition: service_completed_successfully
@@ -151,30 +102,6 @@ services:
     cpus: 1.00
     stop_grace_period: 30s
 
-  # Milestone 47: an isolated 3-broker KRaft cluster used only to prove
-  # out the acks=all / min.insync.replicas / unclean.leader.election
-  # quadrant (scripts/live-proofs/kafka-quorum-durability-test.sh) - NOT a change to
-  # the single-broker `kafka` service above that the live orders-lab saga
-  # pipeline actually depends on. Same reasoning as Milestone 27's
-  # deliberately separate postgres-ha cluster: proving a replication
-  # pattern works earns the right to propose migrating the live topics to
-  # it later, rather than experimenting with leader kills directly against
-  # traffic real sagas depend on. Gated behind the `kafka-quorum-demo`
-  # profile so it costs nothing on the shared host except when the
-  # experiment is actually running.
-  #
-  # Controller quorum is on 3 DEDICATED controller-only nodes, separate
-  # from the 3 broker-only nodes the test pauses/kills - first attempt
-  # combined broker+controller on the same 3 nodes (like the single-node
-  # `kafka` service does), and pausing 2 of them to shrink the ISR for the
-  # replica-quorum experiment ALSO broke the KRaft controller quorum's own
-  # majority, since those are the same 2 nodes: every metadata call
-  # (`kafka-topics.sh --describe`) timed out cluster-wide with "Timed out
-  # waiting to send the call: listTopics" - not a broker-data-plane
-  # symptom, a controller-quorum-lost-majority one. Decoupling the two
-  # roles is what makes it possible to degrade the replica ISR being
-  # tested without also taking down the metadata layer needed to observe
-  # and react to it.
   kafka-ctrl1: &kafka-ctrl-common
     image: apache/kafka:4.1.1
     profiles: ["kafka-quorum-demo"]
@@ -268,22 +195,6 @@ services:
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
-    # Milestone 46 measured the gap left by `--save "" --appendonly no`
-    # (Milestone 42 promoted Redis to the cart's system of record, but
-    # nobody had measured what a crash actually costs since): killing
-    # Redis mid-load lost 300/300 in-flight carts, every time. AOF
-    # `everysec` closed that to 0/300 lost in the same test, at the same
-    # p99 latency as no persistence at all (~6ms); `always` bought no
-    # further measured durability here but cost a real p99 tax (~70ms) -
-    # so `everysec` is the default, not `always`. See
-    # docs/data/milestone-46-redis-durability.md for the numbers.
-    #
-    # Mode is still parameterized (not hardcoded) so
-    # scripts/live-proofs/cart-redis-durability-test.sh can flip it with
-    # --force-recreate for comparison: a `redis-cli CONFIG SET` only
-    # changes the running process's in-memory config - when Docker
-    # restarts this same container after a kill, it re-execs this literal
-    # `command:`, silently reverting to whatever's hardcoded here.
     command: ["redis-server", "--save", "${REDIS_SAVE:-}", "--appendonly", "${REDIS_APPENDONLY:-yes}", "--appendfsync", "${REDIS_APPENDFSYNC:-everysec}"]
     volumes:
       - redis-data:/data
@@ -302,11 +213,6 @@ services:
     stop_grace_period: 10s
 
   mongodb:
-    # Milestone 40: the product catalog's store - heterogeneous per-category
-    # attributes (a t-shirt has size/color, a laptop has RAM/CPU) are a
-    # genuinely bad fit for the existing relational orders/payments schema
-    # (EAV, a JSONB column, or one table per category all being worse),
-    # not adopted just to have "a NoSQL milestone."
     image: mongo:8.0
     restart: unless-stopped
     environment:
@@ -327,13 +233,6 @@ services:
     cpus: 0.50
     stop_grace_period: 10s
 
-  # Milestone 49: an isolated 3-node MongoDB replica set used only to prove
-  # out secondaryPreferred stale reads and the w:majority latency cost
-  # (scripts/live-proofs/mongo-replica-set-test.sh) - NOT a change to the standalone
-  # `mongodb` service above that Catalog.Service actually depends on. Same
-  # reasoning as Milestone 27's postgres-ha and Milestone 47's
-  # kafka-quorum-demo: prove the pattern in isolation before proposing it
-  # for the live store. Gated behind the `mongo-replicaset-demo` profile.
   mongo-rs1: &mongo-rs-common
     image: mongo:8.0
     profiles: ["mongo-replicaset-demo"]
@@ -476,15 +375,6 @@ services:
     cpus: 0.50
     stop_grace_period: 10s
 
-  # Milestone 26: the OIDC identity provider Orders.Api validates bearer
-  # tokens against. Runs in "start-dev" mode with its embedded dev storage
-  # (not Postgres-backed) - a deliberate scope boundary, same category as
-  # Milestone 22's in-memory saga state: the point of this milestone is
-  # proving OIDC/JWT validation and scope-based authorization actually work,
-  # not building Keycloak HA. Realm/client/user provisioning is scripted
-  # (scripts/infra/keycloak-configure-realm.sh) against the admin REST API, so a
-  # restart's fresh dev storage is reproducible from a clean command, not a
-  # manual setup step.
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     restart: unless-stopped
@@ -492,25 +382,8 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
       KC_HTTP_ENABLED: "true"
-      # Deliberately NOT fixed: with KC_HOSTNAME_STRICT=false and no
-      # KC_HOSTNAME override, Keycloak derives the hostname (and "iss"
-      # claim) per request from whatever Host header actually reached it -
-      # "keycloak:8080" for services calling it over the Compose network,
-      # or this host's LAN-published address for a shopper's own browser.
-      # KeycloakJwtBearerExtensions.AddKeycloakJwtBearer's
-      # Authentication:AlternateAuthority is what makes accepting both
-      # issuers from the same token-validating services safe - fixing the
-      # hostname instead would collapse every path back to one issuer, but
-      # a browser can't resolve "keycloak" and never could.
       KC_HOSTNAME_STRICT: "false"
       KC_HEALTH_ENABLED: "true"
-      # Trusts X-Forwarded-Proto/Host from nginx's keycloak-tls.conf so
-      # Keycloak emits "https" issuer/endpoint URLs for browsers that reach
-      # it through that TLS listener, even though the connection arriving
-      # here from nginx is plain HTTP - see storefront-tls.conf's comment
-      # for why a browser needs https at all. Harmless for every other
-      # caller (compose network callers hit "http://keycloak:8080" directly,
-      # never through nginx, so they never send these headers).
       KC_PROXY_HEADERS: xforwarded
     command: ["start-dev"]
     ports:
@@ -522,13 +395,6 @@ services:
       retries: 20
       start_period: 30s
     networks:
-      # frontend (not internal) is what actually makes the ports: mapping
-      # below bind at all - a container whose only networks are internal:
-      # true ones (backend, k3s-bridge) can declare a port mapping all day
-      # without Docker ever programming the host-side NAT/DNAT rules for
-      # it, silently. nginx already proved this pattern (it's frontend-only
-      # and its publish has always worked); this had simply never been
-      # exercised for Keycloak's own port before.
       frontend:
       backend:
       k3s-bridge:
@@ -537,15 +403,7 @@ services:
     cpus: 1.0
     stop_grace_period: 10s
 
-  # Milestone 27: S3-compatible object storage for CloudNativePG's WAL
-  # archiving and base backups (Barman Cloud) - K3s's default
-  # local-path-provisioner has no CSI snapshot support, so a volume-snapshot
-  # backup approach isn't available on this cluster; an object store is the
-  # practical option for a home-lab single-node setup.
   minio:
-    # Only consumed by the Postgres HA backup path (kubernetes/data-platform/
-    # postgres-ha-backup.yaml, scripts/infra/postgres-ha-provision.sh) - not part
-    # of the quickstart flow, so it doesn't run by default.
     profiles: ["postgres-ha"]
     image: minio/minio:RELEASE.2025-04-08T15-41-24Z
     restart: unless-stopped
@@ -569,11 +427,6 @@ services:
     cpus: 0.50
     stop_grace_period: 10s
 
-  # One-shot: creates the four Kafka topics Debezium Connect needs for its
-  # own internal state (config/offset/status storage) plus the CDC output
-  # topic - separate from kafka-init (which always runs) so these only get
-  # created when the CDC path is actually exercised via
-  # scripts/infra/debezium-register-connector.sh.
   cdc-topics-init:
     profiles: ["cdc"]
     image: apache/kafka:4.1.1
@@ -597,9 +450,6 @@ services:
     cpus: 0.50
 
   debezium:
-    # Not part of the quickstart flow - stays down until CDC is deliberately
-    # exercised via scripts/infra/debezium-register-connector.sh
-    # (docs/messaging/milestone-21-debezium-cdc.md).
     profiles: ["cdc"]
     image: debezium/connect:2.7.3.Final
     restart: unless-stopped
@@ -609,12 +459,6 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # Routed through the existing "kafka" Toxiproxy proxy rather than
-      # straight at kafka:9092 - Milestone 10's resilience-chaos.sh only
-      # reroutes the K8s-facing EndpointSlice, which Debezium (a Compose-only
-      # service) never touches, so this is the only way to fault-inject a
-      # Kafka outage against Debezium's own connection without also
-      # affecting K8s traffic.
       BOOTSTRAP_SERVERS: toxiproxy:19092
       GROUP_ID: debezium-connect
       CONFIG_STORAGE_TOPIC: debezium-connect-configs
@@ -657,16 +501,6 @@ services:
     mem_limit: 256m
     cpus: 0.50
 
-  # inventory-service and payments-service each run their own
-  # `dotnet X --migrate` (see Program.cs in both), the same one-shot
-  # pattern as `migrations` above for orders-api - but until now nothing
-  # ever invoked it in Compose. Caught via coupon-redemption-concurrency:
-  # once compose/postgres-init/01-create-service-databases.sql fixed the
-  # databases themselves not existing on a fresh bring-up, both services
-  # went unhealthy one layer deeper - "relation ... does not exist" -
-  # because their tables were never created either. The lab server's
-  # instance never hit this because someone once ran these migrations by
-  # hand against its long-lived data volume.
   migrations-inventory:
     profiles: ["compose-apps"]
     image: saga-ecommerce/inventory-service:dev
@@ -679,10 +513,6 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Inventory: Host=postgres;Port=5432;Database=inventory;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       Kafka__BootstrapServers: *kafka-bootstrap
-      # AddKeycloakJwtBearer runs unconditionally during service
-      # registration, before the --migrate early-return - without this,
-      # migration fails with "Authentication:Authority is required" before
-      # it ever touches the database.
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
     depends_on:
       postgres:
@@ -706,7 +536,6 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__Payments: Host=postgres;Port=5432;Database=payments;Username=orders;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       Kafka__BootstrapServers: *kafka-bootstrap
-      # Same requirement as migrations-inventory above.
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
     depends_on:
       postgres:
@@ -718,17 +547,6 @@ services:
     mem_limit: 256m
     cpus: 0.50
 
-  # catalog-service and inventory-service each have their own `--seed`
-  # one-shot mode too (CatalogSeeder/InventorySeeder), same pattern as
-  # `--migrate` above - and it had the same gap: nothing in Compose ever
-  # invoked it. Caught the same way, one layer further into
-  # coupon-redemption-concurrency once the migrations fixed inventory's
-  # and payments' schemas: orders-api's POST /orders correctly rejected
-  # every checkout with 400, because catalog-service had never heard of
-  # SKU-BOOK-002 on a fresh Mongo volume - the product simply didn't
-  # exist to validate against. The lab server's instance never hit this
-  # for the same reason as the migrations gap: someone ran these by hand,
-  # once, a long time ago.
   seed-catalog:
     profiles: ["compose-apps"]
     image: saga-ecommerce/catalog-service:dev
@@ -786,25 +604,10 @@ services:
       Kafka__ClientId: orders-api
       SchemaRegistry__Url: http://schema-registry:8081
       Redis__ConnectionString: redis:6379
-      # appsettings.json defaults this to the k3s-bridge fixed IP
-      # (172.30.0.17), which K3s pods and host-run scripts can reach but
-      # orders-api-1/orders-api-2 cannot - they're only on frontend/backend,
-      # not k3s-bridge. Override to the Compose-internal DNS name both are
-      # already on the same network as.
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
-      # Milestone 66: checkout prices line items server-side against the
-      # catalog, so orders-api now needs to reach it. CatalogClientOptions
-      # defaults to localhost:5080, which resolves inside this container
-      # itself rather than to catalog-service - the same
-      # non-obvious-default trap the Kafka/Redis overrides above cover.
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-1
-      # OutboxPublisher<OrdersDbContext> - previously relied entirely on
-      # OutboxOptions' own code defaults, with no operator-facing knob
-      # anywhere. Explicit here matching those defaults exactly, so a future
-      # default change in code can't silently change deployed behavior -
-      # the same reasoning Milestone 75 already applied to Saga__Mode.
       Outbox__BatchSize: 5
       Outbox__PollIntervalMilliseconds: 500
       Outbox__MaximumRetryDelaySeconds: 60
@@ -825,7 +628,6 @@ services:
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-api-2
-      # See orders-api-1's own comment on these five - must match.
       Outbox__BatchSize: 5
       Outbox__PollIntervalMilliseconds: 500
       Outbox__MaximumRetryDelaySeconds: 60
@@ -851,42 +653,15 @@ services:
       Redis__ConnectionString: redis:6379
       Catalog__BaseUrl: http://catalog-service:8080
       InstanceId: orders-worker-1
-      # PaymentResultConsumer/OrderProjectionConsumer/OrderSagaOrchestrator+
-      # OrderSagaReplyConsumer/OrderEventStoreProjector each bind their own
-      # options section (see the SectionName on each class) rather than
-      # sharing KafkaOptions above - BootstrapServers defaults to
-      # localhost:9092 in every one of them, which only resolves inside
-      # this container itself, not the kafka service. Topics/consumer
-      # groups/client IDs already default correctly and don't need
-      # overriding here.
       PaymentResultKafka__BootstrapServers: *kafka-bootstrap
       OrderProjectionKafka__BootstrapServers: *kafka-bootstrap
       SagaOrchestration__BootstrapServers: *kafka-bootstrap
       OrderEventStore__BootstrapServers: *kafka-bootstrap
-      # Orchestration is the normal application path because it reserves
-      # inventory before deciding payment. Both is reserved for isolated
-      # comparison runs and is not a deployment default.
       Saga__Mode: *saga-mode
-      # Least-privilege service identity for the anti-entropy sweep's two
-      # cross-service reads. It carries only payments:read/inventory:read,
-      # unlike the general backend-tooling client which can mutate orders.
       Keycloak__TokenUrl: http://keycloak:8080/realms/orders-lab/protocol/openid-connect/token
       Keycloak__ClientId: orders-worker
       Keycloak__ClientSecret: ${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET is required}
-      # LeaderElectionService defaults to Kubernetes.InClusterConfig(),
-      # which throws outside a real cluster - there's no ServiceAccount
-      # token to find. That left SagaTimeoutSweeper/AntiEntropySweeper
-      # permanently gated off in Compose (IsLeader stuck false forever): a
-      # saga step whose Payments/Inventory reply never arrives just sits at
-      # "Created" forever, stock and coupon and card hold all still held.
-      # SingleNode is safe here specifically because this service only ever
-      # runs one replica in Compose - see LeaderElectionMode's doc comment.
       LeaderElection__Mode: SingleNode
-      # AntiEntropySweeper - previously relied entirely on AntiEntropyOptions'
-      # own code defaults, with no operator-facing knob anywhere. Explicit
-      # here matching those defaults exactly. BaseUrls repeat what
-      # PaymentsBaseUrl/InventoryBaseUrl already default to (Compose-internal
-      # DNS), same as every other *BaseUrl override in this file.
       AntiEntropy__SweepIntervalSeconds: 300
       AntiEntropy__BatchSize: 200
       AntiEntropy__PaymentsBaseUrl: http://payments-service:8080
@@ -923,21 +698,12 @@ services:
       Kafka__ClientId: payments-service-1
       SchemaRegistry__Url: http://schema-registry:8081
       InstanceId: payments-service-1
-      # PaymentDecisionRequestProcessor binds its own PaymentDecisionRequest
-      # options section rather than sharing Kafka above - same
-      # localhost:9092-default gap as orders-worker's extra Kafka options
-      # classes.
       PaymentDecisionRequest__BootstrapServers: *kafka-bootstrap
-      # Milestone 68: PaymentSettlementOptions has its own section and the
-      # same localhost:9092 default - the trap this compose file has now hit
-      # four times.
       PaymentSettlement__BootstrapServers: *kafka-bootstrap
       PaymentSettlement__ExpirySweepIntervalSeconds: "30"
       Saga__Mode: *saga-mode
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
-      # OutboxPublisher<PaymentsDbContext> - see orders-api-1's own comment
-      # on these five.
       Outbox__BatchSize: 5
       Outbox__PollIntervalMilliseconds: 500
       Outbox__MaximumRetryDelaySeconds: 60
@@ -1005,8 +771,6 @@ services:
       Authentication__Authority: http://keycloak:8080/realms/orders-lab
       Authentication__AlternateAuthority: ${PUBLIC_KEYCLOAK_URL:+${PUBLIC_KEYCLOAK_URL}/realms/orders-lab}
       InstanceId: inventory-service-1
-      # OutboxPublisher<InventoryDbContext> - see orders-api-1's own comment
-      # on these five.
       Outbox__BatchSize: 5
       Outbox__PollIntervalMilliseconds: 500
       Outbox__MaximumRetryDelaySeconds: 60
@@ -1053,18 +817,7 @@ services:
       context: ..
       dockerfile: apps/src/Storefront.Service/Dockerfile
       args:
-        # Baked into the Vite build - the shopper's browser hits Keycloak
-        # directly on its published host port, not through the backend
-        # network Storefront.Service itself uses to validate tokens.
-        # PUBLIC_KEYCLOAK_URL (see .env.example), not LAB_BIND_ADDRESS: that
-        # var is a bind address (can be 0.0.0.0), which a browser can never
-        # actually connect to - this needs a real, reachable destination.
         VITE_KEYCLOAK_URL: ${PUBLIC_KEYCLOAK_URL:-http://127.0.0.1:18081}
-        # Must match scripts/infra/keycloak-configure-realm.sh's realm_name and
-        # storefront_client_id (the public, PKCE orders-storefront client -
-        # not orders-api-clients, the confidential one) - spelled out here
-        # rather than left to the Dockerfile's defaults so a rename of
-        # either can't silently desync the two.
         VITE_KEYCLOAK_REALM: orders-lab
         VITE_KEYCLOAK_CLIENT_ID: orders-storefront
     restart: unless-stopped
@@ -1072,9 +825,6 @@ services:
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${STOREFRONT_PORT:-8089}:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      # Points directly at one orders-api replica rather than through nginx -
-      # this is a demo-scale simplification (no load balancing across the two
-      # replicas from the storefront's checkout path), not a production choice.
       CatalogProxy__BaseUrl: http://catalog-service:8080
       CartProxy__BaseUrl: http://cart-service:8080
       OrdersProxy__BaseUrl: http://orders-api-1:8080
@@ -1086,8 +836,6 @@ services:
         condition: service_started
       cart-service:
         condition: service_started
-    # frontend (not internal) is what actually makes the ports: mapping
-    # above bind - see the same note on the keycloak service.
     networks:
       - frontend
       - backend
@@ -1103,33 +851,11 @@ services:
     restart: unless-stopped
     ports:
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${ORDERS_PORT:-8088}:8080"
-      # TLS-terminating listeners (storefront-tls.conf/keycloak-tls.conf)
-      # additive to storefront-service's/keycloak's own plain-HTTP publish
-      # above - localhost dev keeps working unchanged (localhost is already
-      # a secure context over HTTP). These exist so a LAN device's browser
-      # gets a secure context too: window.crypto.subtle (which the
-      # storefront's OIDC/PKCE login depends on) only exists in secure
-      # contexts, and Chrome never grants that to a plain HTTP LAN IP, only
-      # to https://, localhost, or 127.0.0.1. Run
-      # scripts/infra/generate-lab-tls-cert.sh once (with your LAN IP as an
-      # argument) before these can serve anything.
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${STOREFRONT_TLS_PORT:-8443}:8443"
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${KEYCLOAK_TLS_PORT:-18443}:18443"
-      # Name-based HTTPS routing (domains.conf) for *.sagaecommerce.test -
-      # standard ports so browser URLs need no :port suffix. Additive: the
-      # port-specific listeners above keep working unchanged.
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${DOMAINS_HTTP_PORT:-80}:80"
       - "${LAB_BIND_ADDRESS:-127.0.0.1}:${DOMAINS_HTTPS_PORT:-443}:443"
     volumes:
-      # Whole directory, not a single file: nginx's own nginx.conf already
-      # does "include /etc/nginx/conf.d/*.conf", so orders.conf,
-      # storefront-tls.conf and keycloak-tls.conf each just add a server
-      # block. certs/ (generated by scripts/infra/generate-lab-tls-cert.sh, not
-      # committed) rides along under the same mount; nginx ignores it since
-      # it isn't a *.conf file. Not :ro: docker-entrypoint-tls.sh writes a
-      # throwaway cert into certs/ on first boot if generate-lab-tls-cert.sh
-      # was never run, so a fresh clone or CI runner doesn't crash-loop on
-      # a missing ssl_certificate file.
       - ./nginx:/etc/nginx/conf.d
     depends_on:
       orders-api-1:
@@ -1140,12 +866,6 @@ services:
         condition: service_started
       keycloak:
         condition: service_healthy
-      # domains.conf's proxy_pass targets - none define a healthcheck, so
-      # service_started is the strongest condition available. Needed for
-      # the same reason as the four above: proxy_pass resolves hostnames
-      # once at nginx startup (no `resolver` directive in this config), so
-      # nginx would fail DNS resolution and crash-loop if it started
-      # before these containers exist on the network.
       grafana:
         condition: service_started
       prometheus:
@@ -1198,10 +918,6 @@ services:
     stop_grace_period: 20s
 
   pyroscope:
-    # Only K3s Deployments set PYROSCOPE_PROFILING_ENABLED and the profiler
-    # env vars (kubernetes/base/*.yaml) - no Compose service instruments
-    # against it, so it stays down by default rather than idling for the
-    # Compose quickstart (docs/architecture/continuous-profiling.md).
     profiles: ["profiling"]
     image: grafana/pyroscope:1.15.0
     restart: unless-stopped
@@ -1264,12 +980,6 @@ services:
       backend:
       k3s-bridge:
         ipv4_address: 172.30.0.12
-      # A rede overlay compartilhada com outros projetos do mesmo host (ex:
-      # Farmate) fica em compose.lab.yaml, não aqui: sendo `external: true`,
-      # declará-la neste arquivo faz `docker compose up` falhar com "network
-      # ... declared as external, but could not be found" em qualquer máquina
-      # que não seja aquele host - o que quebrava o quickstart do README para
-      # todo mundo e derrubava o workflow coupon-redemption-concurrency.
     mem_limit: 192m
     cpus: 0.50
     stop_grace_period: 20s
@@ -1294,11 +1004,6 @@ services:
     stop_grace_period: 10s
 
   kafka-exporter:
-    # Milestone 79: nothing scraped consumer-group lag before this - a
-    # consumer stuck or falling behind was invisible to Prometheus, only
-    # ever seen by hand in kafka-ui. danielqsj/kafka-exporter exposes
-    # kafka_consumergroup_lag per group/topic/partition, pull-based, no
-    # separate storage of its own.
     image: danielqsj/kafka-exporter:v1.9.0
     restart: unless-stopped
     command:
@@ -1324,10 +1029,6 @@ services:
     ports:
       - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
     networks:
-      # frontend (not internal) is required for nginx's domains.conf to
-      # reach alertmanager:9093 at all - same reasoning as keycloak's own
-      # networks comment. Doesn't change the loopback-only 127.0.0.1:9093
-      # publish above.
       - frontend
       - backend
     mem_limit: 64m
@@ -1402,8 +1103,6 @@ networks:
   backend:
     internal: true
   k3s-bridge:
-    # Same reasoning as the top-level project name above: this is the live
-    # network's actual label, not renamed to avoid orphaning it.
     name: local-distributed-lab-k3s-bridge
     internal: true
     ipam:

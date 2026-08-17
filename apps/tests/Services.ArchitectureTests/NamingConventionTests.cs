@@ -3,11 +3,6 @@ using NetArchTest.Rules;
 
 namespace Services.ArchitectureTests;
 
-// Clean Code guardrail: "Manager", "Helper", and "Util(s)" are the classic
-// dumping-ground names for a class that stopped having one responsibility.
-// Scans every service assembly this project already references, so a class
-// named that way fails the build before it becomes one more thing nobody
-// wants to touch.
 public class NamingConventionTests
 {
     private static readonly string[] SmellSuffixes = ["Manager", "Helper", "Util", "Utils"];

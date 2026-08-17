@@ -1,19 +1,6 @@
 ---
 k3s_version: v1.36.2+k3s1
 
-# chart_version pins below matter for the same reason k3s_version above
-# does - "an unpinned install script is not a reproducible one." Before
-# this, every playbook run installed/upgraded to whatever was newest in
-# each chart repo at that moment; two lab rebuilds months apart could
-# silently land different major versions of Kyverno, Argo CD or KEDA.
-#
-# These are the latest published versions as of 2026-08-16 (kyverno
-# pinned to its latest *stable* release, 3.8.2 - the newer 3.9.0-rc.x
-# entries are release candidates, not something to pin a lab cluster to).
-# They were looked up from each chart repo's own index, not read off the
-# live cluster - run `helm list -A` on the lab machine and reconcile
-# before the next `ansible-playbook` apply, so this pin describes what is
-# actually running rather than silently upgrading it on the next run.
 helm_releases:
   - name: sealed-secrets
     chart_ref: sealed-secrets/sealed-secrets

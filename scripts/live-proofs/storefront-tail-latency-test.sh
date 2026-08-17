@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 54 live proof: Storefront.Service's new GET
-# /api/storefront/products/{sku} is this lab's first genuine BFF fan-out -
-# it calls Catalog and Inventory in parallel and waits for both, so its
-# own tail latency is at least as bad as whichever leg is having a slow
-# moment (Dean & Barroso's "Tail At Scale": P(any of N calls is slow)
-# grows with N, even when each call is individually fine most of the
-# time). A Toxiproxy latency toxic (15% toxicity, 200ms+/-50ms) models a
-# dependency with a real but infrequent slow tail on the Inventory leg
-# specifically - measures Catalog alone, Inventory alone, and the
-# aggregate, with and without hedging the Inventory call.
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -23,9 +13,6 @@ measure() {
   local label=$1 url=$2
   local times_file
   times_file=$(mktemp)
-  # Warm-up: JIT/connection-pool/DNS-resolution cost after a container
-  # (re)start otherwise contaminates the first several timed samples -
-  # discard 10 throwaway requests before the timed run.
   for _ in $(seq 1 10); do
     docker compose exec -T storefront-service curl -s -o /dev/null "$url" >/dev/null 2>&1 || true
   done

@@ -18,8 +18,5 @@ public static class MessagingHeaders
 
     public const string AttemptCount = "attempt-count";
 
-    // How many times DlqRedriveTool has republished this
-    // logical message back to its original topic - caps redrive loops and
-    // shows up on the redriven message itself, not just in the DLQ.
     public const string RedriveCount = "redrive-count";
 }

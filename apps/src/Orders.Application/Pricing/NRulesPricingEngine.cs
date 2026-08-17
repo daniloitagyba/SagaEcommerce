@@ -7,14 +7,7 @@ using Orders.Domain.Pricing;
 namespace Orders.Application.Pricing;
 
 /// <summary>
-/// Prices an order by running the promotion rules, then
-/// assembling the result deterministically. Promotions live in
-/// PromotionRules.cs as declarative rules - independent, freely-combining,
-/// which is what a rules engine is good at. Shipping and tax are fixed
-/// arithmetic policy instead (tax on the discounted subtotal), not rule
-/// priorities. This class also owns the one invariant no rule enforces
-/// alone: discounts capped at the subtotal, so two campaigns each granting
-/// 60% can't send the order total negative.
+/// Prices orders using promotion rules.
 /// </summary>
 public sealed class NRulesPricingEngine : IPricingEngine
 {
@@ -27,7 +20,6 @@ public sealed class NRulesPricingEngine : IPricingEngine
 
         var repository = new RuleRepository();
         repository.Load(source => source.From(typeof(CouponPercentageRule).Assembly));
-        // Compiling the Rete network is expensive but thread-safe and immutable, so it happens once per process.
         _sessionFactory = repository.Compile();
     }
 
@@ -61,7 +53,6 @@ public sealed class NRulesPricingEngine : IPricingEngine
 
         if (rawDiscountTotal > subtotal)
         {
-            // Keep the receipt honest: shrink the itemised discounts to match the capped total.
             discounts = CapDiscounts(discounts, subtotal, currency);
         }
 
@@ -131,17 +122,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
     }
 
     /// <summary>
-    /// Milestone 90's "exclusivity groups" - promotions sharing a group do
-    /// not stack; the best-value one for this order wins and the rest are
-    /// dropped entirely (not truncated, the way CapDiscounts truncates a
-    /// survivor - a losing discount in a group was never eligible here, it
-    /// is not a rounding remainder). Runs before CapDiscounts deliberately:
-    /// exclusivity is a business rule about which discounts are even in
-    /// play, the subtotal cap is a last-resort safety net on whichever
-    /// discounts survive that decision - the two must not be conflated by
-    /// running them in the other order, or a group's winner could be
-    /// truncated to zero by a stack the loser would never have contributed
-    /// to anyway.
+    /// Resolves promotion exclusivity groups.
     /// </summary>
     private static List<AppliedDiscount> ResolveExclusivity(List<AppliedDiscount> discounts)
     {
@@ -158,20 +139,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
     }
 
     /// <summary>
-    /// Which discounts survive the subtotal cap is a policy decision, not
-    /// an accident of string sorting. This used to walk <paramref
-    /// name="discounts"/> in the same alphabetical-by-code order the
-    /// receipt displays them in, so whichever code happened to sort last
-    /// - a shopper-typed coupon as easily as an automatic promotion - was
-    /// the one truncated to zero when the cap bound. Not reachable with
-    /// today's deployed configuration (the maximum stack is 70%), but it
-    /// is the kind of thing that turns into "why did my coupon show as
-    /// R$0,00?" the first time a campaign is configured past 100%.
-    /// Truncates in <see cref="DiscountPriority"/> order instead (a
-    /// shopper-presented coupon is the discount they will actually notice
-    /// missing, so it pays out first) and re-sorts the survivors back to
-    /// alphabetical before returning, so the receipt's display order is
-    /// unaffected by this - only which discounts make the cut changes.
+    /// Caps discounts at the order subtotal.
     /// </summary>
     private static List<AppliedDiscount> CapDiscounts(
         List<AppliedDiscount> discounts,
@@ -203,15 +171,7 @@ public sealed class NRulesPricingEngine : IPricingEngine
 }
 
 /// <summary>
-/// Ranks a discount code for payout order when the subtotal cap forces a
-/// choice about which discounts get truncated - lower rank pays out
-/// first. Shopper-presented (a typed coupon code, no recognised automatic
-/// prefix) ranks above every automatic promotion this engine grants on
-/// its own, since a coupon the shopper actively redeemed is the one
-/// they will notice missing from the total; which of the automatic ones
-/// yields to which is left to alphabetical order (CapDiscounts' own
-/// tie-break) since there is no stated policy preferring one automatic
-/// promotion over another.
+/// Ranks discounts for payout.
 /// </summary>
 internal static class DiscountPriority
 {

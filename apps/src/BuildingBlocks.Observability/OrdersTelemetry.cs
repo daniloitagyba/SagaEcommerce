@@ -14,16 +14,7 @@ public static class OrdersTelemetry
     private static readonly Counter<long> ProcessedCounter = Meter.CreateCounter<long>("orders.processed");
     private static readonly Counter<long> OutboxPublishedCounter = Meter.CreateCounter<long>("outbox.messages.published");
     private static readonly Counter<long> OutboxRetryCounter = Meter.CreateCounter<long>("outbox.publish.retries");
-    // A row that exhausted OutboxOptions.MaximumAttempts (or the saga
-    // outbox's own OutboxMaximumAttempts) and was moved to a dead-letter
-    // table instead of retried again - distinct from outbox.publish.retries
-    // so a dashboard can tell "still retrying" apart from "gave up," the
-    // gap that used to let a poison row inflate the pending-backlog gauge
-    // forever with nothing ever alerting on the real cause.
     private static readonly Counter<long> OutboxDeadLetteredCounter = Meter.CreateCounter<long>("outbox.dead_lettered");
-    // A real backlog gauge, not inferred from the published
-    // rate - OutboxPublisher records this once per poll cycle with a COUNT
-    // of unprocessed rows, the same predicate its own polling query filters on.
     private static readonly Gauge<long> OutboxPendingGauge = Meter.CreateGauge<long>("outbox.messages.pending");
     private static readonly Counter<long> InboxDuplicateCounter = Meter.CreateCounter<long>("inbox.messages.duplicates");
     private static readonly Counter<long> ProcessingRetryCounter = Meter.CreateCounter<long>("messaging.processing.retries");
@@ -38,21 +29,8 @@ public static class OrdersTelemetry
     private static readonly Counter<long> DistributedRateLimitBypassCounter = Meter.CreateCounter<long>("orders.rate_limit.distributed_bypassed");
     private static readonly Counter<long> PaymentDecidedCounter = Meter.CreateCounter<long>("payments.decided");
     private static readonly Histogram<double> ProjectionLagHistogram = Meter.CreateHistogram<double>("orders.projection.lag_ms");
-    // One row this sweep found where two services' account of
-    // the same order disagree - never expected to be nonzero for long, the
-    // same alerting shape already used for the DLQ and outbox backlog.
     private static readonly Counter<long> AntiEntropyDivergenceCounter = Meter.CreateCounter<long>("anti_entropy.divergences");
-    // A settlement came back Expired - money that should have moved never
-    // did - but the order wasn't in a state FulfillmentHold could legally
-    // follow. Never expected to be nonzero for long, same shape as the
-    // anti-entropy counter above.
     private static readonly Counter<long> SettlementReconciliationUnresolvedCounter = Meter.CreateCounter<long>("payments.settlement_reconciliation.unresolved");
-    // A saga reply (reservation/commit/release) arrived for an order/line
-    // whose saga row is already gone. Usually a harmless, expected race
-    // (see OrderSagaReplyConsumer's own comments on each UnknownReply call
-    // site) - but a *successful* reservation reply landing here means
-    // Inventory now holds stock nothing will ever release, so that specific
-    // reason is worth alerting on distinctly from the benign ones.
     private static readonly Counter<long> OrphanedSagaReplyCounter = Meter.CreateCounter<long>("saga.orphaned_reply");
 
     public static Activity? StartActivity(
@@ -120,19 +98,19 @@ public static class OrdersTelemetry
         CacheHitCounter.Add(1);
     }
 
-    /// <summary>Tagged by which invariant failed, so a dashboard can tell "orders missing a payment" apart from "backorders on a dead order" rather than one undifferentiated count.</summary>
+    /// <summary>Tagged by which invariant failed.</summary>
     public static void RecordAntiEntropyDivergence(string checkName)
     {
         AntiEntropyDivergenceCounter.Add(1, new KeyValuePair<string, object?>("check", checkName));
     }
 
-    /// <summary>Tagged by the transition result (NotApplicable/IllegalTransition), so a dashboard can tell "someone else already resolved it" apart from "this order can never legally reach FulfillmentHold from here" - both mean the settlement-expired signal was dropped, but one is a benign race and the other is not.</summary>
+    /// <summary>Tagged by the transition result (NotApplicable/IllegalTransition).</summary>
     public static void RecordSettlementReconciliationUnresolved(string transitionResult)
     {
         SettlementReconciliationUnresolvedCounter.Add(1, new KeyValuePair<string, object?>("transition_result", transitionResult));
     }
 
-    /// <summary>Tagged by reply kind ("reservation"/"commit"/"release") and whether the reply said the operation succeeded - a successful reservation reply for a saga row that's already gone is the one combination that means leaked stock, not a benign race.</summary>
+    /// <summary>Tagged by reply kind and whether the reply said the operation succeeded.</summary>
     public static void RecordOrphanedSagaReply(string replyKind, bool succeeded)
     {
         OrphanedSagaReplyCounter.Add(
@@ -156,13 +134,7 @@ public static class OrdersTelemetry
         IdempotentReplayCounter.Add(1);
     }
 
-    /// <summary>
-    /// A lock holder's write lost the fencing-token race -
-    /// it was still trying to write after its lock had already expired and
-    /// been re-acquired by someone else. Should be rare; a nonzero rate
-    /// under sustained load means the lock timeout is set too aggressively
-    /// for how long the guarded work actually takes.
-    /// </summary>
+    /// <summary>A lock holder's write lost the fencing-token race.</summary>
     public static void RecordFencedWriteRejected(string store)
     {
         FencedWriteRejectedCounter.Add(1, new KeyValuePair<string, object?>("store", store));

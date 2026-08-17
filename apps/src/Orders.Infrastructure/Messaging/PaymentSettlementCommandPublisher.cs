@@ -23,13 +23,7 @@ public interface IPaymentSettlementCommandPublisher
     Task PublishBackorderCancellationAsync(BackorderCancellationRequested request, CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// Publishes the settlement commands the fulfilment API
-/// queued on the outbox. Separate from Orders.Worker's
-/// PaymentSettlementRequester because they sit on opposite sides of the
-/// outbox - the worker produces inline from inside a message handler, this
-/// one drains rows a transaction already committed.
-/// </summary>
+/// <summary>Publishes settlement commands the fulfilment API queued on the outbox, draining already-committed rows (unlike Orders.Worker's PaymentSettlementRequester, which produces inline).</summary>
 public sealed class KafkaPaymentSettlementCommandPublisher(
     IProducer<string, string> producer,
     IOptions<PaymentSettlementCommandOptions> options,
@@ -51,11 +45,7 @@ public sealed class KafkaPaymentSettlementCommandPublisher(
     public Task PublishBackorderCancellationAsync(BackorderCancellationRequested request, CancellationToken cancellationToken) =>
         PublishAsync(options.Value.BackorderCancellationRequestedTopic, request.OrderId, request.CorrelationId, request, cancellationToken);
 
-    /// <summary>
-    /// Keyed by SKU, not order id - Inventory serialises stock changes by
-    /// partition key, and a restock keyed by anything else
-    /// could land on a different partition than the reservation it reverses.
-    /// </summary>
+    /// <summary>Keyed by SKU, not order id, so the restock lands on the same partition as the reservation it reverses.</summary>
     public async Task PublishRestockAsync(InventoryRestockRequested request, CancellationToken cancellationToken)
     {
         var headers = new Headers();

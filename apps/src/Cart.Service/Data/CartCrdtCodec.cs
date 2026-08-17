@@ -4,11 +4,7 @@ using StackExchange.Redis;
 
 namespace Cart.Service.Data;
 
-/// <summary>
-/// Maps the domain CRDT to its Redis JSON representation. The store owns
-/// concurrency and I/O; this codec owns only backward-compatible
-/// serialization, keeping persistence shape out of the merge algorithm.
-/// </summary>
+/// <summary>Maps the domain CRDT to its Redis JSON representation.</summary>
 internal static class CartCrdtCodec
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);

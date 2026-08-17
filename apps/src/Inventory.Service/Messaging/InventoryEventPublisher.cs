@@ -21,15 +21,7 @@ public interface IInventoryEventPublisher
 
     Task PublishAsync(WarehouseReplenishmentNeeded signal, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Inventory producing a command it also consumes -
-    /// PurchaseOrderReceivingSweeper's restock rides the exact same
-    /// InventoryReservationMessageProcessor.ProcessRestockAsync path a
-    /// customer return already uses (backorder release included), through
-    /// the durable outbox rather than an in-process call, so a produce
-    /// failure after the purchase order is marked Received still leaves a
-    /// pending outbox row for OutboxPublisher to retry rather than losing the restock silently.
-    /// </summary>
+    /// <summary>Publishes a purchase order's restock through the durable outbox so a produce failure still leaves it retryable.</summary>
     Task PublishAsync(InventoryRestockRequested request, CancellationToken cancellationToken);
 }
 
@@ -61,11 +53,7 @@ public sealed class KafkaInventoryEventPublisher(
         return PublishInternalAsync(options.Value.RestockRepliedTopic, reply.OrderId, reply.CorrelationId, reply, cancellationToken);
     }
 
-    /// <summary>
-    /// Keyed by SKU rather than an order id, because this
-    /// event is about a shelf, not a purchase - and per-SKU ordering is the
-    /// guarantee this service already relies on everywhere else.
-    /// </summary>
+    /// <summary>Keyed by SKU rather than an order id, since this event is about a shelf, not a purchase.</summary>
     public Task PublishAsync(WarehouseReplenishmentNeeded signal, CancellationToken cancellationToken)
     {
         return PublishInternalAsync(

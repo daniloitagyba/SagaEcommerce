@@ -52,12 +52,7 @@ public sealed class KafkaOrderEventPublisher(
             cancellationToken);
     }
 
-    /// <summary>
-    /// Plain JSON, not Avro - unlike OrderCreated this is an internal
-    /// signal only OrderProjectionProcessor ever reads, the same choice
-    /// PaymentDecided already made for the same reason (no external schema
-    /// registry consumer to justify Avro's extra ceremony here).
-    /// </summary>
+    /// <summary>Publishes as plain JSON, not Avro, since this is an internal signal only OrderProjectionProcessor reads, with no external schema registry consumer to justify Avro.</summary>
     public async Task PublishAsync(OrderStatusChanged statusChanged, CancellationToken cancellationToken)
     {
         var headers = new Headers();

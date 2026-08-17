@@ -1,11 +1,6 @@
 namespace BuildingBlocks;
 
-/// <summary>
-/// A line on the published event, carrying only what a
-/// consumer needs to act on the purchase - category stays in Orders' own
-/// table since the consumer that cares (bestseller tracking) looks it up
-/// from Catalog anyway.
-/// </summary>
+/// <summary>A line on the published event, carrying only what a consumer needs to act on the purchase.</summary>
 public sealed record OrderCreatedLine(
     string Sku,
     string ProductName,
@@ -13,13 +8,7 @@ public sealed record OrderCreatedLine(
     decimal UnitPrice,
     decimal LineTotal);
 
-/// <summary>
-/// Schema version 2 adds Lines, backward-compatible by
-/// construction: the Avro field defaults to an empty array, so v1 and v2
-/// consumers can each read the other's messages without failing. Lines
-/// defaults to null on the C# side for the same reason - amount-only
-/// construction sites that predate the lines array still compile.
-/// </summary>
+/// <summary>Schema version 2 adds Lines, backward-compatible by construction via a defaulted empty array.</summary>
 public sealed record OrderCreated(
     Guid EventId,
     Guid OrderId,
@@ -30,13 +19,7 @@ public sealed record OrderCreated(
     string CorrelationId,
     IReadOnlyList<OrderCreatedLine>? Lines = null,
     int SchemaVersion = OrderCreatedSchemaVersions.WithShippingPrefix,
-    // Which method the shopper chose. Defaults to Pix so a
-    // v1/v2 message read against v3 arrives as an instant payment rather
-    // than an authorization nobody will ever capture.
     string PaymentMethod = PaymentMethods.Pix,
-    // The delivery address's first two CEP digits, so risk
-    // rules can spot an unfamiliar shipping destination - Payments has no
-    // business holding a full street address it would only compare for equality.
     string ShippingPostalPrefix = "")
 {
     public IReadOnlyList<OrderCreatedLine> LinesOrEmpty => Lines ?? [];
@@ -58,7 +41,7 @@ public static class OrderCreatedSchemaVersions
     /// <summary>Adds ShippingPostalPrefix.</summary>
     public const int WithShippingPrefix = 4;
 
-    /// <summary>Consumers accept any version they know how to read - pinning to one would turn a rolling deploy into an outage.</summary>
+    /// <summary>Consumers accept any version they know how to read.</summary>
     public static bool IsSupported(int schemaVersion) =>
         schemaVersion is AmountOnly or WithLineItems or WithPaymentMethod or WithShippingPrefix;
 }

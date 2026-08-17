@@ -9,26 +9,7 @@ using Polly.Registry;
 
 namespace Inventory.Service;
 
-/// <summary>
-/// Gives up on a backorder nobody restocked in time - an
-/// order parked in Backordered forever is a support ticket, not a courtesy.
-/// No money is on hold here (payment is decided one step after reservation)
-/// - what this releases is the customer's wait. Reuses
-/// InventoryReservationReplied with Backordered: false, which
-/// OrderSagaReplyConsumer already treats as a permanent refusal, so no new
-/// saga-side code is needed. Same single-sweeper reasoning as
-/// PaymentAuthorizationSweeper: <see cref="SweepLockKey"/> only stops
-/// wasted polling across replicas.
-///
-/// <see cref="SkuAdvisoryLock"/> is the mechanism that actually matters for
-/// correctness here: this sweeper and
-/// InventoryReservationMessageProcessor.ReleaseBackordersAsync (a restock
-/// arriving for the same SKU) both delete rows from the same
-/// <c>backorders</c> table, and without a shared lock between them a
-/// restock's read of "which backorders are still pending" and this sweep's
-/// delete of one of those exact rows can land in either order with no
-/// coordination at all.
-/// </summary>
+/// <summary>Times out backorders nobody restocked in time and reports permanent refusal back to the saga.</summary>
 public sealed class BackorderTimeoutSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<BackorderOptions> options,
@@ -36,13 +17,11 @@ public sealed class BackorderTimeoutSweeper(
     ILogger<BackorderTimeoutSweeper> logger,
     ResiliencePipelineProvider<string> pipelineProvider) : BackgroundService
 {
-    /// <summary>Kept numerically distinct from Payments' SweepLockKey so a grep for either value is unambiguous about which service it belongs to.</summary>
+    /// <summary>Numerically distinct from Payments' SweepLockKey.</summary>
     private const long SweepLockKey = 7400_0001;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly BackorderOptions _options = options.Value;
-    // No-retry transactional pipeline, not the retrying PostgresPipeline -
-    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -62,13 +41,12 @@ public sealed class BackorderTimeoutSweeper(
             }
             catch (Exception exception)
             {
-                // A failed sweep must never take the host down - backorders it missed this pass are still claimable next time.
                 BackorderSweeperLog.SweepFailed(logger, exception);
             }
         }
     }
 
-    /// <summary>Public so integration tests can drive it directly, the same testable seam SagaTimeoutSweeper's own SweepOnceAsync already gives.</summary>
+    /// <summary>Runs one sweep pass; public so integration tests can drive it directly.</summary>
     public async Task SweepAsync(CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
@@ -91,10 +69,6 @@ public sealed class BackorderTimeoutSweeper(
             var now = timeProvider.GetUtcNow();
             var cutoff = now - TimeSpan.FromMinutes(_options.TimeoutMinutes);
 
-            // A candidates pass only, not the authoritative read - each SKU's
-            // rows are re-read for real immediately below, after that SKU's own
-            // advisory lock is held, so this cannot act on a row a concurrent
-            // restock already claimed.
             var candidateSkus = await dbContext.Backorders
                 .Where(backorder => backorder.RequestedAt <= cutoff)
                 .Select(backorder => backorder.Sku)
@@ -112,11 +86,6 @@ public sealed class BackorderTimeoutSweeper(
             var timedOut = 0;
             foreach (var sku in candidateSkus)
             {
-                // Blocks here until any in-flight reserve/commit/release/restock
-                // for this SKU (including ReleaseBackordersAsync's own delete of
-                // the same rows) has committed or rolled back - see this
-                // class's own comment for why that is what makes the re-read
-                // below trustworthy.
                 await SkuAdvisoryLock.AcquireAsync(dbContext, sku, ct);
 
                 var pending = await dbContext.Backorders

@@ -5,13 +5,7 @@ using Orders.Domain;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// The read path the UI uses most, previously with no coverage at all -
-/// hand-rolled fakes for IOrderCache/IOrderRepository rather than a
-/// Testcontainer, since the handler's own logic (delegate to the cache,
-/// map a found Order into a CachedOrder) has no database dependency of its
-/// own to exercise.
-/// </summary>
+/// <summary>The read path the UI uses most; hand-rolled fakes for IOrderCache/IOrderRepository since the handler's own logic has no database dependency of its own.</summary>
 public sealed class GetOrderHandlerTests
 {
     [Fact]

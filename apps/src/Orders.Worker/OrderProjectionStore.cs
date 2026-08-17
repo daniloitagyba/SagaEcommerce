@@ -19,34 +19,6 @@ public sealed class OrderProjectionStore(NpgsqlDataSource dataSource, Resilience
             projected_at = EXCLUDED.projected_at;
         """;
 
-    // The WHERE clause is the ordering guard: PaymentDecided,
-    // OrderStatusChanged (saga-driven and API-driven) and inbox-deduplicated
-    // redeliveries can all reach this upsert for the same order from
-    // different topics/partitions, with no ordering between them beyond
-    // each event's own OccurredAt/Version.
-    //
-    // Prefers @version (order_event_version_seq - see OrderStatusChanged's
-    // own class comment) whenever either side of the comparison carries
-    // one: a single cross-process Postgres sequence is immune to the clock
-    // skew a wall-clock comparison is not. Before Milestone 91 this
-    // compared decided_at alone - two pods' clocks even tens of
-    // milliseconds apart was enough for a genuinely newer status carrying
-    // a slightly earlier timestamp to be silently, permanently dropped,
-    // with nothing logged and nothing alerted; see
-    // docs/roadmap-milestones-91-99.md, "the read-model ordering guard
-    // trusts physical clocks across services".
-    //
-    // Falls back to decided_at only when NEITHER side has a version -
-    // PaymentDecided (choreography mode only; the deployed Orchestration
-    // default never produces it) is the one remaining producer that
-    // doesn't stamp one. A versioned write always beats a version-less
-    // baseline (order_summaries.version IS NULL means either no write has
-    // landed yet, or only PaymentDecided has); a version-less write can
-    // never clobber a row a versioned write already reached - see the
-    // second OR branch's absence of that case, which is deliberate, not an
-    // oversight. `>=`, not `>`, on the decided_at fallback so a later write
-    // for the exact same decided_at still applies rather than silently
-    // losing to whichever happened to insert first.
     private const string UpsertDecisionSql = """
         INSERT INTO order_summaries (order_id, status, decided_at, projected_at, version)
         VALUES (@order_id, @status, @decided_at, @projected_at, @version)
@@ -90,12 +62,7 @@ public sealed class OrderProjectionStore(NpgsqlDataSource dataSource, Resilience
     }
 
     /// <summary>
-    /// version is trailing and optional (after cancellationToken, against
-    /// the usual convention) specifically so PaymentDecided's existing call
-    /// site - which has no version to give, see UpsertDecisionSql's own
-    /// comment - keeps compiling unchanged. OrderStatusChanged's own call
-    /// site (OrderProjectionProcessor.ProcessOrderStatusChangedAsync)
-    /// always passes one.
+    /// Projects a payment decision or status change into order_summaries.
     /// </summary>
     public Task ProjectPaymentDecidedAsync(
         Guid orderId,

@@ -1,37 +1,6 @@
-# Every metric alerted on here already exists in
-# BuildingBlocks.Observability/OrdersTelemetry.cs, most of them recorded
-# specifically to detect the correctness failures this architecture built
-# mechanisms to prevent - anti-entropy divergence, orphaned saga replies,
-# unresolved settlement reconciliation, fenced writes losing a lock race,
-# and the fail-open degradations (rate limiting, order cache) that trade
-# availability for correctness when Redis is unreachable. None of them had
-# an alert before this file: messaging-ops.yml and orders-api-slo.yml cover
-# the HTTP/Kafka/outbox surface, but a system that measures its own
-# divergence this carefully and pages nobody when it diverges is only
-# half-instrumented.
-#
-# Thresholds and `for:` durations below are conservative starting points,
-# not yet calibrated against this lab's own steady-state traffic the way
-# messaging-ops.yml's are (see that file's own header) - each should be
-# proven to actually fire using the drill/chaos script noted per alert
-# before being trusted as a real page, per
-# docs/architecture/audit-2026-08-15-architecture-and-cross-cutting-review.md's
-# Phase 4. Whether that provocation has actually happened for each
-# severity: page alert is tracked in
-# docs/resilience/alert-provocation-runbook.md, not just asserted here.
 groups:
   - name: correctness-invariant-alerts
     rules:
-      # AntiEntropySweeper found a real divergence between two services'
-      # view of the same order (a payment Orders believes happened that
-      # Payments never accounted for, or stock still committed for an
-      # order that's since been cancelled) - fires on the first one, the
-      # same "don't wait for a rate" philosophy DeadLetterMessagesDetected
-      # already uses, because a single divergence is already evidence the
-      # invariant broke somewhere upstream.
-      # Provoke with: scripts/live-proofs/inventory-reservation-concurrency-test.sh
-      # or scripts/chaos/resilience-chaos.sh, then check
-      # AntiEntropySweeper's own logs for which check fired.
       - alert: AntiEntropyDivergenceDetected
         expr: increase(anti_entropy_divergences_total[15m]) > 0
         for: 0s
@@ -43,10 +12,6 @@ groups:
           description: "{{ $value }} divergence(s) on check {{ $labels.check }} in the last 15m - see docs/architecture/milestone-*-anti-entropy* and AntiEntropySweeper's logs for which order(s) diverged."
           runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#stuck-or-failed-saga-compensation"
 
-      # A capture/void/refund that PaymentSettlementProcessor could not
-      # reconcile against Orders' expectation - the exact silent-failure
-      # mode a captured-but-unrecorded payment or an order shipped without
-      # being charged would show up as.
       - alert: SettlementReconciliationUnresolved
         expr: increase(payments_settlement_reconciliation_unresolved_total[15m]) > 0
         for: 0s
@@ -58,10 +23,6 @@ groups:
           description: "{{ $value }} unresolved settlement(s) with transition_result={{ $labels.transition_result }} in the last 15m - check PaymentSettlementProcessor's logs for the order/payment id."
           runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#stuck-or-failed-saga-compensation"
 
-      # A saga reply arrived for state that no longer exists (the saga row
-      # was already completed, timed out, or never existed) - rare by
-      # design, so a sustained run of them past normal timeout-adjacent
-      # noise means something upstream is replaying or misrouting replies.
       - alert: OrphanedSagaRepliesHigh
         expr: increase(saga_orphaned_reply_total[10m]) > 3
         for: 0s
@@ -73,12 +34,6 @@ groups:
           description: "{{ $value }} orphaned {{ $labels.reply_kind }} repl(y/ies) in the last 10m (succeeded={{ $labels.succeeded }}) - check SagaTimeoutSweeper's cadence against reply latency."
           runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#stuck-or-failed-saga-compensation"
 
-      # RedisSlidingWindowRateLimiter.cs fails open on an infrastructure
-      # fault - correct availability-over-enforcement design, but it means
-      # a Redis outage silently turns rate limiting off with no other
-      # signal. Paged, not ticketed: this is a live enforcement gap, not
-      # just a data point.
-      # Provoke with: scripts/chaos/resilience-chaos.sh (Redis outage window).
       - alert: RateLimitingFailedOpen
         expr: increase(orders_rate_limit_distributed_bypassed_total[5m]) > 0
         for: 0s
@@ -90,9 +45,6 @@ groups:
           description: "{{ $value }} request(s) bypassed distributed rate limiting in the last 5m because Redis was unreachable - orders-api is currently unprotected against a caller exceeding its limit."
           runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#common-first-response"
 
-      # RedisOrderCache.cs falls back to an uncached Postgres read on the
-      # same fault - correct, but sustained means Redis has been down long
-      # enough to matter for load on Postgres, not a single blip.
       - alert: OrderCacheFailingOpen
         expr: rate(orders_cache_bypassed_total[5m]) > 0
         for: 5m
@@ -104,12 +56,6 @@ groups:
           description: "GET /orders/{id} has been reading straight from Postgres for at least 5 minutes - Redis is likely unreachable, and Postgres is carrying load the cache would normally absorb."
           runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#common-first-response"
 
-      # A lock holder tried to write after its fencing token was already
-      # superseded by a new holder (RedisFencedWrite.cs) - the discarded
-      # write is correct behaviour, but a sustained rate means the lock
-      # timeout is set too aggressively for how long the guarded work
-      # actually takes, per OrdersTelemetry.RecordFencedWriteRejected's
-      # own doc comment.
       - alert: FencedWriteRejectedSustained
         expr: rate(orders_redis_fenced_write_rejected_total[10m]) > 0
         for: 10m
@@ -121,10 +67,6 @@ groups:
           description: "store={{ $labels.store }} has been losing the fencing-token race for 10 minutes straight - the lock timeout is likely too short for the guarded work."
           runbook_url: "https://github.com/daniloitagyba/SagaEcommerce/blob/main/docs/operations/runbooks.md#common-first-response"
 
-      # OrderEventStoreProjector's own lag between an event occurring and
-      # landing in the event store - the read model (and anything replayed
-      # from it, see order-projection-replay-drill.sh) is stale past this
-      # point.
       - alert: ProjectionLagHigh
         expr: histogram_quantile(0.95, sum(rate(orders_projection_lag_ms_bucket[5m])) by (le)) > 5000
         for: 5m

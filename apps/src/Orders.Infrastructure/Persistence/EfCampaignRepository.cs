@@ -24,10 +24,6 @@ public sealed class EfCampaignRepository(
         {
             return await _pipeline.ExecuteAsync(async ct =>
             {
-                // Filtered and ordered in the database, not in memory: the
-                // table is expected to hold a handful of live campaigns at
-                // once, not thousands, so this is a cheap index-friendly
-                // scan rather than a premature optimisation.
                 var campaign = await dbContext.PromotionCampaigns
                     .AsNoTracking()
                     .Where(item => item.ValidFrom <= now && item.ValidUntil > now)

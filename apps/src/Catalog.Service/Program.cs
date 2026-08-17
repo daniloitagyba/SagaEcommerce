@@ -9,10 +9,6 @@ using MongoDB.Driver;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(TimeProvider.System);
 
-// Same guard Orders.Api already carries, where
-// one unregistered IProducer took the whole outbox down while the service
-// went on reporting healthy - a background loop cannot fail loudly on its
-// own, so the failure has to happen at startup instead.
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateOnBuild = true;
@@ -54,12 +50,6 @@ builder.Services.AddSingleton<CategoryRepository>();
 builder.Services.AddOrdersRedis(builder.Configuration);
 builder.Services.AddSingleton<BestsellersReader>();
 
-// Catalog writes were unauthenticated - anyone who could
-// reach this pod could add a product at any price, which
-// OrderPricingService then trusts as the live catalog price. Same JWKS-backed
-// validation as Orders.Api; catalog:admin is checked, not
-// orders:write, since a shopper's checkout token should never be able to
-// write a product.
 builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "catalog-service");
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("catalog:admin", policy => policy.RequireRole("catalog:admin"));
@@ -69,11 +59,6 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
-// Previously only ran under --seed, so a normal deployment (migration Jobs
-// run once at deploy time, the app pod never gets --seed) would serve
-// traffic against a Mongo collection with none of ProductRepository's/
-// CategoryRepository's indexes ever created - including the unique sku and
-// slug indexes CreateAsync relies on to reject duplicates.
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var productRepository = scope.ServiceProvider.GetRequiredService<ProductRepository>();

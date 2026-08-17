@@ -1,19 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 55 live proof: the CQRS read model (order_summaries) has never
-# actually been rebuilt from the event log since Milestone 13 built it -
-# only measured for lag, never actually replayed from zero. Full scope
-# note: orders.created.v1/payments.result.v1 both retain messages for only
-# 24h (compose.yaml's kafka-init, retention.ms=86400000) - by the time
-# this drill ran, BOTH topics were completely empty (earliest == latest
-# == 0 on every partition), meaning the accumulated 150k+ historical rows
-# in order_summaries could never be rebuilt from Kafka at all anymore.
-# That's a real, important finding on its own (see the milestone doc) and
-# it's why this drill creates fresh orders to replay, rather than
-# truncating the live, irreplaceable projection table.
-#
-# Real replay of the FULL history would need Milestone 23's event store
-# (an append-only Postgres table, not subject to Kafka's retention), not
-# this topic - out of scope for this drill, noted as a follow-up.
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

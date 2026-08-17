@@ -35,8 +35,6 @@ public sealed class PaymentMessageProcessor(
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentsKafkaOptions _kafkaOptions = kafkaOptions.Value;
     private readonly AvroDeserializer<GenericRecord> _avroDeserializer = new(schemaRegistryClient);
-    // No-retry transactional pipeline, not the retrying PostgresPipeline -
-    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     public async Task<MessageProcessingResult> ProcessAsync(
@@ -178,11 +176,6 @@ public sealed class PaymentMessageProcessor(
             throw new InvalidOrderMessageException("The OrderCreated event and order identifiers are required.");
         }
 
-        // Accept every schema version this consumer can
-        // actually read, not just the newest. Pinning to one exact version
-        // is what turns a backward-compatible schema change into a
-        // rolling-deploy outage - during the rollout both v1 and v2
-        // messages are genuinely on the topic at the same time.
         if (!OrderCreatedSchemaVersions.IsSupported(orderCreated.SchemaVersion))
         {
             throw new InvalidOrderMessageException($"Unsupported OrderCreated schema version {orderCreated.SchemaVersion}.");

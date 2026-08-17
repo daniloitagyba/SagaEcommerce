@@ -4,10 +4,6 @@ using Testcontainers.Redis;
 
 namespace Catalog.IntegrationTests;
 
-// BestsellersReader only reads Redis - the endpoint layer enriches each
-// ranked Sku with a MongoDB product lookup (ProductRepository, already
-// covered by ProductRepositoryTests), so this class doesn't need a Mongo
-// container of its own.
 public sealed class BestsellersReaderTests : IAsyncLifetime
 {
     private RedisContainer _redis = null!;

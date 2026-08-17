@@ -25,12 +25,7 @@ public sealed class RedisFencedWriteTests : IAsyncLifetime
         await _redis.DisposeAsync();
     }
 
-    /// <summary>
-    /// Reproduces the hazard fencing tokens exist for: holder A stalls past
-    /// its lock timeout, B acquires the lock and writes first. Without a
-    /// fencing token, A resuming would silently clobber B's newer value -
-    /// exactly what happened before fencing tokens existed. A's write must be rejected.
-    /// </summary>
+    /// <summary>Reproduces the hazard fencing tokens exist for: holder A stalls past its lock timeout, B acquires the lock and writes first, and A's stale write must then be rejected.</summary>
     [Fact]
     public async Task StaleHolderWriteIsRejectedAfterNewerHolderAlreadyWrote()
     {
@@ -38,8 +33,8 @@ public sealed class RedisFencedWriteTests : IAsyncLifetime
         var valueKey = $"test:fenced:{Guid.NewGuid()}";
         var sequenceKey = $"{valueKey}:seq";
 
-        var tokenA = await database.NextFenceTokenAsync(sequenceKey); // holder A acquires first (token 1)
-        var tokenB = await database.NextFenceTokenAsync(sequenceKey); // A stalls; B's lock timeout fires, B acquires (token 2)
+        var tokenA = await database.NextFenceTokenAsync(sequenceKey);
+        var tokenB = await database.NextFenceTokenAsync(sequenceKey);
 
         var bApplied = await database.FencedSetAsync(valueKey, tokenB, "B's fresh value", TimeSpan.FromMinutes(1));
         var aApplied = await database.FencedSetAsync(valueKey, tokenA, "A's stale value", TimeSpan.FromMinutes(1));

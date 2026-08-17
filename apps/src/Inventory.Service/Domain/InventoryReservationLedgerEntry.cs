@@ -1,20 +1,6 @@
 namespace Inventory.Service.Domain;
 
-/// <summary>
-/// The permanent ledger a prior audit
-/// wanted and couldn't build without a live database to validate a
-/// migration against - "a permanent ledger of 'this order drew down this
-/// much stock, from this warehouse, and here is its current status' that
-/// survives settlement." <see cref="ReservationAllocation"/> deliberately
-/// does not survive settlement (it exists only long enough for commit or
-/// release to replay it, then <c>WarehouseAllocationStore.TrySettleReservationAsync</c>
-/// deletes it) - this is the row that does, written once, at the moment a
-/// reservation actually commits (draws stock down for real), and reduced
-/// or removed only when a restock referencing the same order and sku gives
-/// some or all of it back. What's left with <see cref="Quantity"/> still
-/// positive, for an order whose status has since become Cancelled, is
-/// exactly the leak that audit found.
-/// </summary>
+/// <summary>Permanent ledger of stock a reservation committed, reduced or removed only as restocks give it back.</summary>
 public sealed class InventoryReservationLedgerEntry
 {
     private InventoryReservationLedgerEntry()

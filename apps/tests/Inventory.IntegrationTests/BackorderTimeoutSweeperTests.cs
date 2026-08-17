@@ -11,13 +11,7 @@ using Polly.Registry;
 
 namespace Inventory.IntegrationTests;
 
-/// <summary>
-/// BackorderTimeoutSweeper's own basic behavior, plus the
-/// SkuAdvisoryLock guard added alongside it: a restock arriving for a SKU
-/// the sweeper is actively timing out must serialize behind (or ahead of)
-/// the sweep, never interleave with it - see SkuAdvisoryLock's own comment
-/// for the leak/failed-transaction race that guard closes.
-/// </summary>
+/// <summary>BackorderTimeoutSweeper's own basic behavior, plus the SkuAdvisoryLock guard: a restock arriving for a SKU the sweeper is actively timing out must serialize behind (or ahead of) the sweep, never interleave with it.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class BackorderTimeoutSweeperTests(PostgresFixture fixture) : IAsyncLifetime
 {

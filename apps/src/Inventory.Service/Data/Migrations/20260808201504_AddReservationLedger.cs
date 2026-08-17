@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Inventory.Service.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddReservationLedger : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
@@ -33,7 +31,6 @@ namespace Inventory.Service.Data.Migrations
                 columns: ["order_id", "sku"]);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(

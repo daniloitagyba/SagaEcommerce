@@ -1,9 +1,3 @@
-# Milestone 31: abrupt SIGKILL of orders-worker's pod, not the graceful
-# rolling restart (SIGTERM + drain) Milestone 8's resilience-test.sh
-# already exercises. Complements Toxiproxy (Milestone 10 - network-level
-# faults only) with a real pod-crash fault at the Kubernetes level.
-# Applied ad hoc for the game day, not left running - kubectl delete
-# after the experiment.
 apiVersion: chaos-mesh.org/v1alpha1
 kind: PodChaos
 metadata:

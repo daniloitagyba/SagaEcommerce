@@ -24,9 +24,6 @@ public sealed class EfOrderReturnRepository(
     {
         try
         {
-            // Tracked, unlike every other read in this repository: the
-            // aggregate's RecordReturn mutates the lines, and those changes
-            // have to be persisted by SaveReturnAsync.
             return await _pipeline.ExecuteAsync(
                 async ct => await dbContext.Orders
                     .Include(order => order.Lines)
@@ -56,9 +53,6 @@ public sealed class EfOrderReturnRepository(
 
                 if (markOrderReturned)
                 {
-                    // Guarded on Delivered for the same reason every other
-                    // status change is: two returns landing at once must not
-                    // both believe they were the one that completed the order.
                     var rowsAffected = await dbContext.Database.ExecuteSqlInterpolatedAsync(
                         $"""
                         UPDATE orders SET status = {OrderStatuses.Returned}
@@ -66,29 +60,10 @@ public sealed class EfOrderReturnRepository(
                         """,
                         ct);
 
-                    // Only when this call actually won the race above - a
-                    // loser must not tell the read model/event-store timeline
-                    // about a transition that didn't happen. Same outbox
-                    // table EfOrderStatusRepository and OrderStatusStore
-                    // already write OrderStatusChanged to for every other
-                    // transition - this was the one status change that
-                    // never told either of them anything.
                     if (rowsAffected > 0)
                     {
                         await QueueStatusChangedEventAsync(order.Id, correlationId, orderReturn.RequestedAt, ct);
 
-                        // Same guard as the event above, for the same
-                        // reason: only the call that actually won the
-                        // Delivered -> Returned race may reverse the tier
-                        // contribution, or a retried/duplicate request could
-                        // reverse it twice. A full return means the
-                        // customer is getting essentially the whole order
-                        // back, so the amount reversed is the order's full
-                        // recorded total - the same figure
-                        // RecordCompletedOrderForTierAsync credited at
-                        // Confirmed - not orderReturn.RefundTotal, which can
-                        // differ slightly (e.g. a return that owes no
-                        // shipping refund).
                         await ReverseCompletedOrderForTierAsync(order.CustomerId, order.Amount, ct);
                     }
                 }
@@ -96,23 +71,12 @@ public sealed class EfOrderReturnRepository(
                 QueueRefundCommand(orderReturn, correlationId);
                 QueueRestockCommands(orderReturn, correlationId);
 
-                // One SaveChanges for the return, the mutated line
-                // quantities and the outbox rows together - a refund command
-                // that outlived a rolled-back return would give money away
-                // for goods the shopper still has.
                 await dbContext.SaveChangesAsync(ct);
                 await transaction.CommitAsync(ct);
             }, cancellationToken);
         }
         catch (DbUpdateConcurrencyException exception)
         {
-            // OrderLine.xmin (ConfigureOrderLine) caught a concurrent write
-            // to the same line - another return, most likely - between this
-            // request's read and this save. Not an infrastructure fault: the
-            // database is fine, this specific request just lost a race and
-            // needs to be retried against a fresh read, which is why this is
-            // its own exception rather than folded into
-            // InfrastructureUnavailableException's 503/Retry-After handling.
             throw new OrderReturnConflictException(
                 "This order's lines changed since they were read - retry the return.", exception);
         }
@@ -122,15 +86,7 @@ public sealed class EfOrderReturnRepository(
         }
     }
 
-    /// <summary>
-    /// Mirrors EfOrderStatusRepository's method of the same name (itself a
-    /// mirror of Orders.Worker's CustomerTierStore.ReverseSql) - a full
-    /// return must not leave the customer permanently credited for spend
-    /// that was given back, the same reasoning that reverses it on a
-    /// cancellation reached from Confirmed or later. Deliberately does not
-    /// re-derive tier downward - see Orders.Domain.Customer.ReverseCompletedOrder's
-    /// own doc comment for why.
-    /// </summary>
+    /// <summary>Reverses a customer's tier contribution for a full return, mirroring EfOrderStatusRepository's cancellation-path counterpart; deliberately does not re-derive tier downward.</summary>
     private async Task ReverseCompletedOrderForTierAsync(string customerId, decimal amount, CancellationToken cancellationToken)
     {
         await dbContext.Database.ExecuteSqlInterpolatedAsync(
@@ -159,12 +115,7 @@ public sealed class EfOrderReturnRepository(
             Activity.Current?.TraceStateString));
     }
 
-    /// <summary>
-    /// Allocates the next value from order_event_version_seq, the same
-    /// cross-process monotonic counter Orders.Worker's OrderStatusStore and
-    /// EfOrderStatusRepository allocate from - see OrderStatusChanged's own
-    /// class comment.
-    /// </summary>
+    /// <summary>Allocates the next value from the cross-process monotonic order_event_version_seq counter used for projection ordering.</summary>
     private async Task<long> NextEventVersionAsync(CancellationToken cancellationToken)
     {
         var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -199,19 +150,6 @@ public sealed class EfOrderReturnRepository(
 
     private void QueueRestockCommands(OrderReturn orderReturn, string correlationId)
     {
-        // One command per SKU rather than one per return: Inventory
-        // serialises by SKU partition key, so a single
-        // multi-SKU command would have no correct key to be produced under.
-        //
-        // Each line gets its own fresh id, not
-        // orderReturn.Id shared across all of them. Inventory's restock
-        // inbox is deduplicated on this id
-        // (InventoryReservationMessageProcessor.ProcessSettlementAsync) -
-        // reusing the return's id for every line in a multi-SKU return made
-        // every line past the first look like a redelivered duplicate of
-        // the first and get silently dropped, never restocked. Caught
-        // while building the equivalent cancellation-restock path, which
-        // would otherwise have copied the same bug.
         foreach (var line in orderReturn.Lines)
         {
             var request = new InventoryRestockRequested(

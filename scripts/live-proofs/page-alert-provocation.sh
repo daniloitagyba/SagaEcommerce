@@ -110,9 +110,6 @@ case "$scenario" in
   settlement-reconciliation)
     alert_name=SettlementReconciliationUnresolved
     require_alert_rule "$alert_name"
-    # A counter's first exported sample establishes its baseline and does not
-    # produce a positive increase(). Emit twice across a scrape boundary so a
-    # clean lab with no pre-existing series proves the alert too.
     for sample in 1 2; do
       order_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
       payment_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
@@ -143,7 +140,6 @@ case "$scenario" in
   rate-limit-fail-open)
     alert_name=RateLimitingFailedOpen
     require_alert_rule "$alert_name"
-    # shellcheck disable=SC1091
     source "$compose_directory/.env"
     orders_url=${ORDERS_URL:-"http://127.0.0.1:${ORDERS_PORT:-8088}"}
     access_token=$({ "$script_directory/../infra/keycloak-get-token.sh"; } 2>"$test_directory/token.log")
@@ -155,9 +151,6 @@ case "$scenario" in
     }
     trap restore_redis EXIT
 
-    # As with the settlement counter, the first exported sample establishes
-    # the Prometheus baseline. Exercise two batches across a scrape boundary
-    # so a clean lab with no pre-existing bypass series proves increase() too.
     for batch in 1 2; do
       compose stop --timeout 20 redis >/dev/null
       redis_stopped=true
@@ -205,11 +198,6 @@ case "$scenario" in
     counter_already_exported=$(query_counter_count "$check_name")
     insert_marker
 
-    # On a clean lab, the first detected divergence creates this labelled
-    # counter series and therefore establishes only the Prometheus baseline.
-    # Wait for that real sweep and scrape, then provoke a second scheduled
-    # sweep so increase() has two samples to compare. Existing labs need only
-    # the single marker above.
     if [[ "$counter_already_exported" -eq 0 ]]; then
       wait_for_counter "$check_name" 72
       remove_marker
@@ -220,9 +208,6 @@ case "$scenario" in
       insert_marker
     fi
 
-    # The normal lab sweep interval is five minutes. Waiting for the real
-    # scheduled sweep proves the deployed loop and its cross-service reads,
-    # not just the pure invariant function covered by unit tests.
     wait_for_alert "$alert_name" 72 "$check_name"
     remove_marker
     marker_inserted=false

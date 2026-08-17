@@ -1,11 +1,6 @@
 namespace Inventory.Service.Domain;
 
-/// <summary>
-/// Stock of one SKU in one warehouse. Splits what used to be a
-/// single row per SKU into one row per (SKU, warehouse), because "do we
-/// have 3 of these?" and "can we ship 3 of these from somewhere" stopped
-/// being the same question the moment there was more than one somewhere.
-/// </summary>
+/// <summary>Stock of one SKU in one warehouse; one row per (SKU, warehouse).</summary>
 public sealed class WarehouseStock
 {
     private WarehouseStock()
@@ -20,7 +15,7 @@ public sealed class WarehouseStock
 
     public int ReservedQuantity { get; private set; }
 
-    /// <summary>Below this, the warehouse should be replenished. Reporting only - nothing here acts on it yet.</summary>
+    /// <summary>Threshold below which the warehouse should be replenished.</summary>
     public int ReorderPoint { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -91,11 +86,7 @@ public sealed class WarehouseStock
 /// <summary>One warehouse's share of a single reservation.</summary>
 public sealed record StockAllocationLine(string WarehouseCode, int Quantity);
 
-/// <summary>
-/// Which warehouses a reservation actually drew from, recorded so commit
-/// and release can undo precisely what reserve did - without it, a
-/// reservation spanning two warehouses could only be released by guessing.
-/// </summary>
+/// <summary>Records which warehouses a reservation drew from, so commit and release can undo precisely what reserve did.</summary>
 public sealed class ReservationAllocation
 {
     private ReservationAllocation()
@@ -126,18 +117,7 @@ public sealed class ReservationAllocation
         };
 }
 
-/// <summary>
-/// Decides which warehouses fulfil a reservation. Pure, so
-/// the allocation policy is property-testable and two replicas reasoning
-/// about the same stock reach the same answer.
-///
-/// <para>
-/// Policy is <b>fewest warehouses first</b>: prefer a single warehouse that
-/// covers the whole order, and only split - two parcels, two shipping
-/// costs, two chances to fail - when none can. Ties break on priority then
-/// warehouse code, so the result never depends on dictionary ordering.
-/// </para>
-/// </summary>
+/// <summary>Decides which warehouses fulfil a reservation, preferring the fewest warehouses possible.</summary>
 public static class StockAllocator
 {
     public sealed record Candidate(string WarehouseCode, int Available, int Priority);
@@ -162,19 +142,15 @@ public static class StockAllocator
 
         if (ordered.Sum(candidate => (long)candidate.Available) < requestedQuantity)
         {
-            // Not enough anywhere - the saga's reservation step is all-or-nothing.
             return Plan.Unfulfillable;
         }
 
-        // Single warehouse if one can cover it - highest priority among
-        // those that can, not merely the largest.
         var single = ordered.FirstOrDefault(candidate => candidate.Available >= requestedQuantity);
         if (single is not null)
         {
             return new Plan(true, [new StockAllocationLine(single.WarehouseCode, requestedQuantity)]);
         }
 
-        // Otherwise draw down in priority order until satisfied.
         var lines = new List<StockAllocationLine>();
         var remaining = requestedQuantity;
 

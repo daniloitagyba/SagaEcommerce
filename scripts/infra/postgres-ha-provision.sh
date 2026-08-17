@@ -6,7 +6,6 @@ project_directory=$(cd -- "$script_directory/../.." && pwd)
 compose_directory="$project_directory/compose"
 data_platform_directory="$project_directory/kubernetes/data-platform"
 
-# shellcheck disable=SC1091
 source "$compose_directory/.env"
 
 for command_name in docker kubectl; do

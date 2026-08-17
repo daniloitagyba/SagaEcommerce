@@ -19,23 +19,8 @@ public static class InventoryEndpoints
     public static IEndpointRouteBuilder MapInventoryEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/inventory/{sku}", GetBySkuAsync).WithTags("Inventory");
-        // Exact quantities across the whole catalog is what a
-        // competitor's scraper wants (sell-through rate); the per-SKU
-        // lookup below stays open, coarsened, since a shopper checking one
-        // product's availability is not the same threat.
         endpoints.MapGet("/inventory", ListAsync).WithTags("Inventory").RequireAuthorization("inventory:read");
-        // What Orders.Worker's anti-entropy sweeper
-        // cross-checks backorders against.
-        // inventory:read-gated, the same policy the full listing above
-        // already requires - Orders.Worker's own service account
-        // (KeycloakTokenProvider, orders-api-clients) already carries that
-        // role, so reusing it here needed no new role, only the requirement itself.
         endpoints.MapGet("/inventory/backorders", ListBackordersAsync).WithTags("Inventory").RequireAuthorization("inventory:read");
-        // The permanent ledger's read side - every
-        // order that still has committed (not yet restocked) inventory
-        // outstanding, for the anti-entropy check a prior audit
-        // wanted (committed inventory belonging to a
-        // cancelled order) and couldn't build without this table existing.
         endpoints.MapGet("/inventory/committed-reservations", ListCommittedReservationsAsync).WithTags("Inventory").RequireAuthorization("inventory:read");
 
         return endpoints;
@@ -61,11 +46,6 @@ public static class InventoryEndpoints
         return Results.Ok(new { item.Sku, availability = DescribeBand(item.AvailableQuantity) });
     }
 
-    // Higher ceiling than Catalog.Service's ProductEndpoints.NormalizeListQuery
-    // (max 100): AntiEntropySweeper's own AntiEntropyOptions.BatchSize
-    // defaults to 200 and requests exactly that via ?limit=, so the clamp
-    // here has to accommodate it rather than silently truncating a
-    // caller that already knows its own batch size.
     internal static (int Skip, int Limit) NormalizeListQuery(int? skip, int? limit) =>
         (Math.Max(skip ?? 0, 0), Math.Clamp(limit ?? 100, 1, 500));
 

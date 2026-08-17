@@ -14,16 +14,7 @@ namespace Payments.Service;
 public sealed class InvalidPaymentDecisionRequestException(string message, Exception? innerException = null)
     : Exception(message, innerException);
 
-/// <summary>
-/// The orchestrated flow's counterpart to
-/// PaymentMessageProcessor, brought to the same reliability bar - inbox
-/// dedup, a persisted Payment row, an outbox-published reply. The only
-/// genuine difference from choreography left is what it reacts to (an
-/// explicit request vs. autonomously deciding on OrderCreated), which is
-/// what makes the comparison legitimate. PaymentDecisionRequested has no
-/// EventId of its own, so OrderId serves as the inbox dedup key instead,
-/// valid since only one decision request is ever outstanding per order.
-/// </summary>
+/// <summary>The orchestrated flow's counterpart to PaymentMessageProcessor: inbox dedup, a persisted Payment row, an outbox-published reply.</summary>
 public sealed class PaymentDecisionRequestProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<PaymentDecisionRequestOptions> requestOptions,
@@ -32,8 +23,6 @@ public sealed class PaymentDecisionRequestProcessor(
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentDecisionRequestOptions _requestOptions = requestOptions.Value;
-    // No-retry transactional pipeline, not the retrying PostgresPipeline -
-    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     public async Task<MessageProcessingResult> ProcessAsync(

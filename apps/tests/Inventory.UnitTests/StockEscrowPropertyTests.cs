@@ -3,12 +3,7 @@ using Inventory.Service.Domain;
 
 namespace Inventory.UnitTests;
 
-/// <summary>
-/// StockEscrow's core promise, proven rather than asserted -
-/// splitting one counter into N buckets must never let more out than the
-/// original total held, regardless of how requests are routed or how many
-/// of them run.
-/// </summary>
+/// <summary>StockEscrow's core promise, proven rather than asserted: splitting one counter into N buckets must never let more out than the original total held.</summary>
 public class StockEscrowPropertyTests
 {
     [Fact]
@@ -88,14 +83,6 @@ public class StockEscrowPropertyTests
     [Fact]
     public void ManySequentialSmallReservationsAcrossAllBucketsExactlyExhaustTheTotal()
     {
-        // Deterministic, not concurrent - StockEscrow itself is immutable
-        // and was never meant to be mutated in place under a race (see
-        // StockEscrowConcurrencyTests for the actual concurrency story,
-        // which lives at the level of whatever holds the authoritative
-        // copy per bucket, not inside this type). What this pins is that
-        // spreading many one-unit reservations across every bucket via
-        // PreferredBucket, applied one at a time, drains the network to
-        // precisely zero with no unit lost or double-counted along the way.
         const int bucketCount = 8;
         const int perBucket = 50;
         var totalUnits = bucketCount * perBucket;

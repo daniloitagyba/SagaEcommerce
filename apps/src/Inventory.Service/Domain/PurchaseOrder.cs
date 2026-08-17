@@ -1,16 +1,6 @@
 namespace Inventory.Service.Domain;
 
-/// <summary>
-/// Closes a loop opened earlier and explicitly left
-/// open - <c>WarehouseReplenishmentNeeded</c> has been emitted, durably,
-/// since then, and nothing consumed it. A purchase order is this
-/// lab's stand-in for "a human or a supplier's system now knows to send
-/// more stock" - requested the moment the signal arrives, received after a
-/// lab-scale compression of a real supplier's lead time (the same
-/// "minutes instead of days" trade already made for a
-/// boleto's due date), at which point the stock it represents actually
-/// lands and restocks the warehouse it was requested for.
-/// </summary>
+/// <summary>A request to a supplier to restock a warehouse, requested on signal and received once stock lands.</summary>
 public sealed class PurchaseOrder
 {
     private PurchaseOrder()

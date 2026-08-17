@@ -1,14 +1,3 @@
-# The one place the in-cluster Kafka address is written. Every consumer/
-# producer options class across orders-api, orders-worker, payments-service
-# and inventory-service binds its own config section (one per consumer
-# group, so each can carry its own topics/consumer-group/DLQ
-# independently) - which used to mean this value was retyped as a literal
-# in every one of those manifests' env blocks. Same bug class that has
-# recurred five times in this repo's history (Redis__ConnectionString,
-# four separate Kafka BootstrapServers sections, Authentication__Authority
-# twice), fixed here at the structure rather than the typo: every
-# *__BootstrapServers entry across kubernetes/base/ now reads this
-# ConfigMap via configMapKeyRef instead of carrying its own copy.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,14 +5,6 @@ metadata:
 data:
   bootstrap-servers: kafka:9092
 ---
-# orders-worker and payments-service must agree on Saga:Mode - Payments'
-# choreographed consumer autonomously decides on OrderCreated when this is
-# Choreography/Both, while orders-worker's orchestrator explicitly
-# requests a decision when it's Orchestration/Both. A mismatch means
-# either nobody reserves inventory or Payments decides twice for one
-# order. Previously each manifest carried its own literal value and a
-# comment telling a reader to go check the other file by hand; both now
-# read this one ConfigMap instead.
 apiVersion: v1
 kind: ConfigMap
 metadata:

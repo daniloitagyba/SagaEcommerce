@@ -18,9 +18,6 @@ mkdir -p "$test_directory"
 printf 'Running the autoscale profile (unmodified) as write-side load\n'
 "$script_directory/../load-test/k6-run.sh" autoscale 2>&1 | tee "$test_directory/autoscale-load.log"
 
-# The OTel metrics reader and Prometheus scrape each have their own interval,
-# so querying immediately after k6 exits can race ahead of the freshest data
-# points; a short settle avoids reading a partially-populated window.
 printf 'Waiting for metrics to settle before sampling\n'
 sleep 15
 

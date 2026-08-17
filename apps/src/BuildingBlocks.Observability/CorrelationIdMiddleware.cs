@@ -4,11 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace BuildingBlocks;
 
-/// <summary>
-/// Establishes one bounded correlation identifier for logs, responses and
-/// downstream messages. Trace context remains the distributed tracing source
-/// of truth; this identifier is the operator-friendly lookup key.
-/// </summary>
+/// <summary>Establishes one bounded correlation identifier for logs, responses and downstream messages.</summary>
 public sealed class CorrelationIdMiddleware(RequestDelegate next, ILogger<CorrelationIdMiddleware> logger)
 {
     public const string HeaderName = "X-Correlation-ID";

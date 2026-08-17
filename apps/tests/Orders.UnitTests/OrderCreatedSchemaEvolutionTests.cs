@@ -5,14 +5,7 @@ using BuildingBlocks;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// A lines array was added to OrderCreated. Schema Registry rejects
-/// an incompatible change at publish time, but that says nothing about
-/// whether this codebase's reader/writer survives the mixed-version window
-/// a rolling deploy creates. These tests encode both halves of that window
-/// by round-tripping real Avro binary encoding with deliberately mismatched
-/// reader/writer schemas, proving the default actually works.
-/// </summary>
+/// <summary>Round-trips real Avro binary encoding with mismatched reader/writer schemas to prove OrderCreated survives the mixed-version window a rolling deploy creates.</summary>
 public class OrderCreatedSchemaEvolutionTests
 {
     private const string V1SchemaJson = """
@@ -67,7 +60,6 @@ public class OrderCreatedSchemaEvolutionTests
     [Fact]
     public void AV2ConsumerReadsAV1ProducersMessage()
     {
-        // Consumers upgrade first, so a new consumer must handle a not-yet-upgraded producer's messages - lines must materialise from the default.
         var payload = Encode(BuildV1Record(), V1Schema);
 
         var decoded = Decode(payload, V1Schema, V2Schema);
@@ -83,7 +75,6 @@ public class OrderCreatedSchemaEvolutionTests
     [Fact]
     public void AV1ConsumerReadsAV2ProducersMessageIgnoringTheLines()
     {
-        // The other half: a producer writing lines while a consumer still runs the old schema. Avro drops the unknown field.
         var orderCreated = new OrderCreated(
             Guid.NewGuid(),
             Guid.NewGuid(),
@@ -122,7 +113,6 @@ public class OrderCreatedSchemaEvolutionTests
         var payload = Encode(OrderCreatedAvroSchema.ToGenericRecord(orderCreated), V2Schema);
         var decoded = OrderCreatedAvroSchema.FromGenericRecord(Decode(payload, V2Schema, V2Schema));
 
-        // The constant, not a literal - asserts "whatever the current writer emits", which caught the shift when the default moved to v3.
         Assert.Equal(OrderCreatedSchemaVersions.WithShippingPrefix, decoded.SchemaVersion);
         Assert.True(decoded.HasLineItems);
         Assert.Collection(
@@ -154,7 +144,6 @@ public class OrderCreatedSchemaEvolutionTests
     [Fact]
     public void AV3ConsumerReadsAV1ProducersMessageAsAnInstantPix()
     {
-        // Reading a missing method as Card would leave an authorization on a payment charged outright, with no capture command ever arriving.
         var payload = Encode(BuildV1Record(), V1Schema);
 
         var orderCreated = OrderCreatedAvroSchema.FromGenericRecord(Decode(payload, V1Schema, V2Schema));
@@ -188,7 +177,6 @@ public class OrderCreatedSchemaEvolutionTests
     [Fact]
     public void AV4ConsumerReadsAV1ProducersMessageAsHavingNoKnownAddress()
     {
-        // The default has to be "unknown", not "somewhere" - an empty prefix says a pre-field order has nothing to compare.
         var payload = Encode(BuildV1Record(), V1Schema);
 
         var orderCreated = OrderCreatedAvroSchema.FromGenericRecord(Decode(payload, V1Schema, V2Schema));

@@ -6,13 +6,7 @@ using Microsoft.Extensions.Logging;
 
 namespace BuildingBlocks;
 
-/// <summary>
-/// Guardrail: warns when the same query shape executes an unusual number
-/// of times within a DbContext's lifetime - the runtime signature of an
-/// N+1. EF Core already parameterizes literal values, so counting exact
-/// `CommandText` repeats needs no normalization. A fresh interceptor
-/// instance per DbContext means counts naturally reset per request.
-/// </summary>
+/// <summary>Warns when the same query shape executes an unusual number of times within a DbContext's lifetime.</summary>
 public sealed class NPlusOneDetectionInterceptor(ILogger logger, int threshold = 5) : DbCommandInterceptor
 {
     private readonly ConcurrentDictionary<string, int> _commandCounts = new();
@@ -57,11 +51,7 @@ internal static partial class NPlusOneLog
 
 public static class NPlusOneDetectionExtensions
 {
-    /// <summary>
-    /// Wires the N+1 detector into a DbContext's options. Call from the
-    /// (serviceProvider, options) overload of AddDbContext so a logger can
-    /// be resolved from DI.
-    /// </summary>
+    /// <summary>Wires the N+1 detector into a DbContext's options.</summary>
     public static DbContextOptionsBuilder AddNPlusOneDetection(
         this DbContextOptionsBuilder builder,
         ILoggerFactory loggerFactory,

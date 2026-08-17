@@ -2,11 +2,7 @@ using Catalog.Service.Domain;
 
 namespace Catalog.Service.Data;
 
-/// <summary>
-/// Demo data for the storefront - realistic-enough products
-/// across categories with genuinely different attribute shapes, the whole
-/// point of this being a document store rather than a relational table.
-/// </summary>
+/// <summary>Seeds demo catalog data for the storefront.</summary>
 public static class CatalogSeeder
 {
     public static async Task SeedAsync(
@@ -14,10 +10,6 @@ public static class CatalogSeeder
         ProductRepository productRepository,
         CancellationToken cancellationToken)
     {
-        // Previously keyed to the categories collection alone: a partial
-        // cleanup (categories survive, products don't) made --seed no-op
-        // forever, silently leaving the products collection empty. Each
-        // collection is now checked - and seeded - independently.
         var existingCategories = await categoryRepository.ListAsync(cancellationToken);
         var existingSlugs = existingCategories.Select(category => category.Slug).ToHashSet(StringComparer.Ordinal);
 

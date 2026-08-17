@@ -64,10 +64,6 @@ public sealed class OrderProjectionStoreTests(PostgresFixture fixture) : IAsyncL
         var store = new OrderProjectionStore(_dataSource, _pipelineProvider);
         var orderId = Guid.NewGuid();
 
-        // Simulates the projector's two independent topic subscriptions racing:
-        // the payment decision reaches the projector before the order-created
-        // projection does. Neither write should be lost, and the decided
-        // status must not be clobbered once the OrderCreated projection lands.
         await store.ProjectPaymentDecidedAsync(orderId, "Cancelled", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, CancellationToken.None);
         var afterDecisionOnly = await ReadSummaryAsync(orderId);
         Assert.Null(afterDecisionOnly.CustomerId);

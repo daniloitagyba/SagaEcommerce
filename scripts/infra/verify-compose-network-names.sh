@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Guards against a specific class of bug found live during the
-# DistributedEcommerce rename: compose.yaml's top-level project `name:`
-# (and any network's explicit `name:` override) is the label prefix Docker
-# actually uses for containers/networks/volumes. A script that hardcodes a
-# `--network <project>_<net>` reference silently drifts out of sync if the
-# project name in compose.yaml changes without updating it too - nothing
-# fails until that script is run against the live stack. This check
-# compares every hardcoded `--network` reference under scripts/ against the
-# network names compose.yaml would actually produce.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -20,14 +11,11 @@ if [[ -z "$PROJECT_NAME" ]]; then
   exit 1
 fi
 
-# Explicit network name overrides declared under `networks:` in compose.yaml.
 EXPLICIT_NAMES=()
 while IFS= read -r name; do
   [[ -n "$name" ]] && EXPLICIT_NAMES+=("$name")
 done < <(awk '/^networks:/{f=1;next} f && /^[a-zA-Z]/{f=0} f && /^    name:/{sub(/^    name:[[:space:]]*/,"");print}' "$COMPOSE_FILE")
 
-# Implicit names Compose derives as "${project}_${network}" for any network
-# key that doesn't have an explicit name override.
 NETWORK_KEYS=()
 while IFS= read -r key; do
   [[ -n "$key" ]] && NETWORK_KEYS+=("$key")
@@ -38,8 +26,6 @@ for key in "${NETWORK_KEYS[@]}"; do
   VALID_NAMES+=("${PROJECT_NAME}_${key}")
 done
 
-# Scan every script except this one (its own comments/messages mention
-# "--network" as prose, not as an actual invocation).
 SCAN_FILES=()
 while IFS= read -r f; do
   [[ "$(basename "$f")" == "verify-compose-network-names.sh" ]] && continue

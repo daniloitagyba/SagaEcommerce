@@ -6,21 +6,11 @@ using Orders.Domain.Pricing;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// The pricing invariants, checked against generated orders
-/// rather than hand-picked ones - the dangerous cases here are the ones
-/// nobody thinks of (campaigns stacking past 100%, a discount that won't
-/// divide evenly, a coupon on a zero-value order). CsCheck generates those
-/// combinations and shrinks a failure to the smallest order that still
-/// breaks it. These properties must hold for <em>any</em> order and
-/// promotion combination, no matter what a future campaign does.
-/// </summary>
+/// <summary>The pricing invariants, checked against generated orders rather than hand-picked ones; CsCheck generates combinations and shrinks a failure to the smallest order that still breaks it.</summary>
 public class PricingEnginePropertyTests
 {
     private static readonly Currency Brl = Currency.FromCode("BRL");
     private static readonly string[] Categories = ["electronics", "books", "clothing", "home", "clearance"];
-    // The engine only ever sees already-resolved, eligible
-    // coupons, so the generator produces percentages, not codes - see CouponEligibilityTests.
     private static readonly ResolvedCoupon?[] Coupons =
     [
         null,
@@ -29,7 +19,6 @@ public class PricingEnginePropertyTests
         new ResolvedCoupon("HALFOFF", "50% coupon", 50m)
     ];
 
-    // Prices and quantities stay in realistic ranges; the *combinations* are left entirely to the generator.
     private static readonly Gen<PricingLine> GenLine =
         from skuIndex in Gen.Int[1, 40]
         from category in Gen.OneOfConst(Categories)
@@ -57,7 +46,6 @@ public class PricingEnginePropertyTests
     [Fact]
     public void GrandTotalIsNeverNegative()
     {
-        // The invariant that motivated the discount cap: two sane campaigns can jointly exceed the order's value.
         GenRequest.Sample(
             request => Engine.Price(request).GrandTotal >= Zero,
             iter: 10_000);
@@ -78,7 +66,6 @@ public class PricingEnginePropertyTests
     [Fact]
     public void PerLineDiscountsSumToExactlyTheOrderDiscount()
     {
-        // The centavo property - naive proportional rounding fails this whenever a discount doesn't divide evenly across its lines.
         GenRequest.Sample(
             request =>
             {
@@ -91,7 +78,6 @@ public class PricingEnginePropertyTests
     [Fact]
     public void ItemisedDiscountsSumToTheDiscountTotal()
     {
-        // The receipt has to add up to what was actually deducted, even after the cap trims an entry.
         GenRequest.Sample(
             request =>
             {
@@ -137,7 +123,6 @@ public class PricingEnginePropertyTests
     [Fact]
     public void PricingIsDeterministic()
     {
-        // Rule engines evaluate in a non-obvious order; this pins that the *result* doesn't depend on it.
         GenRequest.Sample(
             request =>
             {
@@ -153,9 +138,6 @@ public class PricingEnginePropertyTests
     [Fact]
     public void PresentingACouponNeverCostsTheShopperMore()
     {
-        // Monotonicity: adding a valid coupon must never push the total up
-        // - catches a future rule that adds a charge off CouponCode, or
-        // free shipping computed on the discounted subtotal.
         var gen =
             from lines in GenLine.List[1, 6]
             from coupon in Gen.OneOfConst(
@@ -177,11 +159,6 @@ public class PricingEnginePropertyTests
     [Fact]
     public void NoLineEverReceivesANegativeDiscountShare()
     {
-        // The property the pricing engine should have had and did not: NodaMoney's
-        // Split emits a negative share for roughly 1 in 200k weighted
-        // allocations, which is a line whose discount *raises* its price.
-        // Refunds hit the same defect and replaced Split on
-        // both paths; this is the check that would have caught it first.
         GenRequest.Sample(
             request =>
             {
@@ -197,7 +174,6 @@ public class PricingEnginePropertyTests
     [Fact]
     public void NoLineIsEverDiscountedBelowFree()
     {
-        // A line's discount share must never exceed what that line costs, or its net goes negative.
         GenRequest.Sample(
             request =>
             {

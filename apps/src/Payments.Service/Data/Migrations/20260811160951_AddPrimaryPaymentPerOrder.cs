@@ -4,10 +4,8 @@
 
 namespace Payments.Service.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddPrimaryPaymentPerOrder : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(
@@ -21,10 +19,6 @@ namespace Payments.Service.Data.Migrations
                 nullable: false,
                 defaultValue: false);
 
-            // Both-mode deployments historically wrote one row per saga
-            // path. Preserve every row for audit, but nominate exactly the
-            // latest decision per order as the lifecycle owner before the
-            // filtered unique index is created.
             migrationBuilder.Sql(
                 """
                 WITH ranked AS (
@@ -48,7 +42,6 @@ namespace Payments.Service.Data.Migrations
                 filter: "is_primary");
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(

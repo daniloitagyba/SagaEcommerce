@@ -1,15 +1,6 @@
 namespace BuildingBlocks;
 
-/// <summary>
-/// The order's life, as an explicit predecessor table rather than
-/// transitions hardcoded pairwise inside <c>OrderStatusStore</c> - that
-/// broke down the moment an order could be cancelled from more than one
-/// state, with no single place to ask "is this move legal?"
-///
-/// Expand, not rename: <see cref="Created"/>, <see cref="Confirmed"/> and
-/// <see cref="Cancelled"/> keep their exact meanings so existing callers
-/// (k6, Pact, the read model, the storefront) keep working.
-/// </summary>
+/// <summary>The order's life cycle as an explicit predecessor table of legal status transitions.</summary>
 public static class OrderStatuses
 {
     /// <summary>Accepted and priced; the saga is deciding inventory and payment.</summary>
@@ -18,13 +9,7 @@ public static class OrderStatuses
     /// <summary>Inventory committed and payment authorized. The order is real; fulfilment has not started.</summary>
     public const string Confirmed = "Confirmed";
 
-    /// <summary>
-    /// The network couldn't cover the order yet; the saga waits rather than
-    /// giving up. No money has moved - payment is decided one step after
-    /// reservation - so there's nothing to void, only stock to wait for.
-    /// Inventory.Service's backorder release path is what clears this, not
-    /// a timer in Orders.Worker.
-    /// </summary>
+    /// <summary>Inventory couldn't cover the order yet; the saga waits for stock rather than giving up.</summary>
     public const string Backordered = "Backordered";
 
     /// <summary>The warehouse is assembling it.</summary>
@@ -39,37 +24,18 @@ public static class OrderStatuses
     /// <summary>Terminal failure. Any card hold still outstanding is voided on the way here.</summary>
     public const string Cancelled = "Cancelled";
 
-    /// <summary>
-    /// Everything came back. Reachable only from Delivered - a shipped
-    /// order is reversed by a return; an order that never arrived has
-    /// nothing to return.
-    /// </summary>
+    /// <summary>Everything came back; reachable only from Delivered.</summary>
     public const string Returned = "Returned";
 
-    /// <summary>
-    /// Confirmed or shipped, but something a human needs to look at: the
-    /// inventory commit reply came back negative, or a
-    /// capture that was supposed to happen never did because the
-    /// authorization had already expired (see
-    /// PaymentSettlementProcessor's settlement-mismatch reply). Distinct
-    /// from plain "Confirmed"/"Shipped" so it doesn't look like a healthy
-    /// order in every query, dashboard and read model.
-    /// </summary>
+    /// <summary>Confirmed or shipped, but flagged for human review because an inventory commit or payment capture didn't go as expected.</summary>
     public const string FulfillmentHold = "FulfillmentHold";
 
-    /// <summary>
-    /// Legal predecessors per target status - inverted deliberately, since
-    /// the compare-and-set asks "may I move <em>to</em> here from wherever
-    /// the row is?" and can guard on the whole set in one statement.
-    /// </summary>
+    /// <summary>Legal predecessors per target status.</summary>
     private static readonly Dictionary<string, string[]> AllowedPredecessors = new(StringComparer.Ordinal)
     {
         [Backordered] = [Created],
         [Confirmed] = [Created, Backordered],
         [Cancelled] = [Created, Confirmed, Picking, FulfillmentHold, Backordered],
-        // Shipped added - an expired-instead-of-captured
-        // authorization is discovered only after the goods already left,
-        // so the hold has to reach here from further along than Picking.
         [FulfillmentHold] = [Confirmed, Picking, Shipped],
         [Picking] = [Confirmed, FulfillmentHold],
         [Shipped] = [Picking],
@@ -84,54 +50,24 @@ public static class OrderStatuses
     public static bool IsKnown(string status) =>
         status is Created or Confirmed or Picking or Shipped or Delivered or Cancelled or FulfillmentHold or Returned or Backordered;
 
-    /// <summary>
-    /// The states an order may currently be in for a move to
-    /// <paramref name="targetStatus"/> to be legal. Empty when the target
-    /// is unknown or unreachable (<see cref="Created"/> is only ever set at
-    /// construction, never transitioned into).
-    /// </summary>
+    /// <summary>The states an order may currently be in for a move to <paramref name="targetStatus"/> to be legal.</summary>
     public static IReadOnlyList<string> PredecessorsOf(string targetStatus) =>
         AllowedPredecessors.TryGetValue(targetStatus, out var allowed) ? allowed : [];
 
     public static bool CanTransition(string fromStatus, string toStatus) =>
         PredecessorsOf(toStatus).Contains(fromStatus, StringComparer.Ordinal);
 
-    /// <summary>Every status an order can be moved into after creation, by any means - the full set <see cref="AllowedPredecessors"/> knows about.</summary>
+    /// <summary>Every status an order can be moved into after creation, by any means.</summary>
     public static IReadOnlyList<string> TransitionableTargets => [.. AllowedPredecessors.Keys];
 
-    /// <summary>
-    /// The subset of <see cref="TransitionableTargets"/> an external
-    /// fulfilment actor (a picker, a carrier webhook, an ops user hitting
-    /// <c>POST /orders/{id}/fulfillment</c>) may set directly. The rest are
-    /// legal in the table but only ever reached from inside the aggregate
-    /// or the saga that owns the invariant a direct write would skip:
-    /// <see cref="Confirmed"/> needs inventory actually reserved and
-    /// payment actually approved (the saga's job); <see cref="Backordered"/>
-    /// needs a real backorder row in Inventory.Service's FIFO queue, or
-    /// nothing will ever release the order a direct write leaves waiting
-    /// forever; <see cref="Returned"/> needs an <c>OrderReturn</c> with its
-    /// own refund and restock commands (<c>POST /orders/{id}/returns</c>),
-    /// not a bare status flip with no money or stock moving at all.
-    /// </summary>
+    /// <summary>The subset of <see cref="TransitionableTargets"/> an external fulfilment actor may set directly, rather than only the saga or aggregate.</summary>
     public static IReadOnlyList<string> FulfillmentDrivableTargets =>
         [Picking, Shipped, Delivered, FulfillmentHold, Cancelled];
 
-    /// <summary>
-    /// What reaching a status means for money still on hold - centralized
-    /// because both Orders.Worker (saga-driven) and Orders.Api
-    /// (operator-driven) act on it, and duplicating the policy is what
-    /// would let their different mechanisms drift apart.
-    /// </summary>
+    /// <summary>What reaching a status means for money still on hold.</summary>
     public static OrderSettlementAction SettlementActionFor(string targetStatus) => targetStatus switch
     {
-        // Capture when the goods actually leave - the entire reason for
-        // holding an authorization rather than charging at checkout.
         Shipped => OrderSettlementAction.Capture,
-        // "Cancel", not "Void" - a Pix payment is already
-        // Captured the instant it's approved, so cancelling it has to
-        // refund, not void a hold that was never placed. Which of the two
-        // applies depends on the payment's own current state, which only
-        // Payments.Service holds; see Payment.TryCancel.
         Cancelled => OrderSettlementAction.Cancel,
         _ => OrderSettlementAction.None
     };

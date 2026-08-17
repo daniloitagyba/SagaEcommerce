@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Milestone 31 game day: creates a batch of orders, kills orders-worker's
-# pod with SIGKILL (Chaos Mesh PodChaos, action: pod-kill) partway through -
-# an abrupt crash, not the graceful rolling restart Milestone 8's
-# resilience-test.sh already covers - then measures whether every order
-# still reaches a terminal, processed state and how long recovery takes.
-# Hypothesis: zero data loss (Kafka at-least-once + the PostgreSQL Inbox's
-# dedup by (consumer_name, event_id), same guarantee documented in the
-# README's "Delivery guarantees" section), but this script measures that,
-# it does not assume it.
-
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_directory=$(cd -- "$script_directory/../.." && pwd)
 namespace=${KUBERNETES_NAMESPACE:-orders-lab}

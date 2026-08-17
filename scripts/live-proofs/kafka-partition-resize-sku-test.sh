@@ -1,18 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 51 live proof: Milestone 41's per-SKU mutual exclusion in
-# Inventory.Service relies entirely on Kafka partition ownership - the
-# same SKU always hashes to the same partition, so only one consumer
-# instance ever owns it at a time. That guarantee has a hole nobody had
-# demonstrated: increasing a topic's partition count changes the
-# key-to-partition mapping (Kafka's default partitioner is
-# murmur2(key) % num_partitions) for every key, RETROACTIVELY, the moment
-# the resize happens - a SKU already "owned" by one consumer can
-# reassign to a different partition, and therefore a different consumer
-# instance, mid-flight.
-#
-# Runs against an isolated demo topic on the live `kafka` broker (a new
-# topic, not `inventory.reservation-requested.v1` itself) so the real
-# Inventory.Service consumer group's live traffic is never touched.
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -46,8 +32,6 @@ produce_and_show_partitions() {
     2>/dev/null | grep "^Partition:"
 }
 
-# Given "Partition:<n>\t<key>\t<value>" lines, print the partition number
-# for the row whose value matches "<label>-<sku>".
 partition_for() {
   local output=$1 label=$2 sku=$3
   echo "$output" | awk -F'\t' -v val="${label}-${sku}" '$3==val {print $1}' | grep -oE '[0-9]+' || true

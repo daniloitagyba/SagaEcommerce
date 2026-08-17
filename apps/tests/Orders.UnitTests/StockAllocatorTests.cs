@@ -3,12 +3,7 @@ using Inventory.Service.Domain;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// The multi-warehouse allocation policy - a pure function,
-/// which is what makes it property-testable. These properties must hold
-/// for any stock configuration; getting them wrong means overselling or
-/// shipping in more parcels than needed.
-/// </summary>
+/// <summary>The multi-warehouse allocation policy - a pure function, property-tested since getting it wrong means overselling or shipping in more parcels than needed.</summary>
 public class StockAllocatorTests
 {
     private static StockAllocator.Candidate Warehouse(string code, int available, int priority = 1) =>
@@ -17,7 +12,6 @@ public class StockAllocatorTests
     [Fact]
     public void OneWarehouseThatCanCoverTheOrderShipsItWhole()
     {
-        // Both hold enough and share a priority, so the tie breaks on warehouse code - "WH-RJ" before "WH-SP", not input order.
         var plan = StockAllocator.Allocate([Warehouse("WH-SP", 10), Warehouse("WH-RJ", 10)], 4);
 
         Assert.True(plan.Fulfillable);
@@ -29,7 +23,6 @@ public class StockAllocatorTests
     [Fact]
     public void PriorityDecidesWhichSingleWarehouseNotSize()
     {
-        // WH-RJ holds more, but WH-SP has the better priority and can still cover the order.
         var plan = StockAllocator.Allocate(
             [Warehouse("WH-RJ", 100, priority: 2), Warehouse("WH-SP", 10, priority: 1)], 5);
 
@@ -52,7 +45,6 @@ public class StockAllocatorTests
     [Fact]
     public void NotEnoughAnywhereIsRefusedRatherThanPartiallyAllocated()
     {
-        // All-or-nothing: a partial reservation would confirm an order the warehouse can't actually fill.
         var plan = StockAllocator.Allocate([Warehouse("WH-SP", 2), Warehouse("WH-RJ", 3)], 6);
 
         Assert.False(plan.Fulfillable);
@@ -72,7 +64,6 @@ public class StockAllocatorTests
     [Fact]
     public void AllocationIsDeterministicRegardlessOfInputOrder()
     {
-        // Two replicas must reach the same plan; ties can't depend on row order.
         var forwards = StockAllocator.Allocate(
             [Warehouse("WH-A", 3, 1), Warehouse("WH-B", 3, 1), Warehouse("WH-C", 3, 1)], 7);
         var backwards = StockAllocator.Allocate(
@@ -86,7 +77,6 @@ public class StockAllocatorTests
     [Fact]
     public void APlanNeverAllocatesMoreThanAWarehouseHasAndAlwaysSumsToTheRequest()
     {
-        // Prevents overselling: no warehouse is asked for more than it holds, and the plan covers exactly what was requested.
         var gen =
             from stocks in Gen.Int[0, 20].Array[1, 5]
             from requested in Gen.Int[1, 60]
@@ -103,7 +93,6 @@ public class StockAllocatorTests
 
                 if (!plan.Fulfillable)
                 {
-                    // Refusal is only legitimate when the network genuinely can't cover the request.
                     return input.stocks.Sum() < input.requested;
                 }
 
@@ -112,7 +101,6 @@ public class StockAllocatorTests
                     return false;
                 }
 
-                // No warehouse over-allocated, and none named twice.
                 var byWarehouse = plan.Lines
                     .GroupBy(line => line.WarehouseCode, StringComparer.Ordinal)
                     .ToDictionary(group => group.Key, group => group.Sum(line => line.Quantity), StringComparer.Ordinal);
@@ -132,7 +120,6 @@ public class StockAllocatorTests
     [Fact]
     public void ItNeverSplitsWhenASingleWarehouseCouldHaveCoveredTheOrder()
     {
-        // Splitting means two parcels and two chances for a leg to go missing - a fallback, never a habit.
         var gen =
             from stocks in Gen.Int[0, 20].Array[1, 5]
             from requested in Gen.Int[1, 20]
@@ -190,21 +177,19 @@ public class StockAllocatorTests
     [Fact]
     public void ReplenishmentIsSignalledOnTheCrossingNotOnEveryLowReservation()
     {
-        // The reservation that crosses the reorder point is
-        // news; the next twenty orders finding it already low are not.
         var now = DateTimeOffset.UtcNow;
         var stock = WarehouseStock.Create("SKU-1", "WH-SP", available: 10, reorderPoint: 5, now);
 
         var wasStockedBefore = !stock.NeedsReplenishment;
         Assert.True(stock.TryReserve(4, now));
-        Assert.True(wasStockedBefore && !stock.NeedsReplenishment);   // 6 left: no crossing yet
+        Assert.True(wasStockedBefore && !stock.NeedsReplenishment);
 
         wasStockedBefore = !stock.NeedsReplenishment;
         Assert.True(stock.TryReserve(2, now));
-        Assert.True(wasStockedBefore && stock.NeedsReplenishment);    // 4 left: this is the crossing
+        Assert.True(wasStockedBefore && stock.NeedsReplenishment);
 
         wasStockedBefore = !stock.NeedsReplenishment;
         Assert.True(stock.TryReserve(1, now));
-        Assert.False(wasStockedBefore);                               // already low: silent
+        Assert.False(wasStockedBefore);
     }
 }

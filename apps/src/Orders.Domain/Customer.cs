@@ -1,12 +1,6 @@
 namespace Orders.Domain;
 
-/// <summary>
-/// A customer, at last - until now <c>CustomerId</c> was a
-/// bare string, enough to group payment history by and not enough for
-/// account age, address, or standing with the shop. Auto-provisioned on
-/// first checkout rather than registered, since this lab has no sign-up
-/// flow and inventing one would add CRUD, not a distributed-systems concern.
-/// </summary>
+/// <summary>A customer, auto-provisioned on first checkout rather than registered.</summary>
 public sealed class Customer
 {
     private Customer()
@@ -15,10 +9,10 @@ public sealed class Customer
 
     public string Id { get; private set; } = string.Empty;
 
-    /// <summary>Bronze on arrival; earned upward from lifetime spend - see CustomerTiers.</summary>
+    /// <summary>Bronze on arrival; earned upward from lifetime spend.</summary>
     public string Tier { get; private set; } = CustomerTiers.Bronze;
 
-    /// <summary>Counts only completed orders - cancelled or fully refunded ones must not buy standing.</summary>
+    /// <summary>Counts only completed orders; cancelled or fully refunded ones do not count.</summary>
     public decimal LifetimeSpend { get; private set; }
 
     public int CompletedOrderCount { get; private set; }
@@ -44,22 +38,7 @@ public sealed class Customer
         return true;
     }
 
-    /// <summary>
-    /// Reverses a completed order's contribution - called for a
-    /// cancellation reached after the order was Confirmed (see
-    /// OrderStatusStore/EfOrderStatusRepository's ApplySideEffectsAsync),
-    /// or a <em>full</em> return (EfOrderReturnRepository.SaveReturnAsync,
-    /// gated on the same <c>markOrderReturned</c> that also flips the order
-    /// to Returned). A <em>partial</em> return does not call this at all -
-    /// the customer kept most of the order, and this domain has no policy
-    /// yet for pro-rating standing down proportionally to what was given
-    /// back; get that decision explicit before wiring one, rather than
-    /// guessing a formula nobody asked for.
-    ///
-    /// Tier is deliberately <em>not</em> demoted here either way - taking a
-    /// discount away retroactively generates support tickets; real loyalty
-    /// programmes review downward on a schedule, not on the instant.
-    /// </summary>
+    /// <summary>Reverses a completed order's contribution to lifetime spend and order count; never demotes tier.</summary>
     public void ReverseCompletedOrder(decimal amount)
     {
         LifetimeSpend = Math.Max(0m, LifetimeSpend - amount);

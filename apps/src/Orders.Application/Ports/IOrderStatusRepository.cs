@@ -14,9 +14,7 @@ public sealed record OrderTransition(OrderTransitionOutcome Outcome, string? Pay
 public interface IOrderStatusRepository
 {
     /// <summary>
-    /// Moves an order into <paramref name="targetStatus"/>, guarded on the
-    /// legal predecessors, and queues the implied settlement command in the
-    /// same transaction - atomic, or a capture could outlive a rolled-back "Shipped".
+    /// Transitions an order to the target status.
     /// </summary>
     Task<OrderTransition> TryTransitionAsync(
         Guid orderId,

@@ -4,7 +4,7 @@ using Orders.Application.Ports;
 
 namespace Orders.Application.UseCases.AdvanceFulfillment;
 
-using Orders.Application; // CallerIdentity
+using Orders.Application;
 
 public enum AdvanceFulfillmentOutcome
 {
@@ -17,11 +17,7 @@ public enum AdvanceFulfillmentOutcome
 public sealed record AdvanceFulfillmentResult(AdvanceFulfillmentOutcome Outcome, string? Status);
 
 /// <summary>
-/// Moves an order through the fulfilment states an external
-/// actor drives. Legality is decided from the transition table before
-/// touching the database; whether the order is actually <em>in</em> a
-/// state the move can be made from is decided by the compare-and-set
-/// itself, the only answer that cannot be raced.
+/// Moves an order through the fulfilment states an external actor drives.
 /// </summary>
 public sealed class AdvanceFulfillmentHandler(
     IOrderStatusRepository repository,
@@ -30,12 +26,7 @@ public sealed class AdvanceFulfillmentHandler(
     ILogger<AdvanceFulfillmentHandler> logger)
 {
     /// <summary>
-    /// The states a shopper may cancel their own order from -
-    /// a strict subset of OrderStatuses.PredecessorsOf(Cancelled). Picking
-    /// and FulfillmentHold are deliberately excluded: the warehouse is
-    /// already acting on the order, or a human already needs to look at
-    /// it, and either way that call belongs to fulfilment
-    /// (see FulfillmentEndpoints), not to the shopper who placed it.
+    /// The states a shopper may cancel their own order from.
     /// </summary>
     private static readonly string[] SelfServiceCancellableFrom =
         [OrderStatuses.Created, OrderStatuses.Confirmed, OrderStatuses.Backordered];
@@ -65,7 +56,6 @@ public sealed class AdvanceFulfillmentHandler(
         switch (transition.Outcome)
         {
             case OrderTransitionOutcome.Advanced:
-                // Without this the order keeps reporting its old status for the whole cache TTL.
                 await orderCache.InvalidateAsync(orderId, cancellationToken);
                 FulfillmentLog.Advanced(logger, orderId, normalized, correlationId);
                 return new AdvanceFulfillmentResult(AdvanceFulfillmentOutcome.Advanced, normalized);
@@ -80,13 +70,7 @@ public sealed class AdvanceFulfillmentHandler(
     }
 
     /// <summary>
-    /// A shopper cancelling their own order - the self-service
-    /// route this lab never had (fulfilment's POST .../fulfillment is the
-    /// warehouse's endpoint, now Admin-gated). Ownership has to be checked
-    /// before the compare-and-set runs, not on its result: CustomerId never
-    /// changes once an order is created, so a plain read of it first carries
-    /// none of the race risk the cancellation-compensation work had to guard the order's
-    /// <em>status</em> against.
+    /// Lets a shopper cancel their own order via the self-service route.
     /// </summary>
     public async Task<AdvanceFulfillmentResult> HandleSelfServiceCancelAsync(
         Guid orderId,
@@ -96,11 +80,6 @@ public sealed class AdvanceFulfillmentHandler(
     {
         var order = await orderRepository.FindByIdAsync(orderId, cancellationToken);
 
-        // Same order for both checks - hides "not yours" behind the same
-        // NotFound a genuinely missing id produces, and refuses a
-        // not-yet-cancellable order the same way an operator's illegal
-        // request would, without leaking which of the two is true to
-        // someone who was never entitled to know either.
         if (order is null || !caller.MayAccess(order.CustomerId))
         {
             return new AdvanceFulfillmentResult(AdvanceFulfillmentOutcome.NotFound, null);
@@ -122,10 +101,6 @@ public sealed class AdvanceFulfillmentHandler(
 
         if (transition.Outcome != OrderTransitionOutcome.Advanced)
         {
-            // Lost a race against something else moving the order in the
-            // gap between the read above and the compare-and-set (e.g. the
-            // saga confirming it) - not this shopper's fault, but not a
-            // state this endpoint can move from any more either.
             FulfillmentLog.Refused(logger, orderId, OrderStatuses.Cancelled, correlationId);
             return new AdvanceFulfillmentResult(AdvanceFulfillmentOutcome.NotApplicable, null);
         }

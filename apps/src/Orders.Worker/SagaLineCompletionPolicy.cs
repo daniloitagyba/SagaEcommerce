@@ -8,9 +8,7 @@ public enum SagaLineCompletion
 }
 
 /// <summary>
-/// Pure aggregation policy for multi-line saga replies. Keeping this logic
-/// outside Kafka/PostgreSQL adapters makes the process decision exhaustive,
-/// deterministic and directly testable.
+/// Aggregates multi-line saga replies.
 /// </summary>
 public static class SagaLineCompletionPolicy
 {

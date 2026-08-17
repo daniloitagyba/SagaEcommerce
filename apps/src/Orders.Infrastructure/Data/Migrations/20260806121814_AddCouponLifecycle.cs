@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Orders.Infrastructure.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddCouponLifecycle : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
@@ -58,12 +56,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 columns: ["code", "order_id"],
                 unique: true);
 
-            // Seeds the three codes originally shipped as configuration,
-            // so every existing reference to them (the storefront's coupon
-            // placeholder, the README, the pricing docs) keeps working -
-            // they are simply rows now, with the limits config could never
-            // express. HALFOFF gets the tightest ones deliberately: it is
-            // the 50%-off code, and the one a leak would hurt most.
             migrationBuilder.Sql("""
                 INSERT INTO coupons (code, description, percentage, valid_from, valid_until,
                                      minimum_order_amount, max_total_redemptions, max_per_customer, redemption_count)
@@ -75,7 +67,6 @@ namespace Orders.Infrastructure.Data.Migrations
                 """);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(

@@ -13,11 +13,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(TimeProvider.System);
 var instanceId = builder.Configuration["InstanceId"] ?? Environment.MachineName;
 
-// Fail loudly at startup instead of silently at runtime. A
-// missing DI registration used to surface only when first resolved - if
-// that's the outbox dispatcher, it's a background loop logging an
-// exception every poll while the service reports healthy and delivers
-// nothing. ValidateOnBuild trades a slower boot for refusing to start instead.
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateOnBuild = true;
@@ -58,8 +53,6 @@ builder.Services.AddOptions<OutboxOptions>()
     .Validate(options => options.MaximumAttempts > 0, "Outbox maximum attempts must be positive.")
     .Validate(options => options.MaxConcurrentPublishes > 0, "Outbox max concurrent publishes must be positive.")
     .ValidateOnStart();
-// Replaces PaymentDecisionOptions' single amount threshold
-// with a scored risk policy - see PaymentRiskEvaluator.
 builder.Services.AddOptions<PaymentRiskOptions>()
     .Bind(builder.Configuration.GetSection(PaymentRiskOptions.SectionName))
     .Validate(options => options.DeclineScoreThreshold > 0, "Decline score threshold must be positive.")
@@ -142,10 +135,6 @@ builder.Services.AddSingleton<PaymentDecisionRequestProcessor>();
 builder.Services.AddScoped<IOutboxEventDispatcher, PaymentOutboxEventDispatcher>();
 builder.Services.AddHostedService<OutboxPublisher<PaymentsDbContext>>();
 
-// Orchestration is the safe production default because it includes the
-// inventory reservation step. Both remains available for isolated
-// comparisons, while PaymentDecisionCoordinator prevents a comparison from
-// creating two independently settleable payments for one order.
 var sagaMode = builder.Configuration.GetValue("Saga:Mode", SagaMode.Orchestration);
 
 if (sagaMode is SagaMode.Choreography or SagaMode.Both)
@@ -188,9 +177,6 @@ if (sagaMode is SagaMode.Orchestration or SagaMode.Both)
     });
 }
 
-// Capture/void handling and the expiry sweeper run
-// regardless of Saga:Mode - they follow the order's lifecycle, not the
-// saga style that created it.
 builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 {
     var options = serviceProvider.GetRequiredService<IOptions<PaymentSettlementOptions>>().Value;
@@ -209,29 +195,13 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
 });
 builder.Services.AddHostedService<PaymentAuthorizationSweeper>();
 
-// The same JWKS-backed wiring Orders.Api/Catalog/
-// Inventory/Cart already carry, now shared via
-// BuildingBlocks.WebAuthentication instead of copied a fifth time.
-// payments:read is granted to orders-api-clients' service account, the
-// same trusted-backend-tooling client Orders.Worker's anti-entropy sweeper
-// authenticates as - see KeycloakTokenProvider in Orders.Worker.
 builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "payments-service");
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("payments:read", policy => policy.RequireRole("payments:read"));
 
-// KafkaHealthCheck must be a singleton, not the transient default
-// AddCheck<T> would otherwise register - see that class's own comment.
 builder.Services.AddSingleton<KafkaHealthCheck>();
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Payments"])
-    // Not "ready" - this service also serves GET /payments/by-order/{id}
-    // over plain HTTP for Orders.Worker's anti-entropy sweep, a read that
-    // has nothing to do with Kafka. Gating readiness on Kafka used to
-    // remove this pod from the Service the moment Kafka had a blip -
-    // taking the one read anti-entropy needs to detect a payment
-    // divergence out with it, right when the sweep needed it most. See
-    // docs/roadmap-milestones-91-99.md, "readiness is gated on
-    // dependencies the code deliberately treats as optional".
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["live-dependencies"]);
 
 var app = builder.Build();
@@ -263,14 +233,6 @@ app.MapHealthChecks("/health/dependencies", new HealthCheckOptions
 });
 app.MapGet("/", () => Results.Ok(new { service = "Payments.Service", instanceId }));
 
-// The one read this service otherwise has no reason to
-// serve - Payments is Kafka-only everywhere else, but Orders.Worker's
-// anti-entropy sweeper needs to ask "what does Payments think happened to
-// this order" without a second copy of payment state living in Orders'
-// own database. payments:read-gated, the same
-// JWKS-backed protection already given to every other
-// cross-service surface - closed, not just named, now that Orders.Worker
-// has a service identity (KeycloakTokenProvider) to present.
 app.MapGet("/payments/by-order/{orderId:guid}", async (Guid orderId, PaymentsDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var payment = await dbContext.Payments
@@ -282,15 +244,6 @@ app.MapGet("/payments/by-order/{orderId:guid}", async (Guid orderId, PaymentsDbC
         : Results.Ok(new { payment.OrderId, payment.State, payment.Amount, payment.Currency, payment.DecidedAt });
 }).WithTags("Payments").RequireAuthorization("payments:read");
 
-// The batch counterpart of the single-order lookup above - introduced at
-// Milestone 91 for Orders.Worker's anti-entropy sweep, which used to issue
-// one GET per candidate order (up to AntiEntropy:BatchSize of them,
-// sequentially) every tick just to check whether each one has an
-// accounted payment. One query here replaces that whole loop. Capped at
-// 500 ids per call, matching AntiEntropyOptions.BatchSize's own upper
-// bound in practice - this is an internal, service-to-service endpoint,
-// not a public one, so the cap exists to bound one query's own cost, not
-// to defend against an untrusted caller.
 app.MapPost("/payments/by-orders", async (IReadOnlyList<Guid> orderIds, PaymentsDbContext dbContext, CancellationToken cancellationToken) =>
 {
     if (orderIds.Count == 0)

@@ -54,18 +54,11 @@ public sealed class InventoryOutboxEventDispatcher(IInventoryEventPublisher publ
                     var signal = JsonSerializer.Deserialize<WarehouseReplenishmentNeeded>(message.Payload, SerializerOptions)
                         ?? throw new JsonException("The outbox payload did not contain a WarehouseReplenishmentNeeded event.");
                     await publisher.PublishAsync(signal, cancellationToken);
-                    // Not tied to a reservation - the tuple this dispatcher
-                    // returns is only used for logging, and Guid.Empty says
-                    // "no reservation" more honestly than reusing an unrelated id.
                     return (Guid.Empty, signal.Sku);
                 }
 
             case nameof(InventoryRestockRequested):
                 {
-                    // PurchaseOrderReceivingSweeper's restock,
-                    // produced here rather than in-process specifically so a
-                    // Kafka failure after the purchase order is marked
-                    // Received still leaves this outbox row for OutboxPublisher to retry.
                     var request = JsonSerializer.Deserialize<InventoryRestockRequested>(message.Payload, SerializerOptions)
                         ?? throw new JsonException("The outbox payload did not contain an InventoryRestockRequested command.");
                     await publisher.PublishAsync(request, cancellationToken);

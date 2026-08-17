@@ -3,11 +3,7 @@ using System.Net.Http.Json;
 
 namespace BuildingBlocks;
 
-/// <summary>
-/// Shared HTTP adapter for services calling Catalog's SKU lookup endpoint.
-/// The interface and response contract stay in BuildingBlocks.Contracts;
-/// transport details live here at the infrastructure edge.
-/// </summary>
+/// <summary>Shared HTTP adapter for services calling Catalog's SKU lookup endpoint.</summary>
 public sealed class CatalogClient(HttpClient httpClient) : ICatalogClient
 {
     public async Task<CatalogProductSnapshot?> FindBySkuAsync(

@@ -62,10 +62,6 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         order.HasKey(item => item.Id);
         order.Property(item => item.Id).HasColumnName("id").ValueGeneratedNever();
         order.Property(item => item.CustomerId).HasColumnName("customer_id").HasMaxLength(100).IsRequired();
-        // Cutover phase: Amount now reads/writes amount_cents
-        // directly via a value converter - the expand+dual-write phase
-        // backfilled every row, so the old `amount` column (still present,
-        // no longer touched) is safe to drop in the next, contract phase.
         order.Property(item => item.Amount)
             .HasColumnName("amount_cents")
             .HasConversion(
@@ -76,11 +72,6 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         order.Property(item => item.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         order.Property(item => item.CreatedAt).HasColumnName("created_at").IsRequired();
 
-        // The pricing breakdown. Stored denormalised on the
-        // order rather than recomputed on read, because a promotion is a
-        // point-in-time fact - re-running today's rules against a
-        // six-month-old order would produce today's prices, not what the
-        // customer was actually charged.
         order.Property(item => item.Subtotal).HasColumnName("subtotal").HasPrecision(18, 2).IsRequired();
         order.Property(item => item.DiscountTotal).HasColumnName("discount_total").HasPrecision(18, 2).IsRequired();
         order.Property(item => item.ShippingTotal).HasColumnName("shipping_total").HasPrecision(18, 2).IsRequired();
@@ -89,10 +80,6 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         order.Property(item => item.CampaignCode).HasColumnName("campaign_code").HasMaxLength(64);
         order.Property(item => item.PaymentMethod).HasColumnName("payment_method").HasMaxLength(16).IsRequired();
 
-        // Owned rather than a separate table: an address belongs to the
-        // order it shipped to and is never queried independently. Storing a
-        // snapshot also means a customer editing their address later cannot
-        // rewrite where a past order was actually sent.
         order.OwnsOne(item => item.ShippingAddress, address =>
         {
             address.Property(value => value.Line1).HasColumnName("ship_line1").HasMaxLength(200);
@@ -129,18 +116,6 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         line.HasIndex(item => item.Sku).HasDatabaseName("ix_order_lines_sku");
         line.Property(item => item.ReturnedQuantity).HasColumnName("returned_quantity").IsRequired();
 
-        // Two concurrent returns against the same line both read
-        // ReturnedQuantity=0, both validate against ReturnableQuantity, both
-        // write ReturnedQuantity=N - nothing before this stopped the second
-        // one, which meant a double refund and a double restock, not just a
-        // double-counted quantity. Postgres' own system column, not an
-        // application-owned version number, so no migration backfill and no
-        // extra write on every update - EF just includes it in the WHERE
-        // clause of the UPDATE and throws DbUpdateConcurrencyException if it
-        // no longer matches. Mapped by hand (shadow property + IsRowVersion),
-        // not the provider's UseXminAsConcurrencyToken shortcut - that
-        // extension isn't present in this Npgsql.EntityFrameworkCore.PostgreSQL
-        // version.
         line.Property<uint>("xmin")
             .HasColumnName("xmin")
             .HasColumnType("xid")
@@ -219,15 +194,9 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         redemption.Property(item => item.ReservedAt).HasColumnName("reserved_at").IsRequired();
         redemption.Property(item => item.SettledAt).HasColumnName("settled_at");
 
-        // One order redeems a given coupon at most once. This is not
-        // cosmetic: it is what makes a retried checkout unable to claim a
-        // second slot for the same order, in the database rather than by
-        // application convention.
         redemption.HasIndex(item => new { item.Code, item.OrderId })
             .IsUnique()
             .HasDatabaseName("ux_coupon_redemptions_code_order");
-        // Covers the per-customer limit count, which runs on the checkout
-        // hot path inside the reservation transaction.
         redemption.HasIndex(item => new { item.Code, item.CustomerId, item.State })
             .HasDatabaseName("ix_coupon_redemptions_customer");
     }
@@ -260,8 +229,6 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         claim.Property(item => item.ReservedAt).HasColumnName("reserved_at").IsRequired();
         claim.Property(item => item.SettledAt).HasColumnName("settled_at");
 
-        // One order claims a given campaign's budget at most once - same
-        // reasoning as coupon_redemptions' equivalent index.
         claim.HasIndex(item => new { item.Code, item.OrderId })
             .IsUnique()
             .HasDatabaseName("ux_promotion_campaign_claims_code_order");
@@ -339,19 +306,10 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
         summary.Property(item => item.DecidedAt).HasColumnName("decided_at");
         summary.Property(item => item.ProjectedAt).HasColumnName("projected_at").IsRequired();
 
-        // Matches EfOrderSummaryRepository.ListAsync exactly: every list is
-        // ordered ProjectedAt DESC, OrderId DESC, and the keyset cursor
-        // filters on that same pair - the prior ix_order_summaries_status
-        // (Status, OrderCreatedAt) supported neither the ordering nor the
-        // cursor predicate, so every page beyond the first sorted the whole
-        // table. This one serves the unfiltered and status-only list paths.
         summary.HasIndex(item => new { item.ProjectedAt, item.OrderId })
             .IsDescending(true, true)
             .HasDatabaseName("ix_order_summaries_projected_at_order_id");
 
-        // Serves the customer-scoped list path the same way - CustomerId
-        // narrows the scan, then ProjectedAt/OrderId serve the ordering and
-        // cursor predicate from the same index.
         summary.HasIndex(item => new { item.CustomerId, item.ProjectedAt, item.OrderId })
             .IsDescending(false, true, true)
             .HasDatabaseName("ix_order_summaries_customer_id_projected_at_order_id");

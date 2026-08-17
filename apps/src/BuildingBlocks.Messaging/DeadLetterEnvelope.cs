@@ -1,10 +1,6 @@
 namespace BuildingBlocks;
 
-// OriginalPayload is always a string on the wire - base64 for topics
-// carrying byte[]/Avro payloads, verbatim for topics already carrying JSON
-// text - see KafkaDeadLetterPublisher's encodePayload parameter. The
-// dead-letter envelope stores the original payload uniformly rather than
-// assuming any one topic's wire format.
+/// <summary>Uniform dead-letter shape, storing the original payload as a string regardless of the topic's wire format.</summary>
 public sealed record DeadLetterEnvelope(
     Guid DeadLetterId,
     string OriginalTopic,

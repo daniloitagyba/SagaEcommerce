@@ -29,10 +29,6 @@ public sealed class EfCustomerRepository(
                     return existing;
                 }
 
-                // ON CONFLICT DO NOTHING rather than insert-if-absent: two
-                // concurrent first orders from the same customer would both
-                // see no row and both insert. The database decides which one
-                // wins, and the loser reads the winner's row.
                 var createdAt = DateTimeOffset.UtcNow;
                 await dbContext.Database.ExecuteSqlInterpolatedAsync(
                     $"""

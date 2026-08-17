@@ -1,19 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Generates the self-signed certificate compose/nginx/storefront-tls.conf and
-# keycloak-tls.conf serve - lets a browser treat those origins as a secure
-# context, which the storefront's OIDC/PKCE login flow needs (see those two
-# files for why). Always trusted for 127.0.0.1/localhost; pass your LAN IP
-# (and/or hostname) as arguments to also trust the certificate there, e.g.:
-#
-#   scripts/generate-lab-tls-cert.sh 192.168.15.11
-#
-# Not committed (compose/nginx/certs/ is gitignored) - self-signed and
-# regenerable, and a private key has no business in git history. Re-run any
-# time the LAN IP changes; restart nginx afterward to pick it up:
-#   docker compose --profile compose-apps up -d nginx
-
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_directory=$(cd -- "$script_directory/../.." && pwd)
 certs_directory="$project_directory/compose/nginx/certs"

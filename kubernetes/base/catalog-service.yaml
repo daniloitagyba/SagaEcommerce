@@ -28,9 +28,6 @@ spec:
       serviceAccountName: catalog-service
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
-      # Milestone 65: see cart-service.yaml for the full rationale - a
-      # no-op on this single-node cluster today, a real guardrail once a
-      # second node exists.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -49,9 +46,6 @@ spec:
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
-            # Missing here previously - AddKeycloakJwtBearer throws during
-            # service registration without it, before any health check runs.
-            # Must match compose.yaml's value.
             - name: Authentication__Authority
               value: http://keycloak:8080/realms/orders-lab
             - name: Mongo__ConnectionString
@@ -76,16 +70,6 @@ spec:
               value: http://pyroscope:4040
             - name: PYROSCOPE_APPLICATION_NAME
               value: catalog-service
-            # The CLR profiler attach variables - moved out of the Dockerfile's
-            # own ENV (where they used to be unconditional and applied to
-            # every environment, Compose included, regardless of
-            # PYROSCOPE_PROFILING_ENABLED above) so a build with no
-            # profiling configuration - Compose - genuinely runs with no
-            # profiler attached, instead of CORECLR_ENABLE_PROFILING loading
-            # one at process startup and only Pyroscope's own
-            # PYROSCOPE_PROFILING_ENABLED (read after that point) deciding
-            # whether it does anything. The .so files themselves stay baked
-            # into the image - only the decision to attach lives here now.
             - name: CORECLR_ENABLE_PROFILING
               value: "1"
             - name: CORECLR_PROFILER
@@ -126,8 +110,6 @@ spec:
               cpu: 100m
               memory: 96Mi
             limits:
-              # Matches the same 1-core floor found in Milestone 33 -
-              # Pyroscope's native profiler refuses to start below it.
               cpu: 1000m
               memory: 256Mi
           securityContext:

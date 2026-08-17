@@ -27,7 +27,7 @@ jobs:
     runs-on: self-hosted
     environment: staging
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
 
@@ -37,9 +37,9 @@ jobs:
           [[ -r "$lab_env" ]]
           ln --symbolic --force "$lab_env" compose/.env
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -65,7 +65,6 @@ jobs:
         env:
           KUBERNETES_NAMESPACE: ${{ inputs.namespace }}
         run: |
-          # shellcheck disable=SC1091
           source staging-evidence/images.env
           for service in orders-api orders-worker payments-service catalog-service inventory-service cart-service storefront-service; do
             variable=${service//-/_}
@@ -111,7 +110,7 @@ jobs:
 
       - name: upload staging smoke evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: staging-smoke-evidence-${{ github.run_id }}
           path: staging-evidence

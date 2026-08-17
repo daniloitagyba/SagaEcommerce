@@ -14,14 +14,7 @@ using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// Proves each of SagaTimeoutSweeper.ResolveWithinTransactionAsync's four
-/// step-dependent branches does what the class comment claims - a release
-/// published exactly for the two steps where a reservation is certain to
-/// exist and uncommitted, FulfillmentHold (not a guess) when the commit
-/// itself is the unknown, and no release attempted for the one step that's
-/// still an open gap.
-/// </summary>
+/// <summary>Proves each of SagaTimeoutSweeper.ResolveWithinTransactionAsync's four step-dependent branches: a release for steps where a reservation is certain to exist and uncommitted, FulfillmentHold when the commit itself is unknown.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class SagaTimeoutSweeperTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
@@ -125,16 +118,7 @@ public sealed class SagaTimeoutSweeperTests(PostgresFixture fixture) : IAsyncLif
         await AssertReleaseQueuedAsync(saga.Lines[0].ReservationId);
     }
 
-    /// <summary>
-    /// Reproduces the bug this fix closes: before ParkedAt existed, this
-    /// sweeper claimed a backordered order exactly like the un-parked case
-    /// above (SagaOrchestration:TimeoutSeconds is 5, far shorter than
-    /// Backorder:TimeoutMinutes' 120), cancelled it, and deleted the saga
-    /// row - so a restock arriving afterwards reserved against a
-    /// reservationId nothing was tracking any more, leaking that stock
-    /// forever. A parked row must survive this sweep untouched; only
-    /// BackorderTimeoutSweeper's own, much longer window may resolve it.
-    /// </summary>
+    /// <summary>Reproduces the bug this fix closes: before ParkedAt existed, this sweeper claimed a backordered order like any other, cancelled it, and deleted the saga row, leaking stock when a restock later arrived for it.</summary>
     [Fact]
     public async Task ATimeoutAtReserveInventoryDoesNotCancelAParkedBackorderedOrder()
     {

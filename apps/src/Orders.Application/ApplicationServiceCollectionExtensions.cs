@@ -13,13 +13,7 @@ public static class ApplicationServiceCollectionExtensions
 {
     public static IServiceCollection AddOrdersApplication(this IServiceCollection services)
     {
-        // Compiling the NRules Rete network is expensive and the result is
-        // immutable and thread-safe, so the engine is a singleton and each
-        // Price call takes a cheap session off it.
         services.TryAddSingleton<IPricingEngine, NRulesPricingEngine>();
-        // Coupon validity windows are evaluated against this
-        // clock, so it is injected rather than read from DateTimeOffset.UtcNow -
-        // otherwise "expired last night" is untestable without waiting.
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OrderPricingService>();
         services.AddScoped<CreateOrderHandler>();

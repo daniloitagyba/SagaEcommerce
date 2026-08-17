@@ -23,13 +23,7 @@ public sealed record PaymentDecisionResult(
 public sealed class PaymentDecisionConflictException(Guid orderId)
     : Exception($"Payment decision input conflicts with the primary payment already stored for order '{orderId}'.");
 
-/// <summary>
-/// Owns the invariant that an order has exactly one active payment decision,
-/// independently of which saga path asks for it. The transaction-scoped
-/// advisory lock serializes choreography and orchestration before either
-/// evaluates risk, and the filtered unique index remains the database-level
-/// safety net.
-/// </summary>
+/// <summary>Owns the invariant that an order has exactly one active payment decision, independently of which saga path asks for it.</summary>
 public sealed class PaymentDecisionCoordinator(
     PaymentsDbContext dbContext,
     PaymentRiskEvaluator riskEvaluator,

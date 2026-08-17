@@ -1,21 +1,3 @@
-# SLO: 99.5% of orders-api requests succeed (non-5xx) over a rolling 30-day
-# window - a 0.5% error budget. Multi-window, multi-burn-rate alerting per
-# the Google SRE workbook: two windows of different lengths must BOTH show
-# an elevated burn rate before an alert fires, which is what makes this more
-# reliable than a single-window threshold - a single short spike burns the
-# short window instantly but barely moves the long one, so it can't page on
-# its own, and a real sustained problem shows up in both.
-#
-# Burn rate = observed error ratio / (1 - SLO target). A burn rate of 1 means
-# "consuming the 30-day budget exactly on schedule"; 14.4 means "exhausting
-# it in about 2 hours if sustained."
-#
-# The "page" and "ticket" rules use the textbook window pairs (5m/1h,
-# 30m/6h) and are the rules meant to run for real. The "demo" rule is the
-# same 5m/1h math on 30s/2m windows instead, purely so the alerting pipeline
-# (recording rules -> burn rate -> firing -> resolved) can be validated
-# end-to-end within a short chaos experiment rather than requiring an actual
-# sustained hour of induced failures - see docs/slo/milestone-16-slo-burn-rate-alerting.md.
 groups:
   - name: orders-api-slo-recording
     interval: 15s
@@ -45,9 +27,6 @@ groups:
       - record: orders_api:requests_failed:rate6h
         expr: sum(rate(http_server_request_duration_seconds_count{service_name="orders-api", http_response_status_code=~"5.."}[6h]))
 
-      # Error ratio per window, always exactly one series (falls back to 0/1
-      # rather than "no data" when a window has no traffic yet - the same
-      # empty-vector-division gotcha fixed in Milestone 15's canary analysis).
       - record: orders_api:error_ratio:rate30s
         expr: (orders_api:requests_failed:rate30s or vector(0)) / (orders_api:requests:rate30s or vector(1))
       - record: orders_api:error_ratio:rate2m

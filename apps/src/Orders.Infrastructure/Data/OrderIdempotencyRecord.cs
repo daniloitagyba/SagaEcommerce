@@ -1,10 +1,6 @@
 namespace Orders.Infrastructure.Data;
 
-/// <summary>
-/// Durable ownership of an idempotency key. It is inserted before Order and
-/// Outbox inside their transaction, so a committed key always identifies a
-/// committed order and a rolled-back order never consumes the key.
-/// </summary>
+/// <summary>Durable ownership of an idempotency key, inserted in the same transaction as Order and Outbox so a committed key always identifies a committed order.</summary>
 public sealed class OrderIdempotencyRecord
 {
     public string CustomerId { get; init; } = string.Empty;

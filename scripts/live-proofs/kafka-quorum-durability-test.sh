@@ -1,28 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 47 live proof: every producer in this codebase sets
-# Acks.All, but every topic on the live `kafka` service is
-# --replication-factor 1 on a single broker - acks=all over one replica
-# is semantically acks=1, the guarantee is configured but doesn't exist.
-# This runs the real quadrant against the isolated 3-broker
-# `kafka-quorum-demo` cluster (compose/compose.yaml's kafka-q1/q2/q3,
-# NOT the live single-broker `kafka` the saga pipeline depends on):
-#
-#   - unsafe: min.insync.replicas=1, unclean.leader.election.enable=true
-#   - safe:   min.insync.replicas=2, unclean.leader.election.enable=false
-#
-# Same physical fault both times: the two follower brokers are `docker
-# pause`d (frozen, not killed) until they fall out of the ISR, then the
-# leader is force-killed while only it holds the latest writes. In
-# "unsafe" mode this proves ACKS=ALL CAN STILL SILENTLY LOSE ACKNOWLEDGED
-# DATA. In "safe" mode the same fault makes the producer fail loudly
-# instead - correct, visible unavailability rather than invisible loss.
-#
-# A paused container can't be `docker exec`'d into at all, so every kafka
-# CLI invocation issued while the two followers are paused has to run
-# inside the LEADER's own container (the only one still running) - not
-# a hardcoded kafka-q1, which might itself be one of the paused followers.
-#
-# Usage: kafka-quorum-durability-test.sh <safe|unsafe> [message_count]
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -69,13 +45,9 @@ follower_containers=()
 for id in $follower_ids; do
   follower_containers+=("local-distributed-lab-kafka-q${id}-1")
 done
-# A follower is never killed in this test (only paused, then unpaused), so
-# it's a safe exec target once operations move past the leader's death.
 helper_svc="kafka-q$(echo "$follower_ids" | head -1)"
 echo "Leader is broker ${leader_id} (${leader_svc}); followers: ${follower_containers[*]}; helper=${helper_svc}"
 
-# All exec'd via the leader - the only container guaranteed not to be
-# paused during the "followers frozen" window.
 describe_via_leader() {
   docker compose exec -T "$leader_svc" /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic "$topic" 2>/dev/null
 }

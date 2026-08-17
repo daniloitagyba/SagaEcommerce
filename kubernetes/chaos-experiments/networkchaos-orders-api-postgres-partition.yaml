@@ -1,10 +1,3 @@
-# Milestone 37: the second network-partition experiment - orders-api (all 3
-# replicas via mode: all) cut off from Postgres specifically, while Kafka
-# and Redis stay fully reachable. Unlike the orders-worker/Kafka partition
-# (a background consumer losing one dependency), this hits the synchronous
-# request path directly: every replica's PostgresHealthCheck should start
-# failing at once, which should zero out the Service's ready endpoints -
-# a full, real outage window, not degraded latency.
 apiVersion: chaos-mesh.org/v1alpha1
 kind: NetworkChaos
 metadata:

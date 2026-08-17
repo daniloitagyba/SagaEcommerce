@@ -1,8 +1,3 @@
-# Linkerd workload authorization for every HTTP workload other than
-# orders-api, whose older, environment-specific policy also preserves the
-# lab's high-throughput host load-test path. Application JWT authorization
-# remains mandatory; these policies narrow which workload identities can
-# reach each port before the request reaches ASP.NET.
 apiVersion: policy.linkerd.io/v1alpha1
 kind: NetworkAuthentication
 metadata:
@@ -47,7 +42,6 @@ spec:
   identities:
     - "orders-worker.orders-lab.serviceaccount.identity.linkerd.cluster.local"
 ---
-# Each Server switches that port away from Linkerd's permissive default.
 apiVersion: policy.linkerd.io/v1beta3
 kind: Server
 metadata:
@@ -114,9 +108,6 @@ spec:
   port: http
   proxyProtocol: HTTP/1
 ---
-# A separate policy per authentication source is intentional: Linkerd ORs
-# AuthorizationPolicies targeting a Server, while multiple authentication
-# refs inside one policy are ANDed.
 apiVersion: policy.linkerd.io/v1alpha1
 kind: AuthorizationPolicy
 metadata:
@@ -153,8 +144,6 @@ spec:
   requiredAuthenticationRefs:
     - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: payments-callers }
 ---
-# Node-originated traffic covers kubelet probes and the lab's ingress/load-test
-# path. It is intentionally the only non-mesh route to Storefront and Worker.
 apiVersion: policy.linkerd.io/v1alpha1
 kind: AuthorizationPolicy
 metadata:

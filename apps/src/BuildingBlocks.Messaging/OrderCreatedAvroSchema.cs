@@ -4,13 +4,7 @@ using Avro.Generic;
 
 namespace BuildingBlocks;
 
-/// <summary>
-/// The Avro wire contract for OrderCreated, and the one
-/// place that converts it to/from the C# record, keeping every consumer in
-/// agreement about the mapping. Guid/DateTimeOffset/decimal fields are
-/// encoded as strings rather than Avro's logical types, to keep
-/// GenericRecord construction simple for a lab-scale schema registry demo.
-/// </summary>
+/// <summary>The Avro wire contract for OrderCreated and the one place that converts it to/from the C# record.</summary>
 public static class OrderCreatedAvroSchema
 {
     public const string SchemaJson = """
@@ -89,7 +83,7 @@ public static class OrderCreatedAvroSchema
             ReadShippingPostalPrefix(record));
     }
 
-    /// <summary>A v1/v2 writer has no paymentMethod field; absence reads as Pix - an instant charge, not an authorization nobody will capture.</summary>
+    /// <summary>A v1/v2 writer has no paymentMethod field; absence reads as Pix.</summary>
     private static string ReadPaymentMethod(GenericRecord record)
     {
         return record.TryGetValue("paymentMethod", out var value) && value is string method && method.Length > 0
@@ -97,7 +91,7 @@ public static class OrderCreatedAvroSchema
             : PaymentMethods.Pix;
     }
 
-    /// <summary>Absent means "no address given" - an order predating this field should score as unknown, not mismatched.</summary>
+    /// <summary>Absent means no address given.</summary>
     private static string ReadShippingPostalPrefix(GenericRecord record)
     {
         return record.TryGetValue("shippingPostalPrefix", out var value) && value is string prefix
@@ -116,12 +110,7 @@ public static class OrderCreatedAvroSchema
         return record;
     }
 
-    /// <summary>
-    /// A v1 message carries no lines field; Avro should fill the default
-    /// when read against v2, but this reads defensively in case the
-    /// registry hasn't resolved it - both versions are genuinely on the
-    /// topic during a rolling deploy.
-    /// </summary>
+    /// <summary>A v1 message carries no lines field; reads defensively in case the registry default hasn't resolved it.</summary>
     private static IReadOnlyList<OrderCreatedLine> ReadLines(GenericRecord record)
     {
         if (!record.TryGetValue("lines", out var rawLines) || rawLines is not object[] lines)

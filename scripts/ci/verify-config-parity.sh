@@ -1,18 +1,4 @@
 #!/usr/bin/env bash
-# Guards against the bug class this repo has hit five times:
-# Redis__ConnectionString, four separate Kafka BootstrapServers sections,
-# and Authentication__Authority twice (see
-# docs/saga/milestone-75-saga-mode-both-by-default.md and
-# docs/architecture/audit-2026-08-15-frontend-catalog-infra-review.md's
-# finding #1) - a config value set in compose/compose.yaml's environment
-# block for an app service, silently missing from the paired
-# kubernetes/base/ manifest, that only surfaces as a crash loop (or, worse,
-# a silent no-op) once someone actually deploys to Kubernetes. This diffs
-# every app service/Job's env var *names* (not values - the values are
-# legitimately different in each environment, e.g. `kafka:9092` vs
-# `kafka.orders-lab.svc.cluster.local:9094`) between the two, and fails on
-# anything present in Compose and missing from Kubernetes that isn't on
-# the explicit allowlist below, with a documented reason for each entry.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -30,11 +16,6 @@ with open("compose/compose.yaml") as f:
 
 services = compose["services"]
 
-# Every app service/Job in compose.yaml that has a real Kubernetes
-# counterpart. Infra containers (postgres, kafka, redis, mongodb, keycloak,
-# ...) aren't in this list - kubernetes/base/infrastructure-services.yaml
-# only declares Services for them, not Deployments/env blocks, so there is
-# nothing to diff against.
 PAIRS = {
     "orders-api-1": "kubernetes/base/orders-api.yaml",
     "orders-worker": "kubernetes/base/orders-worker.yaml",
@@ -50,13 +31,6 @@ PAIRS = {
     "seed-inventory": "kubernetes/base/inventory-seed-job.yaml",
 }
 
-# key: (compose service, env var name) -> reason it's legitimately
-# Compose-only. Every entry here was checked against the service's own
-# Program.cs to confirm its absence in Kubernetes doesn't crash-loop or
-# silently change behavior - an unexplained gap is a bug (see
-# Redis__ConnectionString on seed-catalog, fixed alongside this script,
-# not allowlisted); an explained one is a deliberate environment
-# difference. Add to this list only with the same level of justification.
 ALLOWLIST = {
     ("orders-api-1", "Authentication__AlternateAuthority"): (
         "Compose-only LAN/phone-access convenience (README's 'LAN / phone "

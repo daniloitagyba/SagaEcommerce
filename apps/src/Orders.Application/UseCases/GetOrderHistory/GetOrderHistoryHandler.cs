@@ -7,10 +7,7 @@ namespace Orders.Application.UseCases.GetOrderHistory;
 public sealed record OrderHistoryEvent(long Id, string EventType, string Payload, DateTimeOffset OccurredAt);
 
 /// <summary>
-/// The temporal query result: Order state folded from the event stream up
-/// to (and including) whatever "asOf" boundary was requested - "now" if
-/// none was given. Null if no OrderCreated event exists yet (or existed
-/// yet, as of that boundary).
+/// Represents an order state at a point in time.
 /// </summary>
 public sealed record OrderSnapshot(
     Guid OrderId,
@@ -23,11 +20,7 @@ public sealed record OrderSnapshot(
 public sealed record OrderHistoryResult(OrderSnapshot? Snapshot, IReadOnlyList<OrderHistoryEvent> Events);
 
 /// <summary>
-/// Reconstructs Order state by folding over the append-only
-/// event log rather than reading a current-state row - the event store is
-/// the source of truth, and current-state projections are just one
-/// read-optimized view of it. Temporal queries and the full audit trail
-/// are free consequences of that, not separately-built features.
+/// Reconstructs order history from events.
 /// </summary>
 public sealed class GetOrderHistoryHandler(IOrderEventStoreRepository repository)
 {
@@ -75,12 +68,6 @@ public sealed class GetOrderHistoryHandler(IOrderEventStoreRepository repository
                 case "OrderCancelled":
                     status = "Cancelled";
                     break;
-                // Everything AdvanceFulfillmentHandler can move an order
-                // into besides Cancelled (which OrderConfirmed/OrderCancelled
-                // above already cover via PaymentDecided) - a warehouse move
-                // or a shopper's self-service cancellation now appends
-                // "Order" + status (OrderEventStoreProjector), so the fold
-                // needs a case for each target CanTransition ever allows.
                 case "OrderBackordered":
                     status = "Backordered";
                     break;

@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Live proof for Milestone 41: same-SKU oversell prevention and
-# different-SKU parallelism, both driven purely by Kafka partition
-# ownership - Inventory.Service never takes a database row lock.
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

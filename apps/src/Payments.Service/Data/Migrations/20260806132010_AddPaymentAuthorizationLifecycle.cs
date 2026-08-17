@@ -5,10 +5,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Payments.Service.Data.Migrations
 {
-    /// <inheritdoc />
     public partial class AddPaymentAuthorizationLifecycle : Migration
     {
-        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<DateTimeOffset>(
@@ -51,13 +49,6 @@ namespace Payments.Service.Data.Migrations
                 table: "payments",
                 columns: ["state", "authorization_expires_at"]);
 
-            // Backfill: every payment that predates this schema was a
-            // single-phase decision - the money was conceptually taken the
-            // instant it was approved, which is exactly what Pix means now.
-            // Leaving them at method='' / state='' would put historical rows
-            // in a state Payment.Authorize can never produce, and worse,
-            // would make them invisible to PaymentStates.IsSettled - so the
-            // expiry sweeper's own guard could not reason about them.
             migrationBuilder.Sql("""
                 UPDATE payments
                 SET method = 'Pix',
@@ -67,7 +58,6 @@ namespace Payments.Service.Data.Migrations
                 """);
         }
 
-        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropIndex(

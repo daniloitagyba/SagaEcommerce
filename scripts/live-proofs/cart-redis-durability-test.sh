@@ -1,36 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 46 live proof: Cart.Service's Redis (compose/compose.yaml's
-# `redis` service) has run with `--save "" --appendonly no` since
-# Milestone 42 promoted it to the cart's system of record - persistence is
-# fully off. This script creates N carts, hard-kills the Redis process
-# (SIGKILL, no graceful save) mid-flight, waits for the restart-policy to
-# bring it back, then counts how many carts actually survived.
-#
-# Persistence mode is set via compose.yaml's REDIS_SAVE/REDIS_APPENDONLY/
-# REDIS_APPENDFSYNC env vars and applied with `--force-recreate`, not a
-# runtime `redis-cli CONFIG SET` - a first attempt at this script used
-# CONFIG SET, and every mode showed 100% loss, because Docker's
-# restart-policy re-execs this container's literal `command:` after a
-# kill, silently discarding any config that was only ever set at runtime.
-# Baking the mode into the actual startup command is what makes it survive
-# the restart being tested.
-#
-# Milestone 84 rewrite: this script used to drive Cart.Service's HTTP API
-# with a client-chosen cart id in the URL (PUT /carts/{cart_id}/items/...).
-# That route no longer exists - Milestone 84 requires authentication on
-# every cart route and derives the cart's key from the caller's own
-# identity (see CartIdentityExtensions.GetCustomerId), not from anything
-# the client supplies. Minting Keycloak tokens for 300 synthetic shoppers
-# just to exercise Redis's own persistence behaviour would be testing the
-# auth stack, not Redis - so this version writes the same Hash shape
-# CartStore.UpsertItemAsync writes (field = Sku, value = JSON, plus the
-# __version field, plus the same TTL) directly against the container's
-# redis-cli, bypassing Cart.Service's API entirely. That is a closer match
-# to what this script has always actually been measuring - Redis's own
-# survival of a kill under a given persistence mode - than going through
-# the API ever was.
-#
-# Usage: cart-redis-durability-test.sh <none|rdb|aof-everysec|aof-always> [cart_count]
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -100,8 +68,6 @@ for i in $(seq 1 60); do
     break
   fi
   if [[ $i -eq 10 && "$started_manually" == "false" ]]; then
-    # restart-policy hasn't brought it back on its own after 5s - force it,
-    # rather than trusting Docker's policy timing under repeated kills.
     docker start "$redis_container" >/dev/null 2>&1 || true
     started_manually=true
   fi

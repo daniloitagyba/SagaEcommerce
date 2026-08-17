@@ -5,17 +5,7 @@ using Orders.Infrastructure.RateLimiting;
 
 namespace Orders.Api.RateLimiting;
 
-/// <summary>
-/// The cluster-wide counterpart to the per-pod
-/// token bucket (applied via app.UseRateLimiter() before this runs -
-/// a request has to pass the cheap local check first). Scoped to /orders
-/// only, matching RateLimitingExtensions.OrdersPolicy's endpoint group.
-///
-/// Runs after UseAuthentication (see Program.cs's pipeline order) so it can
-/// key the bucket by caller instead of one shared key for every request -
-/// a single "orders:ratelimit:distributed" key meant one abusive or buggy
-/// client exhausted the whole cluster's budget and 429'd everyone else.
-/// </summary>
+/// <summary>The cluster-wide rate limiter counterpart to the per-pod token bucket, scoped to /orders.</summary>
 public sealed class DistributedRateLimitingMiddleware(RequestDelegate next, RedisSlidingWindowRateLimiter limiter)
 {
     private const string RateLimitKeyPrefix = "orders:ratelimit:distributed";
@@ -54,14 +44,7 @@ public sealed class DistributedRateLimitingMiddleware(RequestDelegate next, Redi
         await next(context);
     }
 
-    /// <summary>
-    /// The shopper's own customer id when there is one; the client_id
-    /// (azp) for a service-account token with no human behind it (a
-    /// trusted backend caller like Orders.Worker's anti-entropy sweeper -
-    /// still its own bucket, not lumped in with every shopper); "anonymous"
-    /// only as a last resort, since every route this middleware guards
-    /// requires authentication already.
-    /// </summary>
+    /// <summary>Resolves the rate-limit bucket key: customer id, else service-account client_id, else "anonymous".</summary>
     private static string CallerKey(HttpContext context) =>
         context.GetCustomerId()
             ?? context.User.FindFirst("azp")?.Value

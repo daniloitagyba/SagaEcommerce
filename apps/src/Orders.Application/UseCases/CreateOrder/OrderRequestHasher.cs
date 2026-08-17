@@ -4,9 +4,7 @@ using System.Text.Json;
 namespace Orders.Application.UseCases.CreateOrder;
 
 /// <summary>
-/// Produces a stable hash of the business request. Transport-only values
-/// such as correlation and instance identifiers are deliberately excluded,
-/// while every value that can change what is bought or charged is included.
+/// Produces a stable order request hash.
 /// </summary>
 internal static class OrderRequestHasher
 {

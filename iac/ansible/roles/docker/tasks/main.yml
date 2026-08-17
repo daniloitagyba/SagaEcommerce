@@ -5,13 +5,6 @@
   changed_when: false
   failed_when: false
 
-# Installing Docker itself needs root - the one step in this whole playbook
-# that does. Every other role in this repo (K3s, Helm releases, cluster
-# add-ons) deliberately runs as the regular user, matching every other
-# script in this project's "no sudo available/needed" convention. This task
-# is a no-op here because Docker is already present - written for
-# reproducing the host from scratch, not because this environment can
-# actually exercise the become path (no passwordless sudo configured).
 - name: Install Docker Engine (only if missing)
   when: docker_check.rc != 0
   become: true

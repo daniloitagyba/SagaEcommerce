@@ -10,10 +10,6 @@ namespace Orders.UnitTests;
 
 public sealed class CreateOrderHandlerTests
 {
-    // These tests exercise the amount-only path, which never reaches the
-    // catalog or the coupon table - collaborators that throw if called are
-    // therefore the honest stubs, and would fail loudly if that ever
-    // stopped being true.
     private static OrderPricingService BuildPricingService() =>
         new(new ThrowingCatalogClient(),
             new ThrowingCouponRepository(),
@@ -129,8 +125,6 @@ public sealed class CreateOrderHandlerTests
         Assert.Equal(1, repository.AddCallCount);
     }
 
-    // ExpectedSubtotal - a line-item checkout this time, since
-    // the amount-only path never prices anything to compare against.
     private static OrderPricingService BuildLineItemPricingService(decimal livePrice) =>
         new(new FixedPriceCatalogClient(livePrice),
             new ThrowingCouponRepository(),
@@ -187,12 +181,7 @@ public sealed class CreateOrderHandlerTests
         Assert.NotNull(result.Order);
     }
 
-    /// <summary>
-    /// End to end from an active campaign through to the reservation
-    /// CreateOrderHandler hands the repository - the same transactional
-    /// claim shape as a coupon (see CampaignReservation's own comment),
-    /// but built automatically rather than from a shopper-typed code.
-    /// </summary>
+    /// <summary>End to end from an active campaign through to the reservation CreateOrderHandler hands the repository, same transactional claim shape as a coupon.</summary>
     [Fact]
     public async Task AnActiveCampaignReservesItsBudgetClaimAlongsideTheOrder()
     {
@@ -227,7 +216,6 @@ public sealed class CreateOrderHandlerTests
     public async Task AMismatchedExpectedSubtotalIsRejectedWithoutCreatingAnOrder()
     {
         var repository = new FakeOrderRepository();
-        // Live catalog price moved to 60.00/unit; the cart last saw 50.00/unit.
         var handler = new CreateOrderHandler(
             repository, BuildLineItemPricingService(60m), TimeProvider.System, NullLogger<CreateOrderHandler>.Instance);
         var command = new CreateOrderCommand(

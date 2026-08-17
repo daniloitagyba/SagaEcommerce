@@ -32,9 +32,7 @@ public enum SagaLineOutcomeField
 }
 
 /// <summary>
-/// The four steps this saga walks through. Not an enum mapped by EF - the
-/// column is a plain string so ad hoc SQL inspection during development
-/// doesn't need to decode an integer.
+/// The four steps this saga walks through.
 /// </summary>
 public static class SagaStep
 {

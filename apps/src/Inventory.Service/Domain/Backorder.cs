@@ -1,15 +1,6 @@
 namespace Inventory.Service.Domain;
 
-/// <summary>
-/// An order waiting for stock that was not there when it
-/// asked.
-///
-/// Keyed by <see cref="ReservationId"/> - the same id the saga already
-/// tracks - rather than a surrogate key, because the release path never
-/// needs to look one up any other way, and reusing it is what lets the
-/// eventual success reply carry the exact id the saga is still waiting on
-/// (see InventoryReservationMessageProcessor.TryFulfillBackordersAsync).
-/// </summary>
+/// <summary>An order waiting for stock that was not available when it was requested.</summary>
 public sealed class Backorder
 {
     private Backorder()

@@ -21,32 +21,13 @@ spec:
     - ports:
         - protocol: TCP
           port: 8080
-        # Milestone 30: orders-api's gRPC endpoint, a separate port from the
-        # REST API's 8080 (see Program.cs's comment on why they can't share
-        # a port under the existing Milestone 26 Linkerd Server policy).
         - protocol: TCP
           port: 8081
-        # Linkerd's CNI plugin DNATs inbound traffic on meshed pods to the
-        # proxy's inbound port before this policy is evaluated (PREROUTING
-        # runs ahead of the FORWARD-chain NetworkPolicy check), so kube-router
-        # sees port 4143 on the wire, not 8080, for any request from another
-        # pod. Both must be allowed for meshed pods to receive traffic at all.
         - protocol: TCP
           port: 4143
-        # Proxy admin/metrics port - never redirected (Linkerd explicitly
-        # excludes it), but still genuine pod-to-pod traffic: linkerd-viz's
-        # Prometheus scrapes it from a different namespace, so it needs its
-        # own explicit allow too.
         - protocol: TCP
           port: 4191
 ---
-# Egress had no default-deny at all before this - every pod could reach
-# arbitrary destinations outbound, including the open internet. A
-# compromised pod (a dependency supply-chain issue, an RCE in any of the
-# seven app images) could exfiltrate data or call out to a C2 host with
-# nothing in the cluster to stop it. Split into three policies, same
-# pattern as the ingress side above: a deny-all baseline, then explicit
-# allows for the traffic that is actually legitimate.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -56,10 +37,6 @@ spec:
   policyTypes:
     - Egress
 ---
-# DNS resolution is a prerequisite for every other allow below (a Service
-# name has to resolve before a pod can even attempt to reach it) - CoreDNS
-# normally lives in kube-system, so this cannot be scoped to the app's own
-# namespace the way the cluster-internal rule below is.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -88,20 +65,14 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # A meshed workload must obtain identity and policy before its application
-    # container starts. Without this cross-namespace exception, default-deny
-    # preserved old proxy connections but every newly scheduled pod stalled
-    # forever in the Linkerd native sidecar init phase.
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: linkerd
       ports:
-        - { protocol: TCP, port: 8080 } # identity
-        - { protocol: TCP, port: 8086 } # destination
-        - { protocol: TCP, port: 8090 } # policy
-    # East-west HTTP stays inside this application boundary. Both the app
-    # port and Linkerd's redirected inbound port are explicit.
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8086 }
+        - { protocol: TCP, port: 8090 }
     - to:
         - podSelector:
             matchLabels:
@@ -109,19 +80,14 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 4143 }
-    # Every application emits OTLP/profiles and either validates or obtains
-    # an OIDC token. These are the only shared off-cluster dependencies.
     - to:
         - ipBlock:
             cidr: 172.30.0.0/24
       ports:
-        - { protocol: TCP, port: 4317 } # OTel collector
-        - { protocol: TCP, port: 4040 } # Pyroscope
-        - { protocol: TCP, port: 8080 } # Keycloak
+        - { protocol: TCP, port: 4317 }
+        - { protocol: TCP, port: 4040 }
+        - { protocol: TCP, port: 8080 }
 ---
-# Data-plane access is workload-specific. A compromised Catalog pod, for
-# example, no longer gains network access to Kafka or PostgreSQL merely
-# because another application needs them.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -133,10 +99,10 @@ spec:
   egress:
     - to: [{ ipBlock: { cidr: 172.30.0.0/24 } }]
       ports:
-        - { protocol: TCP, port: 5432 } # PostgreSQL
-        - { protocol: TCP, port: 9092 } # Kafka application listener
-        - { protocol: TCP, port: 8081 } # schema registry
-        - { protocol: TCP, port: 6379 } # Redis
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 9092 }
+        - { protocol: TCP, port: 8081 }
+        - { protocol: TCP, port: 6379 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -153,8 +119,6 @@ spec:
         - { protocol: TCP, port: 9092 }
         - { protocol: TCP, port: 8081 }
         - { protocol: TCP, port: 6379 }
-    # Leader election is the worker's only Kubernetes API permission and
-    # is separately constrained by its namespaced Role/RoleBinding.
     - ports:
         - { protocol: TCP, port: 443 }
 ---
@@ -214,9 +178,6 @@ spec:
       ports:
         - { protocol: TCP, port: 6379 }
 ---
-# Migration/seed Jobs are short-lived workloads with no east-west calls. Their
-# image determines which listed store they use; the shared selector keeps
-# generated Job names from requiring one policy per migration revision.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

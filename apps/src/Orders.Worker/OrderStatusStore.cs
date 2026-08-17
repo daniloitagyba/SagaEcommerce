@@ -13,7 +13,7 @@ public enum StatusTransitionResult
     /// <summary>The row moved, and this caller is the one that moved it.</summary>
     Transitioned,
 
-    /// <summary>The move is legal in principle, but the row was not in an allowed state - already settled, or someone else won the race.</summary>
+    /// <summary>The move is legal in principle, but the row was not in an allowed state.</summary>
     NotApplicable,
 
     /// <summary>The move is not in the transition table at all.</summary>
@@ -28,23 +28,6 @@ public sealed class OrderStatusStore(
     CustomerTierStore customerTierStore,
     ResiliencePipelineProvider<string> pipelineProvider)
 {
-    // `status = ANY(@allowed_from)` guards the whole set of
-    // legal predecessors in one statement, since an order can now be
-    // cancelled from four different states - read-then-write would
-    // reintroduce the race the CAS exists to remove. RETURNING carries what
-    // the follow-up actions need, so they fire for exactly the winner of
-    // the compare-and-set and a loser cannot double-count.
-    //
-    // The `previous` CTE (FOR UPDATE, same lock and shape as
-    // EfOrderStatusRepository's identical TransitionSql) is what makes the
-    // row's status *before* this write available to ApplySideEffectsAsync -
-    // a plain UPDATE ... RETURNING only ever returns the post-write row,
-    // and status is the one column this statement changes, so a bare
-    // RETURNING could never tell "was Confirmed" from "was Created" apart.
-    // Still one round trip, still atomic: the allowed_from guard lives in
-    // the UPDATE's own WHERE, same as before, not the CTE's - a row whose
-    // status has since moved out of allowed_from re-evaluates to "no match"
-    // the moment the lock is granted, which is what stops a lost update.
     private const string UpdateSql = """
         WITH previous AS (
             SELECT status, coupon_code, payment_method, customer_id, amount_cents, campaign_code FROM orders WHERE id = @id FOR UPDATE
@@ -56,14 +39,6 @@ public sealed class OrderStatusStore(
         RETURNING previous.status, previous.coupon_code, previous.payment_method, previous.customer_id, previous.amount_cents, previous.campaign_code;
         """;
 
-    // Same table, same database, same transaction as the status CAS above -
-    // see EfOrderStatusRepository's identical write for why this is needed:
-    // the read-model projection only ever learned an order's status from
-    // OrderCreated/PaymentDecided otherwise, and PaymentDecided is not even
-    // produced in Saga:Mode=Orchestration (the deployed default), so this
-    // saga-driven path - Confirmed, Cancelled, Backordered, FulfillmentHold -
-    // is actually the high-volume source of status changes the projection
-    // was missing entirely, not an edge case.
     private const string InsertOutboxSql = """
         INSERT INTO outbox_messages
             (id, event_type, payload, occurred_at, correlation_id, trace_parent, trace_state, attempt_count, next_attempt_at)
@@ -72,12 +47,6 @@ public sealed class OrderStatusStore(
         """;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
-    // No-retry transactional pipeline, not the retrying PostgresPipeline -
-    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
-    // TransitionAsync's single write is exactly the shape that pipeline
-    // exists for: a lost commit ack retried blindly would mask a genuinely
-    // successful transition as a NotApplicable result to this store's own
-    // caller.
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     public Task<bool> TryConfirmAsync(Guid orderId, string correlationId, CancellationToken cancellationToken)
@@ -134,22 +103,7 @@ public sealed class OrderStatusStore(
     }
 
     /// <summary>
-    /// The same CAS-guarded transition TransitionAsync performs, but
-    /// against a connection/transaction the caller already owns rather
-    /// than one this store opens and commits itself - so a status change
-    /// can be folded into the same commit as whatever durable state made
-    /// it necessary in the first place.
-    ///
-    /// Introduced at Milestone 91 for
-    /// SagaOrchestrationStore.ClaimTimedOutAndQueueAsync and
-    /// TryCompleteAndQueueAsync: before this, a saga row's deletion (the
-    /// durable claim that inventory has been released) committed in one
-    /// transaction, and the order's own status transition ran afterwards
-    /// in a second, separate one. A crash between the two left the saga
-    /// row permanently gone - so the order could never time out again -
-    /// with the order itself stuck in whatever non-terminal status it was
-    /// already in. See docs/roadmap-milestones-91-99.md, "durable claim,
-    /// non-durable act".
+    /// Transitions an order in an existing transaction.
     /// </summary>
     public async Task<bool> TryTransitionWithinTransactionAsync(
         NpgsqlConnection connection,
@@ -180,10 +134,7 @@ public sealed class OrderStatusStore(
     }
 
     /// <summary>
-    /// Applies every database-local consequence before the status transaction
-    /// commits. Cross-service commands are persisted to the shared Orders
-    /// outbox, so the API's outbox publisher can retry delivery without a
-    /// status change ever becoming visible on its own.
+    /// Applies local effects for an order transition.
     /// </summary>
     private async Task ApplySideEffectsAsync(
         NpgsqlConnection connection,
@@ -196,9 +147,6 @@ public sealed class OrderStatusStore(
     {
         var now = DateTimeOffset.UtcNow;
 
-        // Unconditional - every legal transition this store performs (not
-        // just Confirmed/Cancelled below) needs the read model and the
-        // event-store timeline to learn about it.
         await QueueOrderStatusChangedAsync(connection, transaction, orderId, targetStatus, correlationId, now, cancellationToken);
 
         if (targetStatus == OrderStatuses.Confirmed && context.CustomerId is not null)
@@ -211,15 +159,6 @@ public sealed class OrderStatusStore(
                 cancellationToken);
         }
 
-        // The mirror of the block above: a cancellation reaching here from
-        // Confirmed, Picking or FulfillmentHold means the order was
-        // Confirmed at some earlier point (the state graph guarantees it -
-        // those are the only three of Cancelled's legal predecessors
-        // reachable only through Confirmed; Created and Backordered are
-        // not - see EfOrderStatusRepository.QueueInventoryCompensationAsync's
-        // identical check for the same reasoning) and RecordCompletedOrderAsync
-        // already ran for it, crediting lifetime_spend permanently even
-        // though the order never completed.
         if (targetStatus == OrderStatuses.Cancelled
             && context.CustomerId is not null
             && context.PreviousStatus is OrderStatuses.Confirmed or OrderStatuses.Picking or OrderStatuses.FulfillmentHold)
@@ -321,14 +260,7 @@ public sealed class OrderStatusStore(
     }
 
     /// <summary>
-    /// Allocates the next value from order_event_version_seq - a single
-    /// Postgres sequence shared with EfOrderStatusRepository/
-    /// EfOrderReturnRepository's identical calls in Orders.Infrastructure,
-    /// which is what makes it a cross-process monotonic counter for
-    /// OrderStatusChanged rather than just a per-store one. nextval() is
-    /// atomic and takes no lock a concurrent writer could contend on, so
-    /// calling it from inside this same transaction costs nothing beyond
-    /// the round trip. See OrderStatusChanged's own class comment.
+    /// Allocates the next order event version.
     /// </summary>
     private static async Task<long> NextEventVersionAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)

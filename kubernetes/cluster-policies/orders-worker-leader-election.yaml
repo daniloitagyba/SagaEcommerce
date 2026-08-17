@@ -1,11 +1,3 @@
-# Milestone 36: scoped RBAC for LeaderElectionService - the orders-worker
-# ServiceAccount can do exactly one thing against the API server: read,
-# create, and update Lease objects in this namespace. It still cannot read
-# Pods, Secrets, ConfigMaps, or anything else, despite now having its
-# ServiceAccount token mounted (kubernetes/base/orders-worker.yaml flipped
-# automountServiceAccountToken from false to true for this milestone).
-# Legacy bootstrap copy. The same named Role/RoleBinding is now reconciled by
-# Argo CD from kubernetes/base/orders-worker-rbac.yaml; do not extend this copy.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

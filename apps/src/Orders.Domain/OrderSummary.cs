@@ -1,19 +1,13 @@
 namespace Orders.Domain;
 
-/// <summary>
-/// Denormalized read model, built asynchronously by the projector in Orders.Worker
-/// from OrderCreated and PaymentDecided events. Nullable columns reflect that this
-/// row can legitimately be partially populated for a short window: a PaymentDecided
-/// event can arrive at the projector before the corresponding OrderCreated event,
-/// since they travel on independent topics with no ordering guarantee between them.
-/// </summary>
+/// <summary>Denormalized read model built asynchronously by the Orders.Worker projector; nullable columns may be transiently unpopulated.</summary>
 public sealed class OrderSummary
 {
     private OrderSummary()
     {
     }
 
-    /// <summary>Test-only construction seam - see AssemblyInfo.cs. Production code never builds this by hand; Orders.Worker's projector is the only writer.</summary>
+    /// <summary>Test-only construction seam; production code never builds this by hand.</summary>
     internal static OrderSummary ForTesting(
         Guid orderId,
         string? customerId,

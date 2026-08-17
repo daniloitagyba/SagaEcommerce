@@ -24,9 +24,9 @@ jobs:
     name: secrets scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 0 # scan full history, not just the current diff - a secret committed once and later removed still leaked
+          fetch-depth: 0
 
       - name: gitleaks
         run: |
@@ -37,9 +37,9 @@ jobs:
     name: known-CVE NuGet dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           global-json-file: global.json
 
@@ -56,12 +56,10 @@ jobs:
           fi
 
   complexity-and-module-size:
-    # Keep the published check name stable: branch protection may require it by
-    # name even though this job now owns additional repository-quality gates.
     name: cyclomatic complexity and module size
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: GitHub Actions syntax and semantics (actionlint)
         run: |
@@ -84,7 +82,7 @@ jobs:
           docker run --rm -v "$PWD:/repo" -w /repo --entrypoint hadolint hadolint/hadolint:v2.12.0-debian \
             apps/src/*/Dockerfile compose/nginx/Dockerfile
 
-      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
+      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
         with:
           version: v1.34.1
 
@@ -101,11 +99,6 @@ jobs:
 
       - name: validate Kubernetes schemas (kubeconform)
         run: |
-          # The rendered overlay contains CRDs (Argo Rollouts, KEDA and
-          # SealedSecrets) whose schemas are not part of the upstream
-          # Kubernetes schema bundle. Standard resources remain strict and
-          # build-blocking; only resources without a published schema are
-          # reported as skipped.
           for manifest in rendered-manifests/*.yaml; do
             docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 \
               -strict -summary -ignore-missing-schemas < "$manifest"
@@ -128,10 +121,6 @@ jobs:
 
       - name: cyclomatic complexity (lizard)
         run: |
-          # Threshold 20: the current worst offender (InventoryReservationMessageProcessor's
-          # ProcessAsync/ProcessSettlementAsync, CCN 16-18) sits under it deliberately -
-          # this gates further growth, not a demand to refactor working, tested message
-          # processors as a side effect of adding the tool.
           docker run --rm -v "$PWD/apps/src:/src" python:3.12-slim sh -c \
             "pip install --quiet lizard && lizard /src --languages csharp --CCN 20"
 
@@ -148,11 +137,6 @@ jobs:
 
       - name: no swallowed exceptions (empty catch blocks)
         run: |
-          # An empty catch block is a failure the codebase chose to make
-          # invisible rather than handle - every real catch here logs,
-          # rethrows, or returns a fallback value; this keeps it that way.
-          # Plain Python regex over file text rather than grep -P, so this
-          # doesn't depend on the runner's grep build supporting PCRE.
           python3 -c '
           import re, sys, glob
           pattern = re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}")
@@ -167,15 +151,6 @@ jobs:
 
       - name: no hand-rolled inbox dedup SQL outside BuildingBlocks.Persistence
         run: |
-          # The inbox half of every outbox-backed consumer's dedup
-          # (INSERT INTO inbox_messages ... ON CONFLICT DO NOTHING) used to
-          # be copy-pasted as raw SQL 8 times across Inventory.Service and
-          # Payments.Service, alongside a properly shared InboxStore
-          # Orders.Worker alone used - now consolidated into
-          # BuildingBlocks.Persistence/InboxStore.cs (both its
-          # standalone-connection and ambient-transaction variants). This
-          # keeps a ninth consumer from reintroducing a copy instead of
-          # calling InboxStore.TryRecordAsync/TryRecordWithinTransactionAsync.
           python3 -c '
           import glob, sys
           files = [
@@ -193,26 +168,6 @@ jobs:
 
       - name: no ambient clock in *Handler/*Sweeper types
         run: |
-          # TimeProvider is registered as a singleton in every service and
-          # already injected correctly in the components that most need it
-          # (CartStore's CRDT merge, OrderPricingService, SagaTimeoutSweeper,
-          # PaymentSettlementProcessor, ...). A direct DateTimeOffset.UtcNow/
-          # DateTime.UtcNow call site in a *Handler or *Sweeper class is the
-          # same bug ReturnOrderHandler had: a test that pins "now" via a
-          # fake clock silently stops controlling what the code under test
-          # actually compares against, because the code reads the real
-          # clock instead of the one the test constructed. Found live in
-          # ReturnOrderHandlerTests.cs, where a fixed Order.CreatedAt was
-          # meant to be "10 days ago" and was actually growing more distant
-          # from real UtcNow every day the test suite ran, permanently
-          # pinning the regret-window boundary to one side.
-          #
-          # RetentionSweeper is the one documented exception: it is
-          # deliberately deferred (BuildingBlocks-level retention
-          # infrastructure with a wider blast radius than the business-rule
-          # and deadline-sweeper call sites this check exists for) - see
-          # docs/architecture/audit-2026-08-15-build-runtime-and-time-handling-review.md's
-          # Phase 3.
           python3 -c '
           import glob, re, sys
           ALLOWLIST = {"apps/src/BuildingBlocks.Persistence/RetentionSweeper.cs"}
@@ -234,7 +189,7 @@ jobs:
     name: build and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: verify compose network names
         run: bash scripts/infra/verify-compose-network-names.sh
@@ -245,7 +200,7 @@ jobs:
       - name: verify Dockerfile COPY lines match each service's ProjectReference graph
         run: bash scripts/ci/verify-dockerfile-project-references.sh
 
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           global-json-file: global.json
 
@@ -277,7 +232,7 @@ jobs:
 
       - name: publish test results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: test-results
           path: "apps/**/TestResults/**/*.trx"
@@ -286,20 +241,6 @@ jobs:
       - name: coverage (unit tests only)
         if: always()
         run: |
-          # Deliberately scoped to the *.UnitTests projects, not the whole
-          # solution: coverlet's instrumentation overhead, applied to the
-          # Integration test projects, was enough to blow through
-          # RedisOrderCache/RedisIdempotencyStore's 150ms Polly timeout
-          # (ResilienceExtensions.RedisPipeline) on GitHub-hosted runners -
-          # turning a real cache Hit/Miss into a resilience Bypass and
-          # failing RedisOrderCacheTests/RedisIdempotencyStoreTests, a false
-          # regression introduced by adding coverage collection itself, not
-          # by any product change. Unit tests never touch a real Redis/
-          # Postgres/Kafka Testcontainer, so they carry none of that risk.
-          # Cart.UnitTests/Catalog.UnitTests/Inventory.UnitTests joined this
-          # scope once each service had genuinely Docker-free business-rule
-          # tests to run (some moved out of their *.IntegrationTests project,
-          # where they'd been stranded needing no Testcontainer at all).
           for project in \
             apps/tests/Orders.UnitTests/Orders.UnitTests.csproj \
             apps/tests/Storefront.UnitTests/Storefront.UnitTests.csproj \
@@ -315,17 +256,6 @@ jobs:
         if: always()
         run: |
           dotnet tool install --global dotnet-reportgenerator-globaltool
-          # classfilters excludes EF migrations (Orders.Infrastructure/
-          # Payments.Service/Inventory.Service each have one
-          # *.Data.Migrations namespace, same pattern) and the EF model
-          # snapshot that lives alongside them - ~10,443 lines of
-          # generated code with zero meaningful branches, that no test
-          # here is meant to exercise and that only grows with every
-          # schema change. Left in, the line-coverage percentage was
-          # structurally depressed and fell a little further on every
-          # new migration regardless of how much real code got tested -
-          # forcing the threshold down over time instead of the
-          # threshold tracking actual test investment.
           reportgenerator -reports:"./coverage/**/coverage.cobertura.xml" \
             -targetdir:./coverage/report -reporttypes:"Html;TextSummary" \
             -classfilters:"-*.Migrations.*"
@@ -333,7 +263,7 @@ jobs:
 
       - name: upload coverage report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: coverage-report
           path: ./coverage/report
@@ -341,30 +271,6 @@ jobs:
 
       - name: enforce coverage threshold
         run: |
-          # 18.0% - a real margin under the 18.8% measured baseline
-          # (recalibrated 2026-08-11, two compounding changes at once):
-          #   1. The coverage report step above now excludes EF migrations
-          #      (-classfilters:"-*.Migrations.*") - ~10,443 lines of
-          #      generated code with zero meaningful branches that
-          #      structurally depressed every measurement before this and
-          #      would only get worse with each new migration, forcing the
-          #      threshold down over time regardless of actual test
-          #      investment.
-          #   2. Payments.UnitTests joined this scope (previously zero
-          #      dedicated coverage for Payments.Service - it lived
-          #      scattered in Orders.UnitTests under the wrong project
-          #      entirely), plus new coverage for Orders.Application's read
-          #      handlers (GetOrder/GetOrderHistory/ListOrderSummaries) and
-          #      BuildingBlocks.Messaging's dead-letter publisher base -
-          #      previously uncovered anywhere despite the second being
-          #      shared by every service's dead-letter path.
-          # Was 7.0% against a 7.7% baseline (2026-08-10, migrations still
-          # included). Coverage collection deliberately excludes the
-          # Integration/Contract test projects (see the "coverage (unit
-          # tests only)" step above), so this number is intentionally far
-          # below what the whole solution's tests exercise - it only gates
-          # the six *.UnitTests projects regressing, not overall solution
-          # coverage.
           threshold="18.0"
           line_coverage=$(grep -oE "Line coverage: [0-9.]+%" ./coverage/report/Summary.txt | grep -oE "[0-9.]+")
           echo "Line coverage: ${line_coverage}%"
@@ -375,9 +281,9 @@ jobs:
     name: integration and contract tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           global-json-file: global.json
 
@@ -401,7 +307,7 @@ jobs:
 
       - name: publish integration test results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: integration-test-results
           path: "apps/**/TestResults/**/*.trx"
@@ -411,9 +317,9 @@ jobs:
     name: storefront-web (lint, typecheck, build, test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
           cache: npm
@@ -441,18 +347,13 @@ jobs:
 
   build-and-push:
     name: build, scan, sign (${{ matrix.service }})
-    # storefront-service's image bakes in the storefront-web build (see its
-    # Dockerfile), so a broken frontend must block that image the same way
-    # a broken backend test blocks the rest - gating the whole matrix on
-    # both jobs is simpler than splitting storefront-service into its own
-    # job just to scope this dependency to one matrix entry.
     needs: [test, integration-test, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write # required for cosign keyless (Sigstore/Fulcio) signing
+      id-token: write
     strategy:
       matrix:
         include:
@@ -471,28 +372,21 @@ jobs:
           - service: storefront-service
             project: Storefront.Service
     env:
-      # Hardcoded lowercase rather than ghcr.io/${{ github.repository }}:
-      # the repo name is mixed-case (SagaEcommerce) and Docker/OCI
-      # registry paths must be lowercase - github.repository would produce
-      # an invalid tag.
       IMAGE: ghcr.io/daniloitagyba/saga-ecommerce/${{ matrix.service }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Publish the immutable commit tag only. Promotion resolves that tag to
-      # its digest, verifies the signature below and writes the digest into an
-      # environment overlay; no mutable tag is consumed by GitOps.
       - name: build and push (sha tag only)
         id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: apps/src/${{ matrix.project }}/Dockerfile
@@ -502,21 +396,21 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: generate SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
           image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           format: spdx-json
           output-file: sbom-${{ matrix.service }}.spdx.json
 
       - name: upload SBOM
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: sbom-${{ matrix.service }}
           path: sbom-${{ matrix.service }}.spdx.json
           retention-days: 90
 
       - name: scan for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           format: table
@@ -524,7 +418,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
-      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
 
       - name: sign image (keyless, Sigstore)
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
@@ -546,7 +440,7 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
 
       - name: upload immutable image provenance
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: image-provenance-${{ matrix.service }}
           path: image-${{ matrix.service }}.json

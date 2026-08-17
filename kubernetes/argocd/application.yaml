@@ -1,12 +1,6 @@
-# Bootstrap resource: applied once, imperatively, to tell Argo CD about this
-# repo. Everything it manages after that point is reconciled from git, not
-# from further kubectl commands - see docs/gitops/milestone-15-gitops-progressive-delivery.md.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  # Keep the original bootstrap identity so applying this tracked resource
-  # updates the lab application instead of creating a second controller for
-  # the same namespace.
   name: distributed-ecommerce
   namespace: argocd
 spec:
@@ -24,15 +18,6 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-  # selfHeal fights any controller that writes spec.replicas outside of
-  # git - orders-api's HPA (orders-api-hpa.yaml) and orders-worker's KEDA
-  # ScaledObject (orders-worker-scaledobject.yaml) both do exactly that.
-  # Without this, the moment either controller scales its target, Argo CD
-  # sees drift from the manifest and self-heals it straight back, which
-  # either flaps the replica count or pins it - silently nullifying the
-  # autoscaling and canary-analysis milestones. Neither base manifest sets
-  # spec.replicas any more (see orders-api.yaml/orders-worker.yaml) so
-  # this is the only place that value is now decided.
   ignoreDifferences:
     - group: argoproj.io
       kind: Rollout

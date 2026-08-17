@@ -3,14 +3,7 @@ using Orders.Application.UseCases.ListOrderSummaries;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// ClampLimit and the handler's delegation to IOrderSummaryRepository had
-/// no coverage anywhere. A spy fake (records what it was called with)
-/// rather than asserting on returned rows: OrderSummary is EF-only to
-/// construct meaningfully, and the two things actually worth testing here -
-/// the limit gets clamped, the right filters reach the repository - don't
-/// need any real rows to prove.
-/// </summary>
+/// <summary>Covers ClampLimit and the handler's delegation to IOrderSummaryRepository via a spy fake, since OrderSummary is EF-only to construct meaningfully.</summary>
 public sealed class ListOrderSummariesHandlerTests
 {
     [Theory]

@@ -7,40 +7,11 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace BuildingBlocks.WebAuthentication;
 
-/// <summary>
-/// The JWT bearer wiring Catalog.Service,
-/// Inventory.Service, Cart.Service and Orders.Api each carried near-verbatim
-/// in their own Program.cs - named at the time as
-/// a real cost of that approach, not missed. One copy now, one
-/// per service's own Audience being the only thing that ever actually
-/// differed between them.
-/// </summary>
+/// <summary>The JWT bearer wiring shared across services, with each service's own Audience the only thing that differs.</summary>
 public static class KeycloakJwtBearerExtensions
 {
-    /// <summary>
-    /// Bearer tokens are validated against Keycloak's own
-    /// JWKS, fetched from its OIDC discovery document and refreshed
-    /// automatically - no key material lives in any service's config.
-    /// <paramref name="audience"/> is a hardcoded-audience protocol mapper
-    /// (scripts/keycloak-configure-realm.sh) per client, not the
-    /// client_credentials grant's default "account" audience, so a token
-    /// minted for another client is rejected on audience alone. Keycloak
-    /// nests realm roles under "realm_access": { "roles": [...] }, not as
-    /// flat claims; without the OnTokenValidated below, RequireRole() always 403s.
-    ///
-    /// Authentication:AlternateAuthority (optional) is a second issuer this
-    /// service also trusts, without changing where it fetches JWKS from
-    /// (still Authentication:Authority - that address has to be reachable
-    /// from inside the service's own network either way). It exists for
-    /// exactly one reason: a shopper's browser and this service reach
-    /// Keycloak by different addresses (the service via the internal
-    /// "keycloak" Docker DNS name, a browser via Keycloak's LAN-published
-    /// port), and with KC_HOSTNAME_STRICT=false and no fixed KC_HOSTNAME,
-    /// Keycloak mints a token whose "iss" claim reflects whichever address
-    /// actually issued it - so a token minted through the browser's path
-    /// carries an issuer this service's default single-Authority validation
-    /// would otherwise reject outright.
-    /// </summary>
+    /// <summary>Validates bearer tokens against Keycloak's JWKS and promotes realm_access roles into role claims.</summary>
+    /// <param name="audience">The audience this service's tokens must carry.</param>
     public static AuthenticationBuilder AddKeycloakJwtBearer(
         this IServiceCollection services, IConfiguration configuration, string audience)
     {

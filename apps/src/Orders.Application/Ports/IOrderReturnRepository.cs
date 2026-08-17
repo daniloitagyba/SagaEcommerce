@@ -8,11 +8,7 @@ public interface IOrderReturnRepository
     Task<Order?> FindForReturnAsync(Guid orderId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Persists the return, the updated per-line returned quantities, the
-    /// refund and restock commands, and - when everything has come back -
-    /// the order's move to Returned. All in one transaction: a refund
-    /// command that outlived a rolled-back return would give money away for
-    /// goods the shopper still has.
+    /// Persists an order return.
     /// </summary>
     Task SaveReturnAsync(
         Order order,

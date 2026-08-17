@@ -6,7 +6,6 @@ using Orders.Infrastructure.Caching;
 
 namespace Orders.ArchitectureTests;
 
-// Fitness functions for the ports-and-adapters boundary between Orders.Application and its outer layers.
 public class ApplicationLayerTests
 {
     private static readonly Assembly ApplicationAssembly = typeof(CreateOrderHandler).Assembly;
@@ -31,10 +30,6 @@ public class ApplicationLayerTests
     [InlineData("Microsoft.AspNetCore")]
     public void ApplicationDoesNotDependOnAnyInfrastructureFramework(string frameworkNamespace)
     {
-        // Orders.Application references only BuildingBlocks.Contracts and
-        // BuildingBlocks.Observability - nothing stops a use case handler
-        // from reaching for IDatabase/DbContext directly instead of an
-        // Orders.Application.Ports interface, so this still matters.
         var result = Types.InAssembly(ApplicationAssembly)
             .ShouldNot()
             .HaveDependencyOn(frameworkNamespace)
@@ -58,11 +53,6 @@ public class ApplicationLayerTests
         Assert.True(result.IsSuccessful, Describe(result));
     }
 
-    // Interface Segregation guardrail: a port growing past this is a port
-    // that has stopped being one job for one consumer. 8 leaves real room
-    // over today's largest (IOrderCache, 3 members) while still catching a
-    // future port creeping into a god-interface no single adapter should
-    // have to implement whole.
     private const int MaximumPortMembers = 8;
 
     [Fact]
@@ -76,7 +66,6 @@ public class ApplicationLayerTests
             .GetTypes()
             .ToList();
 
-        // Guards the rule below from passing trivially if every port were moved out of the namespace.
         Assert.NotEmpty(ports);
 
         var oversized = ports
@@ -102,7 +91,6 @@ public class ApplicationLayerTests
             .GetTypes()
             .ToList();
 
-        // A rule with nothing to check passes trivially - guard against a rename silently making this test meaningless.
         Assert.NotEmpty(implementors);
 
         var result = Types.InAssembly(InfrastructureAssembly)

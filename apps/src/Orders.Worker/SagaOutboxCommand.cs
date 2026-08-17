@@ -6,9 +6,7 @@ using NpgsqlTypes;
 namespace Orders.Worker;
 
 /// <summary>
-/// A command emitted by the order process manager. It is persisted in the
-/// same PostgreSQL transaction as the saga transition that produced it and
-/// delivered asynchronously by <see cref="SagaOutboxPublisher"/>.
+/// Represents a persisted saga command.
 /// </summary>
 public sealed record SagaOutboxCommand(
     Guid Id,

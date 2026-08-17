@@ -15,19 +15,7 @@ using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// Closes the gap the audit's finding 1 flagged: before OrderStatusChanged,
-/// order_summaries (OrderProjectionProcessor) and order_events
-/// (OrderEventStoreProjector) only ever learned an order's status from
-/// OrderCreated/PaymentDecided, so a saga-driven Confirmed - reached via
-/// OrderStatusStore, the high-volume path in Saga:Mode=Orchestration, the
-/// deployed default - never reached either. This test drives
-/// OrderStatusStore.TryConfirmAsync for real (the same call
-/// OrderSagaReplyConsumer.HandleCommitRepliedAsync makes), reads the exact
-/// outbox row it queues, and feeds it to both projection consumers -
-/// proving the read model and the event-store timeline both actually catch
-/// up, not just that the outbox row exists.
-/// </summary>
+/// <summary>Closes the gap the audit's finding 1 flagged: before OrderStatusChanged, order_summaries and order_events only ever learned an order's status from OrderCreated/PaymentDecided, so a saga-driven Confirmed never reached either.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class OrderStatusChangedProjectionTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
@@ -64,10 +52,6 @@ public sealed class OrderStatusChangedProjectionTests(PostgresFixture fixture) :
         _inboxStore = new InboxStore(_dataSource, pipelineProvider);
         _eventStoreAppender = new OrderEventStoreAppender(_dataSource, pipelineProvider);
 
-        // Never actually asked for Avro in this test (OrderStatusChanged is
-        // plain JSON) - constructed only because both projectors' Avro
-        // deserializer is built in their constructor regardless of which
-        // topic a given message arrives on.
         _schemaRegistryClient = new CachedSchemaRegistryClient(new SchemaRegistryConfig { Url = _redpanda.GetSchemaRegistryAddress() });
     }
 
@@ -87,19 +71,9 @@ public sealed class OrderStatusChangedProjectionTests(PostgresFixture fixture) :
         _dbContext.Orders.Add(order);
         await _dbContext.SaveChangesAsync();
 
-        // Seeds order_summaries the way a real OrderCreated projection
-        // would, so the write this test actually cares about is a genuine
-        // UPDATE against an existing row, the same shape a live order goes
-        // through - not an INSERT that would pass even if the upsert's own
-        // update branch were broken.
         await _projectionStore.ProjectOrderCreatedAsync(
             order.Id, order.CustomerId, order.Amount, order.Currency, order.CreatedAt, DateTimeOffset.UtcNow, CancellationToken.None);
 
-        // The same call OrderSagaReplyConsumer.HandleCommitRepliedAsync makes
-        // on a genuinely confirmed order - queues OrderStatusChanged onto the
-        // outbox in the same transaction as the status CAS (EfOrderStatusRepository's
-        // API-driven twin does the equivalent write; this is the saga-driven,
-        // high-volume path in Saga:Mode=Orchestration).
         var transitioned = await _orderStatusStore.TryConfirmAsync(order.Id, "projection-test-correlation", CancellationToken.None);
         Assert.True(transitioned);
 
@@ -127,11 +101,7 @@ public sealed class OrderStatusChangedProjectionTests(PostgresFixture fixture) :
         Assert.Contains(events, e => e.EventType == "OrderConfirmed");
     }
 
-    /// <summary>
-    /// Reads back the exact row OrderStatusStore queued - not a hand-built
-    /// OrderStatusChanged - so this test fails if the outbox payload shape
-    /// ever drifts from what either projector expects to deserialize.
-    /// </summary>
+    /// <summary>Reads back the exact row OrderStatusStore queued so this test fails if the outbox payload shape ever drifts from what either projector expects to deserialize.</summary>
     private async Task<byte[]> ReadQueuedStatusChangedPayloadAsync()
     {
         await using var command = _dataSource.CreateCommand(

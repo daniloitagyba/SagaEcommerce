@@ -11,10 +11,6 @@ using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Same guard Orders.Api already carries, where
-// one unregistered IProducer took the whole outbox down while the service
-// went on reporting healthy - a background loop cannot fail loudly on its
-// own, so the failure has to happen at startup instead.
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateOnBuild = true;
@@ -91,14 +87,6 @@ builder.Services.Configure<RetentionOptions>(options =>
     [
         new RetentionTarget("outbox_messages", "processed_at"),
         new RetentionTarget("inbox_messages", "processed_at"),
-        // A committed reservation stops being useful audit evidence once
-        // both the anti-entropy sweep (a cancelled-order divergence is
-        // caught within one sweep interval of occurring, not months later)
-        // and the return window (7 days, ReturnOptions.RegretWindowDays)
-        // have had every realistic chance to act on it. 60 days is
-        // generous on both counts, not a measured number - unlike
-        // outbox/inbox, there is no load-test data yet for how fast this
-        // table actually grows.
         new RetentionTarget("inventory_reservation_ledger", "committed_at", RetentionDaysOverride: 60)
     ];
     options.RetentionDays = builder.Configuration.GetValue("Retention:RetentionDays", 7);
@@ -232,24 +220,13 @@ builder.Services.AddSingleton<IHostedService>(serviceProvider =>
         [options.ReplenishmentNeededTopic], options.DeadLetterTopic,
         processingOptions, processor.ProcessAsync, deadLetterPublisher.PublishAsync, logger);
 });
-// GET /inventory (exact quantities, whole catalog) was
-// unauthenticated - commercially sensitive sell-through data for anyone
-// who could reach this pod. Same JWKS-backed validation as Orders.Api.
 builder.Services.AddKeycloakJwtBearer(builder.Configuration, audience: "inventory-service");
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("inventory:read", policy => policy.RequireRole("inventory:read"));
 
-// KafkaHealthCheck must be a singleton, not the transient default
-// AddCheck<T> would otherwise register - see that class's own comment.
 builder.Services.AddSingleton<KafkaHealthCheck>();
 builder.Services.AddHealthChecks()
     .AddTypeActivatedCheck<PostgresHealthCheck>("postgres", failureStatus: null, tags: ["ready"], args: ["Inventory"])
-    // Not "ready" - this service also serves GET /inventory/backorders and
-    // GET /inventory/committed-reservations over plain HTTP for Orders.Worker's
-    // anti-entropy sweep, reads that have nothing to do with Kafka. See
-    // Payments.Service's identical reasoning and
-    // docs/roadmap-milestones-91-99.md, "readiness is gated on
-    // dependencies the code deliberately treats as optional".
     .AddCheck<KafkaHealthCheck>("kafka", tags: ["live-dependencies"]);
 
 var app = builder.Build();

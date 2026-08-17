@@ -3,15 +3,7 @@ using Orders.Domain.Pricing;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// AllocateTax in isolation, with hand-picked per-line
-/// discounts rather than ones a real promotion would produce - the pricing
-/// engine's own AllocateDiscounts always spreads a discount proportional to
-/// raw subtotal (see PricingEngineTests), which makes discounted-value and
-/// raw-subtotal weighting numerically identical for anything the real
-/// engine can produce. Feeding AllocateTax an uneven discount directly is
-/// the only way to actually observe it weighting by discounted value.
-/// </summary>
+/// <summary>AllocateTax in isolation with hand-picked per-line discounts, since the real engine's AllocateDiscounts always spreads proportional to raw subtotal - feeding AllocateTax an uneven discount directly is the only way to observe discounted-value weighting.</summary>
 public class PricingAllocationTests
 {
     private static readonly Currency Brl = Currency.FromCode("BRL");
@@ -22,9 +14,6 @@ public class PricingAllocationTests
     [Fact]
     public void WeightsByDiscountedValueNotRawSubtotal()
     {
-        // Two equal 100.00 lines, but line A carries the entire 40.00
-        // discount and line B carries none - discounted values are 60.00
-        // and 100.00, an uneven 3:5 split despite equal raw subtotals.
         var lines = new[] { Line("SKU-A", 100m), Line("SKU-B", 100m) };
         var lineDiscounts = new[] { new Money(40m, Brl), new Money(0m, Brl) };
 

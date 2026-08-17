@@ -14,20 +14,7 @@ public sealed record CartSnapshot(
     long Version,
     CartCrdtState State);
 
-/// <summary>
-/// Redis IS the system of record here, not a cache in front of one - no
-/// Postgres fallback, no cache-aside factory like RedisOrderCache. If lost,
-/// the cart is simply gone, an acceptable trade for ephemeral, low-value
-/// state. A cart is a single Redis Hash (field = Sku, value = JSON) so it
-/// reads and refreshes its TTL in one round trip.
-///
-/// Deliberately does NOT use BuildingBlocks' shared "redis" pipeline: its
-/// 150ms timeout is tuned for cache-aside use, where a timeout just means
-/// "fall back to Postgres" - fast failure is wrong when there's no
-/// fallback, and the same aggressive timeout failed otherwise-successful
-/// requests against a cold Testcontainers Redis on a loaded CI runner.
-/// CartResiliencePipeline keeps the circuit breaker but uses a longer timeout.
-/// </summary>
+/// <summary>Redis-backed cart store; Redis is the system of record, not a cache, and a cart is a single Redis Hash.</summary>
 public sealed class CartStore(
     IConnectionMultiplexer connectionMultiplexer,
     ResiliencePipelineProvider<string> pipelineProvider,
@@ -125,10 +112,6 @@ public sealed class CartStore(
                         ? state.Decrease(item.Sku, "server", currentQuantity - item.Quantity)
                         : state;
 
-                // A removed line retains counters and tombstones as causal
-                // history. Re-adding it needs a fresh live dot even when the
-                // target quantity required only a decrease (or no counter
-                // change at all), otherwise it would remain absent.
                 if (!current.IsPresent)
                 {
                     next = next.Increase(
@@ -140,14 +123,7 @@ public sealed class CartStore(
             cancellationToken);
     }
 
-    /// <summary>
-    /// The mechanical piece that was missing for a shopper hitting a
-    /// checkout PriceMismatch (Orders.Api's CreateOrderHandler): previously
-    /// the only way to update a cart line's snapshotted price was to
-    /// DELETE it and PUT it again, discarding AddedAt and forcing a full
-    /// re-add instead of a targeted refresh. Leaves the CRDT quantity state
-    /// untouched - see CartCrdtState.RefreshMetadata.
-    /// </summary>
+    /// <summary>Refreshes a cart line's snapshotted price/name without touching its CRDT quantity state.</summary>
     public Task<bool> RefreshItemPriceAsync(string ownerId, string sku, CartItemMetadata metadata, CancellationToken cancellationToken)
     {
         return MutateAsync(
@@ -205,15 +181,7 @@ public sealed class CartStore(
         }, cancellationToken).AsTask();
     }
 
-    /// <summary>
-    /// A monotonically increasing counter, bumped on every
-    /// mutation - the BFF's checkout uses it to build a deterministic
-    /// Idempotency-Key ("this exact cart state, checked out once") without
-    /// needing a client-generated one, and to notice when the cart changed
-    /// under a shopper mid-checkout. Stored as an ordinary hash field
-    /// rather than a separate key so it lives and dies with the cart itself -
-    /// no separate TTL to keep in sync, no orphaned counter after a cart expires.
-    /// </summary>
+    /// <summary>Returns the cart's monotonically increasing version, bumped on every mutation.</summary>
     public Task<long> GetVersionAsync(string cartId, CancellationToken cancellationToken)
     {
         return _pipeline.ExecuteAsync(async ct =>
@@ -224,15 +192,7 @@ public sealed class CartStore(
         }, cancellationToken).AsTask();
     }
 
-    /// <summary>
-    /// Reconciles operations a client tracked while offline
-    /// (a different tab, a device that lost connectivity) against whatever
-    /// is currently stored, via CartCrdtState.Merge - see that type for the
-    /// no-resurrection and add-wins properties this buys over the plain
-    /// last-write-wins upserts above. The final replace is a versioned
-    /// compare-and-swap; a concurrent mutation causes a re-read and merge,
-    /// so no writer can silently overwrite a state it never observed.
-    /// </summary>
+    /// <summary>Reconciles client-tracked offline operations against the current stored state via a versioned compare-and-swap.</summary>
     public Task<IReadOnlyList<CartLineItem>> MergeAsync(
         string cartId, CartCrdtState clientState, CancellationToken cancellationToken)
     {
@@ -351,12 +311,6 @@ public sealed class CartStore(
         return redis.call('DEL', key)
         """;
 
-    // Replaces every field but the version one, then bumps the version and
-    // refreshes the TTL - all as a single Redis command, so no concurrent
-    // reader can ever observe the hash mid-replace. Re-enumerates the
-    // fields to delete via HKEYS instead of trusting a list captured
-    // earlier in C#, so it's correct even if something else touched the
-    // hash between this call's own read and this script running.
     private const string ReplaceHashScript = """
         local key = KEYS[1]
         local versionField = ARGV[1]

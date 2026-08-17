@@ -3,11 +3,6 @@ using NetArchTest.Rules;
 
 namespace Services.ArchitectureTests;
 
-// Fitness functions for the four single-project services with a Domain/
-// folder: nothing physically stops frameworks leaking into that namespace
-// the way project boundaries stop it for Orders, so this checks at the
-// namespace level. Catalog.Service's Product failed this for real (MongoDB
-// attributes on the entity) until the mapping was moved out.
 public class DomainNamespaceTests
 {
     private static readonly string[] InfrastructureFrameworkNamespaces =
@@ -64,10 +59,6 @@ public class DomainNamespaceTests
     [InlineData("StackExchange.Redis")]
     public void StorefrontServiceOwnsNoPersistenceOrMessaging(string frameworkNamespace)
     {
-        // Storefront.Service is a BFF/proxy with no Domain namespace of its
-        // own, so the rule here is "never own persistence or
-        // messaging at all" - a regression guard against a future project
-        // reference reintroducing one of these dependencies transitively.
         var assembly = typeof(Storefront.Service.StorefrontEndpoints).Assembly;
 
         var result = Types.InAssembly(assembly)
@@ -91,10 +82,6 @@ public class DomainNamespaceTests
     [InlineData("Polly")]
     public void BuildingBlocksContractsHasNoFrameworkDependency(string frameworkNamespace)
     {
-        // BuildingBlocks was split into six projects-per-concern so a
-        // dependency-free shared library wouldn't drag EF Core, Kafka,
-        // Redis, and OpenTelemetry into every consumer. This guards the
-        // split itself: nothing should land in Contracts pulling one back in.
         var assembly = typeof(BuildingBlocks.OrderCreated).Assembly;
 
         var result = Types.InAssembly(assembly)

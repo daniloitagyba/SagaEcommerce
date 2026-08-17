@@ -28,15 +28,7 @@ public sealed class InventoryProxyOptions
     public string BaseUrl { get; init; } = "http://localhost:5170";
 }
 
-/// <summary>
-/// The product-summary endpoint fans out to Catalog and
-/// Inventory in parallel and waits for both, so tail latency is at least as
-/// bad as the slowest leg (Dean &amp; Barroso's "Tail At Scale").
-/// HedgeDelayMilliseconds &gt; 0 fires a second request to Inventory if the
-/// first hasn't answered within that delay, taking whichever wins - the
-/// same mitigation already proved for GET /orders/{id}. 0 (default)
-/// disables hedging.
-/// </summary>
+/// <summary>Configures product-summary fan-out hedging; HedgeDelayMilliseconds &gt; 0 fires a second Inventory request if the first is slow.</summary>
 public sealed class ProductSummaryOptions
 {
     public const string SectionName = "ProductSummary";

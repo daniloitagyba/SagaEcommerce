@@ -2,12 +2,7 @@ using Orders.Domain;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// The budget-limited counterpart to CouponEligibilityTests (Milestone 90).
-/// No per-customer limit, no NotFound case - CampaignEligibility.Evaluate
-/// always receives an already-looked-up snapshot, since the caller resolved
-/// it automatically rather than from a shopper-typed code.
-/// </summary>
+/// <summary>The budget-limited counterpart to CouponEligibilityTests (Milestone 90); no per-customer limit or NotFound case since CampaignEligibility.Evaluate always receives an already-looked-up snapshot.</summary>
 public class CampaignEligibilityTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 6, 12, 0, 0, TimeSpan.Zero);
@@ -66,7 +61,6 @@ public class CampaignEligibilityTests
         Assert.Equal(
             CampaignRejectionReason.Expired,
             CampaignEligibility.Evaluate(campaign, subtotal: 100m, atExpiry));
-        // ...and the instant it opens is already valid.
         Assert.Equal(
             CampaignRejectionReason.None,
             CampaignEligibility.Evaluate(campaign, subtotal: 100m, campaign.ValidFrom));

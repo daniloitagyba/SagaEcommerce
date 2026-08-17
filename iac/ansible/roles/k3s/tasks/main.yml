@@ -5,11 +5,6 @@
   changed_when: false
   failed_when: false
 
-# Same root requirement and same "no-op here" note as roles/docker - K3s's
-# install script sets up a systemd service, which this environment's
-# non-sudo user genuinely cannot do. Pinned to the version this cluster
-# actually runs (confirmed via `kubectl version`), not "whatever's latest
-# today" - an unpinned install script is not a reproducible one.
 - name: Install K3s (only if missing)
   when: k3s_check.rc != 0
   become: true
@@ -36,10 +31,6 @@
         state: directory
         mode: "0700"
 
-    # A copy, not a symlink: `--write-kubeconfig-mode 644` (set at install
-    # time above) makes /etc/rancher/k3s/k3s.yaml world-readable, so this
-    # needs no elevated privilege - reading a world-readable file to write
-    # into the invoking user's own home directory.
     - name: Copy K3s's kubeconfig to kubectl's default lookup path
       ansible.builtin.copy:
         src: /etc/rancher/k3s/k3s.yaml

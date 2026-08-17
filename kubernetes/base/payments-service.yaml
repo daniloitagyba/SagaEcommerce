@@ -1,9 +1,3 @@
-# No PodDisruptionBudget for this Deployment, deliberately - unlike
-# cart-service/catalog-service/inventory-service/orders-api/storefront-
-# service, which all define one. With replicas: 1 and strategy: Recreate
-# below, a PDB with minAvailable: 1 would report 0 disruptions allowed at
-# all times and block every voluntary node drain (cluster upgrades,
-# node pool scale-down) indefinitely. Don't "fix" this by adding one back.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,9 +36,6 @@ spec:
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
-            # Missing here previously - AddKeycloakJwtBearer throws during
-            # service registration without it, before any health check runs.
-            # Must match compose.yaml's value.
             - name: Authentication__Authority
               value: http://keycloak:8080/realms/orders-lab
             - name: ConnectionStrings__Payments
@@ -72,11 +63,6 @@ spec:
                 configMapKeyRef:
                   name: kafka-config
                   key: bootstrap-servers
-            # Milestone 68/75: PaymentSettlementOptions binds its own
-            # section with the same localhost:9092 default every other
-            # Kafka options class here has - missing from this manifest
-            # entirely until now, which would leave capture/void/refund
-            # consumption silently trying to reach the pod itself.
             - name: PaymentSettlement__BootstrapServers
               valueFrom:
                 configMapKeyRef:
@@ -84,15 +70,11 @@ spec:
                   key: bootstrap-servers
             - name: SchemaRegistry__Url
               value: http://schema-registry:8081
-            # Sourced from saga-config so this and orders-worker's
-            # Saga__Mode can't drift apart.
             - name: Saga__Mode
               valueFrom:
                 configMapKeyRef:
                   name: saga-config
                   key: mode
-            # OutboxPublisher<PaymentsDbContext> - see orders-api's own
-            # comment on these five.
             - name: Outbox__BatchSize
               value: "5"
             - name: Outbox__PollIntervalMilliseconds
@@ -119,16 +101,6 @@ spec:
               value: http://pyroscope:4040
             - name: PYROSCOPE_APPLICATION_NAME
               value: payments-service
-            # The CLR profiler attach variables - moved out of the Dockerfile's
-            # own ENV (where they used to be unconditional and applied to
-            # every environment, Compose included, regardless of
-            # PYROSCOPE_PROFILING_ENABLED above) so a build with no
-            # profiling configuration - Compose - genuinely runs with no
-            # profiler attached, instead of CORECLR_ENABLE_PROFILING loading
-            # one at process startup and only Pyroscope's own
-            # PYROSCOPE_PROFILING_ENABLED (read after that point) deciding
-            # whether it does anything. The .so files themselves stay baked
-            # into the image - only the decision to attach lives here now.
             - name: CORECLR_ENABLE_PROFILING
               value: "1"
             - name: CORECLR_PROFILER
@@ -169,10 +141,6 @@ spec:
               cpu: 100m
               memory: 96Mi
             limits:
-              # Pyroscope's native profiler refuses to start below a 1-core
-              # CPU limit ("CPU limit is too low for the profiler to work
-              # properly" - logged at container startup with DD_TRACE_DEBUG=1).
-              # Was 500m before continuous profiling was added.
               cpu: 1000m
               memory: 256Mi
           securityContext:

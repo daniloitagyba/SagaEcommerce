@@ -5,12 +5,7 @@ using Orders.Domain.Pricing;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// Worked examples for the promotion rules. The invariants
-/// that must hold for <em>every</em> input live in
-/// PricingEnginePropertyTests - these pin the specific numbers a human
-/// would check on a receipt.
-/// </summary>
+/// <summary>Worked examples for the promotion rules; the invariants that must hold for every input live in PricingEnginePropertyTests - these pin the specific numbers a human would check on a receipt.</summary>
 public class PricingEngineTests
 {
     private static readonly Currency Brl = Currency.FromCode("BRL");
@@ -21,7 +16,6 @@ public class PricingEngineTests
     private static PricingLine Line(string sku, string category, int quantity, decimal unitPrice) =>
         new(sku, $"Product {sku}", category, quantity, new Money(unitPrice, Brl));
 
-    // The engine receives a coupon already resolved and eligible (see CouponEligibility), so tests supply the resolved fact, not a code.
     private static PricingRequest Request(decimal? couponPercentage, params PricingLine[] lines) =>
         new("customer-1", Brl, lines,
             couponPercentage is { } percentage
@@ -31,7 +25,6 @@ public class PricingEngineTests
     [Fact]
     public void PricesAPlainOrderWithNoPromotions()
     {
-        // 2 x 30.00 = 60.00, below the 200.00 free-shipping threshold.
         var breakdown = BuildEngine().Price(Request(null, Line("SKU-BOOK-001", "books", 2, 30m)));
 
         Assert.Equal(new Money(60m, Brl), breakdown.Subtotal);
@@ -55,7 +48,6 @@ public class PricingEngineTests
     [Fact]
     public void PricesWithoutACouponWhenNoneWasResolved()
     {
-        // Coupon validity moved into CouponEligibility, which runs before pricing - see CouponEligibilityTests for the rejection cases.
         var breakdown = BuildEngine().Price(Request(null, Line("SKU-BOOK-001", "books", 1, 100m)));
 
         Assert.Empty(breakdown.Discounts);
@@ -65,7 +57,6 @@ public class PricingEngineTests
     [Fact]
     public void StacksACouponWithACategoryPromotion()
     {
-        // Electronics carry a standing 5% promotion, the coupon is 10% of the whole order - two independent rules the engine combines.
         var breakdown = BuildEngine().Price(Request(
             10m,
             Line("SKU-ELEC-001", "electronics", 1, 1_000m),
@@ -76,7 +67,6 @@ public class PricingEngineTests
         Assert.Contains(breakdown.Discounts, d => d.Code == "SAVE" && d.Amount == new Money(110m, Brl));
         Assert.Contains(breakdown.Discounts, d => d.Code == "CATEGORY-ELECTRONICS" && d.Amount == new Money(50m, Brl));
         Assert.Equal(new Money(160m, Brl), breakdown.DiscountTotal);
-        // Subtotal cleared the free-shipping threshold, so nothing is added.
         Assert.Equal(new Money(0m, Brl), breakdown.ShippingTotal);
         Assert.Equal(new Money(940m, Brl), breakdown.GrandTotal);
     }
@@ -94,8 +84,6 @@ public class PricingEngineTests
     [Fact]
     public void GrantsFreeShippingOnTheGrossSubtotalSoACouponCannotRevokeIt()
     {
-        // 250.00 clears the 200.00 threshold; the 50% coupon drops the
-        // payable amount to 125.00, which does not - and shipping stays free.
         var breakdown = BuildEngine().Price(Request(50m, Line("SKU-ELEC-002", "audio", 1, 250m)));
 
         Assert.Equal(new Money(0m, Brl), breakdown.ShippingTotal);
@@ -105,7 +93,6 @@ public class PricingEngineTests
     [Fact]
     public void CapsStackedDiscountsAtTheSubtotalSoTheTotalNeverGoesNegative()
     {
-        // A 50% coupon and an 80% category promotion, each sane alone, together exceed the order's value.
         var options = new PricingOptions
         {
             CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["clearance"] = 80m },
@@ -116,22 +103,12 @@ public class PricingEngineTests
 
         Assert.Equal(new Money(100m, Brl), breakdown.DiscountTotal);
         Assert.Equal(new Money(0m, Brl), breakdown.GrandTotal);
-        // The itemised discounts must still add up to what was applied.
         Assert.Equal(
             breakdown.DiscountTotal,
             breakdown.Discounts.Aggregate(new Money(0m, Brl), (running, d) => running + d.Amount));
     }
 
-    /// <summary>
-    /// Regression coverage for
-    /// docs/architecture/audit-2026-08-15-domain-and-business-rules-review.md's
-    /// finding 4: when the cap binds, the shopper-presented coupon
-    /// ("SAVE") must survive at full value and the automatic category
-    /// promotion ("CATEGORY-CLEARANCE") must absorb the truncation - not
-    /// the other way around, which is what CapDiscounts' old
-    /// alphabetical-by-code walk order would have picked here purely
-    /// because "CATEGORY-" sorts before "SAVE".
-    /// </summary>
+    /// <summary>Regression coverage for docs/architecture/audit-2026-08-15-domain-and-business-rules-review.md finding 4: when the cap binds, the shopper-presented coupon survives at full value and the automatic category promotion absorbs the truncation.</summary>
     [Fact]
     public void WhenTheCapBindsTheShopperPresentedCouponSurvivesInFullAndTheAutomaticDiscountAbsorbsTheTruncation()
     {
@@ -159,7 +136,6 @@ public class PricingEngineTests
 
         var breakdown = BuildEngine(options).Price(Request(10m, Line("SKU-BOOK-001", "books", 1, 100m)));
 
-        // 100.00 - 10.00 = 90.00 taxable, not 100.00.
         Assert.Equal(new Money(9m, Brl), breakdown.TaxTotal);
         Assert.Equal(new Money(99m, Brl), breakdown.GrandTotal);
     }
@@ -167,8 +143,6 @@ public class PricingEngineTests
     [Fact]
     public void SplitsTheDiscountAcrossLinesWithoutLosingACentavo()
     {
-        // 10.00 of discount over three equal lines is the textbook case
-        // where naive per-line rounding loses a centavo.
         var options = new PricingOptions { FlatShippingAmount = 0m };
 
         var breakdown = BuildEngine(options).Price(Request(
@@ -184,16 +158,9 @@ public class PricingEngineTests
             breakdown.LineDiscounts.Aggregate(new Money(0m, Brl), (running, share) => running + share));
     }
 
-    // The property tests found this via 10,000 random orders
-    // (CsCheck seed 53LlaLK3rYz2): NRules refuses to insert a fact that
-    // already compares equal to one in working memory. Before PricingLine
-    // and AppliedDiscount switched to identity equality, either test below
-    // crashed pricing outright - a real cart shape, not a contrived one.
-
     [Fact]
     public void TwoIdenticalLinesPriceIndependentlyRatherThanCrashing()
     {
-        // Same SKU, quantity and price as two separate lines - e.g. a cart that never merged a duplicate add.
         var breakdown = BuildEngine().Price(Request(
             null,
             Line("SKU-025", "clearance", 10, 100.00m),
@@ -206,10 +173,6 @@ public class PricingEngineTests
     [Fact]
     public void TwoBulkDiscountsThatRoundToTheSameAmountBothApply()
     {
-        // Same SKU/quantity, unit prices one centavo apart, so the 8% bulk
-        // discount rounds to the same centavo for both lines (182.736 and
-        // 182.744 both -> 182.74). Two identical-looking AppliedDiscount
-        // facts are still two separate grants, one per line.
         var options = new PricingOptions { BulkQuantityThreshold = 5, BulkDiscountPercentage = 8m, FlatShippingAmount = 0m };
 
         var breakdown = BuildEngine(options).Price(Request(
@@ -224,13 +187,9 @@ public class PricingEngineTests
             breakdown.Discounts.Aggregate(new Money(0m, Brl), (running, d) => running + d.Amount));
     }
 
-    // LineTaxes - the per-line share of TaxTotal a return
-    // refunds alongside LineDiscounts' goods share.
-
     [Fact]
     public void TaxIsProratedAcrossLinesByTheirDiscountedValue()
     {
-        // No coupon, no per-line discount: tax follows raw subtotal 2:1.
         var options = new PricingOptions { TaxRatePercentage = 10m, FlatShippingAmount = 0m };
 
         var breakdown = BuildEngine(options).Price(Request(
@@ -247,14 +206,6 @@ public class PricingEngineTests
     [Fact]
     public void ADiscountFallsProportionallyAcrossLinesByRawSubtotalSoEqualSizedLinesSplitTaxEvenlyEvenUnderATargetedPromotion()
     {
-        // AllocateDiscounts spreads the order-level discount
-        // total by each line's raw subtotal, regardless of which rule
-        // actually granted it - a category promotion that only matched the
-        // electronics line still shows up as an even split here, because
-        // both lines carry the same subtotal. This is the existing
-        // discount-allocation behaviour, not new here; the
-        // test exists so a change to that allocation is forced to notice
-        // it changes tax refunds on returns too, not just discount receipts.
         var options = new PricingOptions
         {
             TaxRatePercentage = 10m,
@@ -281,8 +232,6 @@ public class PricingEngineTests
         Assert.Equal(new Money(0m, Brl), Assert.Single(breakdown.LineTaxes));
     }
 
-    // Milestone 90: validity windows, exclusivity groups, and campaigns.
-
     [Fact]
     public void ACategoryPromotionOutsideItsWindowDoesNotFire()
     {
@@ -291,7 +240,6 @@ public class PricingEngineTests
         {
             FlatShippingAmount = 0m,
             CategoryDiscounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase) { ["electronics"] = 10m },
-            // The campaign already ended a month before "now".
             CategoryDiscountWindow = new PromotionWindow(now.AddMonths(-3), now.AddMonths(-1))
         };
 
@@ -323,9 +271,6 @@ public class PricingEngineTests
     [Fact]
     public void TwoDiscountsInTheSameExclusivityGroupOnlyTheBiggerSurvives()
     {
-        // Category (10% of 100 = 10) and bulk (20% of 100 = 20) both fire on
-        // the same line and share a group - only the bulk discount, the
-        // larger one, should survive into the breakdown.
         var options = new PricingOptions
         {
             FlatShippingAmount = 0m,
@@ -347,8 +292,6 @@ public class PricingEngineTests
     [Fact]
     public void DiscountsInDifferentGroupsOrWithNoGroupAllStack()
     {
-        // Tier (ungrouped) always stacks with everything - exclusivity only
-        // ever removes discounts that share a group with another.
         var options = new PricingOptions
         {
             FlatShippingAmount = 0m,
@@ -386,7 +329,6 @@ public class PricingEngineTests
     [Fact]
     public void ACampaignNeverDiscountsBelowZero()
     {
-        // A flat R$20 campaign on a R$5 order must not send the total negative.
         var options = new PricingOptions { FlatShippingAmount = 0m };
         var request = new PricingRequest(
             "customer-1", Brl, [Line("SKU-A", "books", 1, 5m)],
@@ -402,7 +344,6 @@ public class PricingEngineTests
     [Fact]
     public void ACampaignAndACouponInTheSameGroupOnlyTheBiggerSurvives()
     {
-        // 15% of 200 = 30, bigger than the flat 20 campaign - the coupon should win.
         var request = new PricingRequest(
             "customer-1", Brl, [Line("SKU-A", "books", 1, 200m)],
             Coupon: new ResolvedCoupon("SAVE15", "15% off", 15m, "SITEWIDE"),

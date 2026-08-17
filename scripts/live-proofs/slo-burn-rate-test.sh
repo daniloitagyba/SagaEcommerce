@@ -8,11 +8,6 @@ prometheus_url=${PROMETHEUS_URL:-http://127.0.0.1:9090}
 alertmanager_url=${ALERTMANAGER_URL:-http://127.0.0.1:9093}
 results_root=${K6_RESULTS_DIRECTORY:-"$project_directory/artifacts/k6"}
 
-# This script observes the alerting pipeline without changing the image that
-# orders-api runs. The postgres-outage mode provokes real 5xx responses by
-# stopping only the lab Compose database and restores it through an exit trap.
-# A deliberately broken application build would still have to go through Git
-# and Argo CD because a direct image change is reverted by self-healing.
 for command_name in curl jq; do
   command -v "$command_name" >/dev/null
 done
@@ -78,7 +73,6 @@ case "$mode" in
     for command_name in docker python3; do
       command -v "$command_name" >/dev/null
     done
-    # shellcheck disable=SC1091
     source "$compose_directory/.env"
     orders_url=${ORDERS_URL:-"http://127.0.0.1:${ORDERS_PORT:-8088}"}
     access_token=$({ "$script_directory/../infra/keycloak-get-token.sh"; } 2>"$test_directory/token.log")

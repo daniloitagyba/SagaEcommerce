@@ -11,28 +11,7 @@ using Polly.Registry;
 namespace Orders.Worker;
 
 /// <summary>
-/// Delivers commands durably recorded by the saga store. PostgreSQL owns
-/// the retry state; a process crash after Kafka accepts a command but before
-/// the row is marked processed can only cause a duplicate, never a loss.
-/// Every target consumer is idempotent on its business identifier.
-///
-/// Claim-then-publish-then-mark, the same three-phase shape
-/// BuildingBlocks' own OutboxPublisher&lt;TDbContext&gt; uses (see
-/// OutboxPublisher.ClaimBatchAsync) - not the single long transaction this
-/// class used before Milestone 91. That transaction held every claimed
-/// row's FOR UPDATE lock (and the open transaction they imply) for as long
-/// as the whole batch's Kafka publish loop took, which is precisely what
-/// OutboxPublisher's own class comment warns never to do: a slow or
-/// unreachable broker must never hold Postgres row locks open, since that
-/// blocks VACUUM on the Orders database for the duration, not just this
-/// table. ClaimBatchAsync below claims by pushing next_attempt_at forward
-/// in a transaction that commits immediately; PublishAsync then runs
-/// outside any transaction, and MarkPublishedAsync/MarkFailedAsync/
-/// MoveToDeadLetterAsync each touch exactly one row in their own short
-/// statement. A crash between claim and mark simply makes the row
-/// reclaimable again once SagaOrchestrationOptions.OutboxClaimWindowSeconds
-/// elapses - the standard at-least-once outbox contract this codebase
-/// already relies on everywhere else, not a new failure mode.
+/// Publishes persisted saga commands.
 /// </summary>
 public sealed class SagaOutboxPublisher(
     NpgsqlDataSource dataSource,
@@ -44,13 +23,6 @@ public sealed class SagaOutboxPublisher(
 {
     private readonly SagaOrchestrationOptions _options = options.Value;
     private readonly ResiliencePipeline _kafkaPipeline = pipelineProvider.GetPipeline(ResilienceExtensions.KafkaProducerPipeline);
-    // No-retry transactional pipeline for every Postgres call below
-    // (claim/mark-published/mark-failed/dead-letter) - see
-    // ResilienceExtensions.PostgresTransactionPipeline's own comment. Not
-    // the same pipeline as the Kafka produce call: these are a different
-    // dependency with a different timeout/retry shape, and before
-    // Milestone 91 this whole class incorrectly shared one pipeline
-    // (tuned for Kafka) across both.
     private readonly ResiliencePipeline _dbPipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -81,9 +53,6 @@ public sealed class SagaOutboxPublisher(
     {
         var messages = await ClaimBatchAsync(cancellationToken);
 
-        // Outside any transaction from here on - see this class's own
-        // comment above for why a slow broker must never hold the claim
-        // transaction open across the publish loop.
         foreach (var item in messages)
         {
             await PublishAsync(item, cancellationToken);
@@ -93,12 +62,7 @@ public sealed class SagaOutboxPublisher(
     }
 
     /// <summary>
-    /// Claims a batch by pushing each row's next_attempt_at forward by
-    /// OutboxClaimWindowSeconds, inside a transaction that commits
-    /// immediately - the raw-Npgsql counterpart of
-    /// OutboxPublisher.ClaimBatchAsync. FOR UPDATE SKIP LOCKED is what lets
-    /// a second replica's own poll skip rows this one just claimed without
-    /// blocking on them.
+    /// Claims pending saga commands.
     /// </summary>
     private async Task<List<PendingSagaCommand>> ClaimBatchAsync(CancellationToken cancellationToken)
     {
@@ -233,11 +197,7 @@ public sealed class SagaOutboxPublisher(
     }
 
     /// <summary>
-    /// Moves a command that exhausted SagaOrchestrationOptions.OutboxMaximumAttempts
-    /// out of the pending set for good, atomically (one statement: a DELETE
-    /// ... RETURNING feeding an INSERT ... SELECT) so the row is never
-    /// visible in neither table nor both at once. See OutboxOptions.MaximumAttempts
-    /// for the shared outbox's identical reasoning.
+    /// Marks an exhausted saga command as failed.
     /// </summary>
     private async Task MoveToDeadLetterAsync(PendingSagaCommand item, int attemptCount, string error, CancellationToken cancellationToken)
     {

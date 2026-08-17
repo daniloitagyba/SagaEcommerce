@@ -3,13 +3,7 @@ using Orders.Domain;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// The coupon rules a bare percentage mapping didn't have - a coupon used
-/// to be a config entry mapping a code to a percentage, so it could never
-/// expire, run out, or be restricted. Evaluation is a pure function, so
-/// the whole rule set is testable without a database, the same discipline
-/// the pricing engine follows.
-/// </summary>
+/// <summary>The coupon rules a bare percentage mapping didn't have (expiry, redemption limits); CouponEligibility.Evaluate is a pure function, testable without a database.</summary>
 public class CouponEligibilityTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 6, 12, 0, 0, TimeSpan.Zero);
@@ -43,7 +37,6 @@ public class CouponEligibilityTests
     [Fact]
     public void AnUnknownCodeIsRejectedRatherThanSilentlyIgnored()
     {
-        // Unknown codes used to be dropped silently, defensible when a typo was the only way to produce one - not any more.
         Assert.Equal(
             CouponRejectionReason.NotFound,
             CouponEligibility.Evaluate(null, subtotal: 100m, customerRedemptionCount: 0, Now));
@@ -78,7 +71,6 @@ public class CouponEligibilityTests
         Assert.Equal(
             CouponRejectionReason.Expired,
             CouponEligibility.Evaluate(coupon, subtotal: 100m, customerRedemptionCount: 0, atExpiry));
-        // ...and the instant it opens is already valid.
         Assert.Equal(
             CouponRejectionReason.None,
             CouponEligibility.Evaluate(coupon, subtotal: 100m, customerRedemptionCount: 0, coupon.ValidFrom));
@@ -130,7 +122,6 @@ public class CouponEligibilityTests
     [Fact]
     public void ACouponWithALimitIsNeverAcceptedPastIt()
     {
-        // No combination of subtotal, window or history may accept a coupon past its total redemption cap - a future "VIPs bypass" rule fails here.
         var gen =
             from maxTotal in Gen.Int[1, 50]
             from redeemed in Gen.Int[0, 80]
@@ -154,7 +145,6 @@ public class CouponEligibilityTests
                 var reason = CouponEligibility.Evaluate(
                     coupon, input.subtotalCents / 100m, input.customerRedemptions, Now);
 
-                // Accepted implies strictly under both caps.
                 return reason != CouponRejectionReason.None
                     || (input.redeemed < input.maxTotal && input.customerRedemptions < input.maxPerCustomer);
             },

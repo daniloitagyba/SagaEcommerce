@@ -6,7 +6,7 @@ using Orders.Domain;
 
 namespace Orders.Application.UseCases.ReturnOrder;
 
-using Orders.Application; // CallerIdentity - a nested file-scoped namespace does not implicitly see its parent's types.
+using Orders.Application;
 
 public sealed record ReturnItemRequest(string Sku, int Quantity);
 
@@ -20,13 +20,6 @@ public sealed record ReturnOrderResult(
 
 /// <summary>
 /// Accepts a partial return and works out what it is worth.
-/// The refund arithmetic lives in the domain (Order.TryReturn ->
-/// ReturnRefundCalculator), since it needs the order's own per-line
-/// charged totals, which nothing outside the aggregate should recompute.
-/// The regret window's length is the one piece of that
-/// policy this handler supplies - everything else (whether this return
-/// actually falls inside it) is decided in the domain, from the order's
-/// own CreatedAt.
 /// </summary>
 public sealed class ReturnOrderHandler(
     IOrderReturnRepository repository,
@@ -50,12 +43,6 @@ public sealed class ReturnOrderHandler(
             return new ReturnOrderResult(ReturnRejectionReason.None, null, null, 0m, false, OrderNotFound: true);
         }
 
-        // Checked before TryReturn mutates anything, not
-        // after - the order is read either way to know whose it is, but a
-        // non-owner's request must never reach the mutation, even
-        // transiently. Reported the same as a genuinely missing order (see
-        // OrderEndpoints.GetByIdAsync's identical reasoning) so probing an
-        // id can't distinguish "not yours" from "doesn't exist."
         if (!caller.MayAccess(order.CustomerId))
         {
             return new ReturnOrderResult(ReturnRejectionReason.None, null, null, 0m, false, OrderNotFound: true);

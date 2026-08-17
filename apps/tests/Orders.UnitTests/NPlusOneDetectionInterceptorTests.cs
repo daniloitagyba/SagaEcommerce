@@ -64,10 +64,8 @@ public sealed class NPlusOneDetectionInterceptorTests
     {
         var logger = new RecordingLogger();
         using var context = CreateContext(logger, threshold: 5);
-        logger.Messages.Clear(); // setup's own seed inserts share command text too - only the action under test should count
+        logger.Messages.Clear();
 
-        // The N+1 pattern under test: querying children per-parent in a
-        // loop instead of a single Include()/join.
         for (var parentId = 0; parentId < 6; parentId++)
         {
             _ = context.Widgets.Where(w => w.ParentId == parentId).ToList();
@@ -81,9 +79,8 @@ public sealed class NPlusOneDetectionInterceptorTests
     {
         var logger = new RecordingLogger();
         using var context = CreateContext(logger, threshold: 5);
-        logger.Messages.Clear(); // setup's own seed inserts share command text too - only the action under test should count
+        logger.Messages.Clear();
 
-        // The fix: one query covering all parents, not one per parent.
         _ = context.Widgets.Where(w => w.ParentId < 6).ToList();
 
         Assert.Empty(logger.Messages);

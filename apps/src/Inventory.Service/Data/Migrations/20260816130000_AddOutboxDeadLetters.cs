@@ -6,9 +6,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Inventory.Service.Data.Migrations;
 
-// Raw SQL, not an EF DbSet - see Orders.Infrastructure's identical
-// migration for the same table, and OutboxPublisher.DeadLetterAsync for
-// the writer.
 [DbContext(typeof(InventoryDbContext))]
 [Migration("20260816130000_AddOutboxDeadLetters")]
 public sealed class AddOutboxDeadLetters : Migration

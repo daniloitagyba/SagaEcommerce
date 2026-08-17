@@ -4,10 +4,6 @@ using NpgsqlTypes;
 
 namespace Orders.Worker;
 
-// The other half of AntiEntropySweeper.cs's own split - see that file's
-// class comment. This one owns the three Orders-database-local checks
-// (payment-accounted, write/read-model, stuck-order) plus the durable
-// cursor they share, GetCursorAsync/AdvanceCursorAsync.
 public sealed partial class AntiEntropySweeper
 {
     private async Task<int> CheckOrdersHaveAccountedPaymentsAsync(CancellationToken cancellationToken)
@@ -18,11 +14,6 @@ public sealed partial class AntiEntropySweeper
             return 0;
         }
 
-        // One batch call, not one GET per candidate - see
-        // Payments.Service's own POST /payments/by-orders comment for what
-        // this replaced: up to AntiEntropy:BatchSize sequential round
-        // trips per tick. See docs/roadmap-milestones-91-99.md, "the
-        // anti-entropy sweep can only ever see the newest rows".
         var paymentsClient = httpClientFactory.CreateClient("anti-entropy-payments");
         Dictionary<Guid, string> paymentStatesByOrderId;
         try
@@ -35,9 +26,6 @@ public sealed partial class AntiEntropySweeper
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
-            // Payments unreachable this tick is not evidence of a
-            // divergence - it is evidence the sweep needs to try again
-            // later, which the next tick already does.
             AntiEntropyLog.DependencyUnavailable(logger, "payments-service", exception);
             return 0;
         }
@@ -59,18 +47,7 @@ public sealed partial class AntiEntropySweeper
     }
 
     /// <summary>
-    /// The check finding 12 of the audit above asked for - Orders compared
-    /// against itself, not another service. No HTTP call: orders and
-    /// order_summaries live in the same database, so this is one query.
-    /// Gated on order_summaries.projected_at rather than orders' own status
-    /// (orders has no column recording when status last changed) - a
-    /// mismatch whose projection is recent is ordinary in-flight lag; one
-    /// whose projection has gone stale for AntiEntropy:ProjectionLagThresholdSeconds
-    /// despite the mismatch means nothing has projected for that order
-    /// since, and never will without a human looking.
-    ///
-    /// Walks the table via the durable cursor - see GetCursorAsync/
-    /// AdvanceCursorAsync's own comments.
+    /// Detects stale order summary projections.
     /// </summary>
     private async Task<int> CheckWriteModelMatchesReadModelAsync(CancellationToken cancellationToken)
     {
@@ -124,16 +101,7 @@ public sealed partial class AntiEntropySweeper
     }
 
     /// <summary>
-    /// The reconciliation for the one failure mode neither the saga's own
-    /// timeout sweep nor any check above could previously catch: an order
-    /// left non-terminal (Created or Backordered) with no
-    /// saga_orchestration_states row at all - the direct observable of a
-    /// crash between "saga row deleted" and "order status resolved" that
-    /// SagaOrchestrationStore.TryCompleteAndResolveAsync/
-    /// ClaimTimedOutAndResolveAsync exist to prevent going forward, but
-    /// that offers no protection against a row already stranded before
-    /// this fix shipped, or any future bug shaped the same way. See
-    /// docs/roadmap-milestones-91-99.md, "durable claim, non-durable act".
+    /// Detects incomplete orders without a saga.
     /// </summary>
     private async Task<int> CheckOrdersStuckWithoutASagaRowAsync(CancellationToken cancellationToken)
     {
@@ -205,10 +173,7 @@ public sealed partial class AntiEntropySweeper
     }
 
     /// <summary>
-    /// Reads a named check's saved position - (MinValue, Empty) the first
-    /// time a check runs, which is "start from the very beginning of the
-    /// table" under the (created_at, id) &gt; (cursor_created_at, cursor_id)
-    /// tuple comparison every cursor-driven query above uses.
+    /// Reads a named check's saved position.
     /// </summary>
     private async Task<(DateTimeOffset CreatedAt, Guid Id)> GetCursorAsync(string checkName, CancellationToken cancellationToken)
     {
@@ -226,17 +191,7 @@ public sealed partial class AntiEntropySweeper
     }
 
     /// <summary>
-    /// Advances a named check's cursor to the last row it actually
-    /// examined this tick - or, once a batch comes back short of
-    /// BatchSize (proof there was nothing left past it), wraps the cursor
-    /// back to the very start so the next tick begins a fresh pass over
-    /// the whole table instead of examining nothing forever. This -
-    /// walking the table end to end, wrapping, and walking it again - is
-    /// what actually gives every row a bounded time-to-be-checked,
-    /// something "always re-examine the newest BatchSize rows" could never
-    /// do once the table grew past one batch. See
-    /// docs/roadmap-milestones-91-99.md, "the anti-entropy sweep can only
-    /// ever see the newest rows".
+    /// Advances an anti-entropy check cursor.
     /// </summary>
     private async Task AdvanceCursorAsync(
         string checkName, int rowsReturned, int batchSize, DateTimeOffset lastCreatedAt, Guid lastId, CancellationToken cancellationToken)

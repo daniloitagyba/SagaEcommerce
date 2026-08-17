@@ -1,8 +1,5 @@
 name: mutation-testing
 
-# Stryker.NET is expensive (rebuilds and re-tests once per surviving
-# mutant) - run on demand or weekly, never on every push/PR like the main
-# ci.yml build-and-test gate.
 on:
   workflow_dispatch:
   schedule:
@@ -12,20 +9,13 @@ permissions:
   contents: read
 
 jobs:
-  # BuildingBlocks was split into six projects-per-concern
-  # (Contracts/Messaging/Persistence/Caching/Observability/Resilience).
-  # Contracts is the mutation-worthy one: dependency-free records plus the
-  # few functions with actual branching logic (RetryDelayCalculator,
-  # cache-key builders), backed by Orders.UnitTests. The other five are
-  # almost entirely DI-registration/framework-wiring extension methods with
-  # little meaningful mutation surface.
   mutate-buildingblocks-contracts:
     name: mutate BuildingBlocks.Contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           global-json-file: global.json
 
@@ -38,7 +28,7 @@ jobs:
 
       - name: upload mutation report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: mutation-report
           path: "apps/src/BuildingBlocks.Contracts/StrykerOutput/**/reports/*.html"

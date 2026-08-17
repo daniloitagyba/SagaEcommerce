@@ -1,17 +1,6 @@
 namespace Orders.Domain;
 
-/// <summary>
-/// What the customer actually bought - before this, Order was
-/// amount-only and the saga faked a SKU by hashing the order
-/// id, so "reserve inventory" reserved a product nobody ordered.
-///
-/// UnitPrice is snapshotted at checkout from Catalog's current price, not
-/// whatever the cart cached when the item was added - a shopper who left
-/// an item for a week pays today's price. LineDiscount is this line's
-/// prorated share of the order-level discount, stored per line so partial
-/// refunds and per-item margin reporting don't need to re-derive an
-/// allocation that may no longer reproduce.
-/// </summary>
+/// <summary>What the customer actually bought; UnitPrice is snapshotted at checkout, not whatever the cart cached.</summary>
 public sealed class OrderLine
 {
     private OrderLine()
@@ -41,16 +30,10 @@ public sealed class OrderLine
     /// <summary>LineSubtotal - LineDiscount.</summary>
     public decimal LineTotal { get; private set; }
 
-    /// <summary>
-    /// This line's prorated share of the order's total tax,
-    /// weighted by its discounted value - stored at checkout for the same
-    /// reason LineDiscount is: a return refunds what this line actually
-    /// paid in tax, not a rate re-derived from config that may have
-    /// changed since.
-    /// </summary>
+    /// <summary>This line's prorated share of the order's total tax, weighted by its discounted value.</summary>
     public decimal LineTax { get; private set; }
 
-    /// <summary>How many of this line's units have come back - tracked per line so "may this customer return two more?" needs no replay.</summary>
+    /// <summary>How many of this line's units have come back.</summary>
     public int ReturnedQuantity { get; private set; }
 
     public int ReturnableQuantity => Quantity - ReturnedQuantity;
@@ -97,12 +80,7 @@ public sealed class OrderLine
     }
 }
 
-/// <summary>
-/// The application layer's input for building an order line: a SKU priced
-/// against the live catalog and already assigned its share of the order's
-/// discounts. Keeps Order.CreateWithLines from having to know anything
-/// about how pricing arrived at these numbers.
-/// </summary>
+/// <summary>The application layer's input for building an order line, priced and discounted before it reaches the aggregate.</summary>
 public sealed record OrderLineDraft(
     string Sku,
     string ProductName,

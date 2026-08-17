@@ -4,12 +4,7 @@ using Storefront.Service;
 
 namespace Storefront.UnitTests;
 
-/// <summary>
-/// The one thing this reads a token for - a stable string to
-/// build an Idempotency-Key from. Never used for authorization (Orders.Api
-/// and Cart.Service verify the same forwarded token fully); malformed
-/// input degrading to null rather than throwing is the load-bearing property.
-/// </summary>
+/// <summary>The one thing this reads a token for is a stable string to build an Idempotency-Key from - never used for authorization (Orders.Api and Cart.Service verify the same forwarded token fully); malformed input degrading to null rather than throwing is the load-bearing property.</summary>
 public class UnverifiedJwtTests
 {
     private static string Token(object payload)

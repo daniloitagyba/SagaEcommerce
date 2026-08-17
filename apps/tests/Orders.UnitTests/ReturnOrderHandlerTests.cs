@@ -8,13 +8,7 @@ using Orders.Domain;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// The ownership gate ReturnOrderHandler.HandleAsync applies
-/// before ever calling into Order.TryReturn (which ReturnRefundTests
-/// already covers exhaustively) had no test coverage anywhere - the same
-/// "not yours reads as not found" rule AdvanceFulfillmentHandlerTests pins
-/// for self-service cancellation, applied here to returns.
-/// </summary>
+/// <summary>The ownership gate ReturnOrderHandler.HandleAsync applies before calling Order.TryReturn - the same "not yours reads as not found" rule AdvanceFulfillmentHandlerTests pins for self-service cancellation, applied here to returns.</summary>
 public sealed class ReturnOrderHandlerTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 10, 12, 0, 0, TimeSpan.Zero);
@@ -135,9 +129,6 @@ public sealed class ReturnOrderHandlerTests
     [Fact]
     public async Task ARejectedReturnIsNeverPersistedAndTheCacheIsNotInvalidated()
     {
-        // TryReturn's own rejection reasons are ReturnRefundTests' territory -
-        // this just pins that the handler actually respects a rejection
-        // rather than saving/invalidating regardless.
         var order = DeliveredOrderWithOneLine("customer-1");
         var cache = new RecordingOrderCache();
         var handler = Handler(order, cache, out var repository);
@@ -151,19 +142,7 @@ public sealed class ReturnOrderHandlerTests
         Assert.Equal(0, cache.InvalidateCallCount);
     }
 
-    /// <summary>
-    /// Pins the exact bug HandleAsync used to have: it called
-    /// DateTimeOffset.UtcNow directly instead of the TimeProvider every
-    /// other component in this codebase is injected with, so a test fixing
-    /// "now" (like this class's own Now field) never actually controlled
-    /// what the handler compared the regret window against - the fixed
-    /// clock in ReturnOrderHandlerTests(Now) only ever bounded the *order's*
-    /// CreatedAt, not the request instant ShippingRefundPolicy.IsOwed
-    /// compares it to. A ReturnOptions().RegretWindowDays default of 7
-    /// means a request made a fixed 3 days after CreatedAt must fall
-    /// inside the window and refund shipping - only reachable now that the
-    /// handler's clock is the one this test controls.
-    /// </summary>
+    /// <summary>Regression: HandleAsync used DateTimeOffset.UtcNow directly instead of the injected TimeProvider, so fixing "now" in a test never controlled the regret-window comparison.</summary>
     [Fact]
     public async Task AFullyReturnedRegretRequestInsideTheWindowRefundsShipping()
     {

@@ -9,19 +9,7 @@ using Storefront.Service;
 
 namespace Storefront.UnitTests;
 
-/// <summary>
-/// Walks the same journey a shopper's browser drives through
-/// Storefront.Service's BFF: browse a product, add it to the cart, check
-/// out, then look up the order and its history - the exact sequence that
-/// surfaced the "place order didn't work" bug (OrdersProxyEndpointTests
-/// covers that specific bug in isolation; this covers the sequence as a
-/// whole, one endpoint method call at a time, the same way a browser would
-/// call them one HTTP request at a time). Each step uses its own
-/// RecordingHandler rather than a shared fake backend - this is verifying
-/// Storefront.Service's own composition and forwarding logic (what URL,
-/// what method, whose bearer token), not re-implementing Catalog/Cart/
-/// Orders' own behavior.
-/// </summary>
+/// <summary>Walks the same journey a shopper's browser drives through Storefront.Service's BFF: browse, add to cart, checkout, then view the order and its history - the exact sequence that surfaced the "place order didn't work" bug. Each step uses its own RecordingHandler to verify Storefront.Service's own composition and forwarding logic, not Catalog/Cart/Orders' behavior.</summary>
 public sealed class FullCheckoutFlowTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -32,7 +20,6 @@ public sealed class FullCheckoutFlowTests
     {
         var authorization = $"Bearer {FakeToken("customer-42")}";
 
-        // 1. Browse: GET /api/storefront/products/{sku} - Catalog + Inventory fan-out.
         var catalogHandler = new RecordingHandler(_ => JsonResponse(HttpStatusCode.OK,
             new { sku = Sku, name = "Notebook Ultraslim 14\"", price = 4299.90m, currency = "BRL" }));
         var inventoryHandler = new RecordingHandler(_ => JsonResponse(HttpStatusCode.OK,
@@ -55,7 +42,6 @@ public sealed class FullCheckoutFlowTests
         var catalogRequest = Assert.Single(catalogHandler.Requests);
         Assert.Equal($"/products/by-sku/{Sku}", catalogRequest.RequestUri!.AbsolutePath);
 
-        // 2. Add to cart: PUT /api/cart/carts/me/items/{sku}.
         var cartPutHandler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.NoContent));
         var cartPutContext = NewHttpContext(method: HttpMethods.Put, authorization: authorization, body: """{"quantity":1}""");
         await ProxyEndpoints.ForwardAsync(
@@ -69,7 +55,6 @@ public sealed class FullCheckoutFlowTests
         Assert.Equal($"/carts/me/items/{Sku}", cartPutRequest.RequestUri!.AbsolutePath);
         Assert.Equal(authorization, cartPutRequest.AuthorizationHeader);
 
-        // 3. Checkout: POST /api/storefront/checkout - reads the cart, prices it, creates the order, clears the cart.
         const string orderId = "a6ea5218-7c89-450b-bcf6-1fdae2dc3827";
         var cartHandler = new RecordingHandler(request => request.Method == HttpMethod.Get
             ? JsonResponse(HttpStatusCode.OK, new { cartId = "full-flow-cart", items = new[] { new { sku = Sku, quantity = 1, unitPrice = 4299.90m } }, version = 1 })
@@ -91,10 +76,8 @@ public sealed class FullCheckoutFlowTests
         Assert.Equal(StatusCodes.Status201Created, checkoutContext.Response.StatusCode);
         checkoutContext.Response.Body.Position = 0;
         Assert.Contains(orderId, await new StreamReader(checkoutContext.Response.Body).ReadToEndAsync());
-        // The cart was cleared after the order was accepted - a shopper reloading the cart afterward sees it empty.
         Assert.Contains(cartHandler.Requests, r => r.Method == HttpMethod.Delete);
 
-        // 4. View the order: GET /api/orders/{id} - this is the exact request that 404d before the "orders/" prefix fix.
         var orderGetHandler = new RecordingHandler(_ => JsonResponse(HttpStatusCode.OK, new { id = orderId, status = "Created" }));
         var orderGetContext = NewHttpContext(authorization: authorization);
         await ProxyEndpoints.ForwardOrdersSubPathAsync(
@@ -105,7 +88,6 @@ public sealed class FullCheckoutFlowTests
         Assert.Equal(StatusCodes.Status200OK, orderGetContext.Response.StatusCode);
         Assert.Equal($"/orders/{orderId}", Assert.Single(orderGetHandler.Requests).RequestUri!.AbsolutePath);
 
-        // 5. View its history: GET /api/orders/{id}/history - same bug, same fix.
         var orderHistoryHandler = new RecordingHandler(_ => JsonResponse(HttpStatusCode.OK, new { entries = Array.Empty<object>() }));
         var orderHistoryContext = NewHttpContext(authorization: authorization);
         await ProxyEndpoints.ForwardOrdersSubPathAsync(

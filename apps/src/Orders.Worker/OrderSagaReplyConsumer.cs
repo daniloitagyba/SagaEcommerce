@@ -6,22 +6,7 @@ using Microsoft.Extensions.Options;
 namespace Orders.Worker;
 
 /// <summary>
-/// The choreographed comparison's compensation half, extended into the
-/// driver of a 4-step saga. One consumer subscribing to all four reply
-/// topics and dispatching by topic name, since only one reply is ever
-/// outstanding per order at a time.
-///
-/// State machine:
-///   ReserveInventory  --(reserved)-->     DecidePayment   --(approved)--> CommitInventory --> done (Confirmed)
-///   ReserveInventory  --(insufficient)--> done (RejectedInsufficientStock)
-///   DecidePayment     --(declined)-->     ReleaseInventory (the compensation) --> done (RejectedPaymentDeclined)
-///
-/// Split across two files to stay under the 500-line module-size budget,
-/// the same physical-split-not-different-concern pattern
-/// SagaOrchestrationStore uses for its own split: this file owns dispatch,
-/// the ReserveInventory reply and the DecidePayment reply;
-/// OrderSagaReplyConsumer.Commit.cs owns the CommitInventory/
-/// ReleaseInventory replies and the standalone settlement reconciliation.
+/// Consumes replies for order sagas.
 /// </summary>
 public sealed partial class OrderSagaReplyConsumer(
     IOptions<SagaOrchestrationOptions> options,
@@ -60,15 +45,8 @@ public sealed partial class OrderSagaReplyConsumer(
 
         if (!reply.Reserved && reply.Backordered)
         {
-            // Wait, don't give up - this line stays
-            // unanswered (neither Reserved nor rejected) until the
-            // eventual backorder-release reply flips it. The
-            // *order* moves to Backordered even if a sibling line already
-            // reserved fine - that reservation is held, not released,
-            // until every line has an answer.
             await orderStatusStore.TryTransitionAsync(
                 reply.OrderId, OrderStatuses.Backordered, reply.CorrelationId, cancellationToken);
-            // Parks the row against SagaTimeoutSweeper's own timeout - see SagaOrchestrationState.ParkedAt. Idempotent (keeps the earliest ParkedAt).
             await store.MarkParkedAsync(reply.OrderId, timeProvider.GetUtcNow(), cancellationToken);
             await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
             SagaOrchestratorLog.Backordered(logger, reply.OrderId, reply.Sku, reply.CorrelationId);
@@ -78,12 +56,6 @@ public sealed partial class OrderSagaReplyConsumer(
         var lines = await store.RecordLineOutcomeAsync(reply.OrderId, reply.ReservationId, SagaLineOutcomeField.Reserved, reply.Reserved, cancellationToken);
         if (lines is null || lines.Count == 0)
         {
-            // Either an unknown reservation, or the order's saga row is
-            // already gone (completed by a sibling line's rejection, or by
-            // a timeout) - a redelivered/late reply for it is a no-op.
-            // Reserved:true landing here specifically means Inventory just
-            // created an allocation nothing will ever release - see
-            // OrdersTelemetry.RecordOrphanedSagaReply's own comment.
             OrdersTelemetry.RecordOrphanedSagaReply("reservation", reply.Reserved);
             SagaOrchestratorLog.UnknownReply(logger, reply.OrderId);
             return;
@@ -92,18 +64,7 @@ public sealed partial class OrderSagaReplyConsumer(
         var reservationCompletion = SagaLineCompletionPolicy.Reservations(lines);
         if (reservationCompletion == SagaLineCompletion.Failed)
         {
-            // The multi-line compensation case: at least one line was
-            // rejected outright. Release every sibling line that DID
-            // reserve successfully before cancelling - the whole order
-            // fails together, so a partial reservation left behind would
-            // be inventory nothing will ever release.
             var now = timeProvider.GetUtcNow();
-            // TryCompleteAndResolveAsync, not TryCompleteAndQueueAsync -
-            // folds the order's cancellation into the very transaction
-            // that deletes the saga row, so a crash between "stock release
-            // queued" and "order cancelled" can no longer strand the order
-            // non-terminal with nothing left to time out again. See
-            // SagaOrchestrationStore.TryCompleteAndResolveAsync's own comment.
             var completed = await store.TryCompleteAndResolveAsync(
                 reply.OrderId,
                 SagaStep.ReserveInventory,
@@ -128,7 +89,6 @@ public sealed partial class OrderSagaReplyConsumer(
 
         if (reservationCompletion == SagaLineCompletion.Pending)
         {
-            // Still waiting on at least one more line's reply.
             return;
         }
 
@@ -167,15 +127,6 @@ public sealed partial class OrderSagaReplyConsumer(
 
         if (advanced.CancellationRequestedAt is not null)
         {
-            // An operator or the shopper themselves
-            // cancelled this order (from Created or Backordered) while this
-            // very reservation was in flight - every line just finished
-            // reserving successfully, at the exact moment nothing needs
-            // them any more. Give them back instead of asking Payments for
-            // a decision nobody wants any more; a payment cancellation was
-            // already requested unconditionally by whatever cancelled the
-            // order (EfOrderStatusRepository.TryTransitionAsync), so
-            // there's nothing to do here for money, only for stock.
             await CancelDuringSagaAsync(reply.OrderId, SagaStep.DecidePayment, "CancelledWhileReserving", cancellationToken);
             return;
         }
@@ -185,13 +136,7 @@ public sealed partial class OrderSagaReplyConsumer(
     }
 
     /// <summary>
-    /// The shared half of both cancellation-mid-saga
-    /// branches below that release rather than commit - completes the saga
-    /// row from wherever it currently stands and releases every line that
-    /// is known, from this same row's own lines snapshot, to have actually
-    /// reserved. Mirrors HandleReservationRepliedAsync's existing
-    /// partial-rejection compensation rather than inventing
-    /// a new shape for "release everything and stop".
+    /// Completes a saga and releases reserved inventory.
     /// </summary>
     private async Task CancelDuringSagaAsync(Guid orderId, string expectedStep, string outcome, CancellationToken cancellationToken)
     {
@@ -258,7 +203,6 @@ public sealed partial class OrderSagaReplyConsumer(
         }
         else
         {
-            // The compensating transaction: undo the step 1 reservations, since payment was the problem, not them.
             var advanced = await store.TryAdvanceAndQueueAsync(
                 reply.OrderId,
                 SagaStep.DecidePayment,

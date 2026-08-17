@@ -15,15 +15,7 @@ using Testcontainers.Redpanda;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// Proves the property the orchestrator exists for - an
-/// order with line items reaching the orchestrator actually results in a
-/// real inventory reservation being requested (the real SKU, persisted and
-/// published), not just an order that quietly confirms because nothing
-/// downstream ever checked stock. Choreography alone never exercises this
-/// path at all (OrderMessageProcessor has no inventory step); this is what
-/// Saga:Mode=Both is buying.
-/// </summary>
+/// <summary>Proves the property the orchestrator exists for: an order with line items reaching the orchestrator actually results in a real inventory reservation, not an order that quietly confirms unchecked.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class OrderSagaOrchestratorTests(PostgresFixture fixture) : IAsyncLifetime, IDisposable
 {
@@ -81,9 +73,6 @@ public sealed class OrderSagaOrchestratorTests(PostgresFixture fixture) : IAsync
 
         await orchestrator.RequestReservationAsync(consumeResult, CancellationToken.None);
 
-        // The property M75 is about: a real reservation, for the real SKU
-        // and quantity the customer ordered, not a hash-derived stand-in
-        // and not silence.
         await using var scope = _dataSource.CreateConnection();
         await scope.OpenAsync();
         await using var command = scope.CreateCommand();
@@ -107,9 +96,6 @@ public sealed class OrderSagaOrchestratorTests(PostgresFixture fixture) : IAsync
     [Fact]
     public async Task AMultiLineOrderGetsAReservationForEveryLineNotJustTheLargest()
     {
-        // Before this, only the largest line by value got a
-        // real reservation - the other lines were never checked against
-        // stock at all. This is the regression test that would have caught that.
         var orchestrator = CreateOrchestrator();
         var orderId = Guid.NewGuid();
         var consumeResult = await CreateConsumeResultAsync(

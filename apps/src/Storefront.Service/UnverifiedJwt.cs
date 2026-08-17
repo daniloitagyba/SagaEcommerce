@@ -2,16 +2,7 @@ using System.Text.Json;
 
 namespace Storefront.Service;
 
-/// <summary>
-/// Reads a claim out of a JWT's payload segment without
-/// validating the token - Storefront never authorizes anything on the
-/// strength of this; Orders.Api and Cart.Service do that themselves,
-/// fully, against Keycloak's JWKS, on the same forwarded token. This exists
-/// for exactly one purpose: building a stable string for an
-/// Idempotency-Key, which only needs to be stable per shopper, not proven.
-/// Malformed input degrades to "no claim found," never an exception - a BFF
-/// convenience function must not be a new way for checkout to fail.
-/// </summary>
+/// <summary>Reads a claim out of a JWT's payload segment without validating the token; malformed input yields null, never an exception.</summary>
 internal static class UnverifiedJwt
 {
     public static string? TryGetClaim(string? bearerToken, string claimName)

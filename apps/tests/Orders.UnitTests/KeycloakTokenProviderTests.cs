@@ -5,15 +5,7 @@ using Orders.Worker;
 
 namespace Orders.UnitTests;
 
-/// <summary>
-/// Orders.Worker's own service identity for the
-/// anti-entropy sweep's two cross-service reads. Same shape, and largely
-/// the same tests, as the KeycloakTokenProvider removed from
-/// Storefront.Service once Storefront switched to forwarding the
-/// shopper's own token instead of minting one - Orders.Worker's use case
-/// is the one KeycloakTokenProvider was actually built for originally
-/// (a trusted backend caller, not a shopper stand-in).
-/// </summary>
+/// <summary>Orders.Worker's own service identity for the anti-entropy sweep's cross-service reads; a trusted-backend-caller use case, not a shopper stand-in.</summary>
 public sealed class KeycloakTokenProviderTests
 {
     [Fact]
@@ -35,11 +27,6 @@ public sealed class KeycloakTokenProviderTests
     [Fact]
     public async Task GetTokenAsyncRefetchesAfterTheCachedTokenExpires()
     {
-        // A fake clock, not a real sleep: the provider floors its cache
-        // window at 5 seconds regardless of expires_in (see
-        // KeycloakTokenProvider's Math.Max), so no expires_in value can
-        // make the token stale on the very next call in real time - only
-        // advancing the clock past that floor can.
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var handler = new CountingTokenHandler(expiresIn: 60);
         var provider = CreateProvider(handler, clock);

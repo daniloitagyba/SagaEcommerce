@@ -8,28 +8,15 @@ using Microsoft.Extensions.Options;
 
 namespace BuildingBlocks;
 
-// DbContext-owning half of the DbSet<OutboxMessage> every outbox-backed
-// service needs - just enough surface for OutboxPublisher<TDbContext> to
-// poll and update rows without depending on the concrete DbContext type.
+/// <summary>DbContext-owning half of the DbSet&lt;OutboxMessage&gt; every outbox-backed service needs.</summary>
 public interface IOutboxDbContext
 {
     DbSet<OutboxMessage> OutboxMessages { get; }
 }
 
-// The one part of "poll the outbox and publish" that's genuinely
-// service-specific: which event type(s) a row's EventType/Payload
-// deserializes to, and which publisher interface carries it to Kafka.
-// Implementations live in each service (they close over that service's own
-// IOrderEventPublisher/IPaymentEventPublisher/IInventoryEventPublisher and
-// event record types) - only the polling/transaction/retry/telemetry
-// skeleton around this is shared.
+/// <summary>The service-specific half of "poll the outbox and publish": deserializes a row's payload and carries it to Kafka.</summary>
 public interface IOutboxEventDispatcher
 {
-    // The returned dictionary becomes structured logger scope state
-    // (e.g. {"OrderId": ...} or {"ReservationId": ..., "Sku": ...}) so the
-    // per-message correlation each service's original hand-rolled
-    // publisher logged is preserved without the shared publisher needing
-    // to know the shape of any specific event.
     Task<IReadOnlyDictionary<string, object?>> PublishAsync(OutboxMessage message, CancellationToken cancellationToken);
 }
 
@@ -72,7 +59,6 @@ public sealed class OutboxPublisher<TDbContext>(
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // Normal cooperative shutdown.
         }
         finally
         {
@@ -80,23 +66,7 @@ public sealed class OutboxPublisher<TDbContext>(
         }
     }
 
-    /// <summary>
-    /// Ordering contract: this publisher guarantees at-least-once delivery
-    /// and, within one batch, publishes in <c>occurred_at</c> order - it does
-    /// <em>not</em> guarantee that order across retries. A message that fails
-    /// (<see cref="OutboxMessage.MarkFailed"/>) gets its own
-    /// <c>next_attempt_at</c> pushed forward by that message's own
-    /// exponential backoff, independently of any other message for the same
-    /// aggregate; a later message for that same aggregate that publishes
-    /// successfully on its first try is not held back waiting for it. A
-    /// consumer that needs a strict per-aggregate order from this outbox
-    /// (e.g. two status transitions for the same order landing at the
-    /// projection out of order) has to enforce it on the read side - see
-    /// OrderProjectionStore.UpsertDecisionSql's own guard for why this
-    /// applies to every status-bearing event this system produces, not a
-    /// single caller's row.
-    /// </summary>
-    /// <summary>Public so integration tests can drive it directly, the same testable seam the sweepers in this codebase (e.g. SagaTimeoutSweeper.SweepOnceAsync) already give.</summary>
+    /// <summary>Guarantees at-least-once delivery and, within one batch, publishes in occurred_at order, but not across retries.</summary>
     public async Task<int> ProcessBatchAsync(CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
@@ -105,26 +75,6 @@ public sealed class OutboxPublisher<TDbContext>(
 
         var messages = await ClaimBatchAsync(dbContext, cancellationToken);
 
-        // Outside any transaction from here on - a slow or unreachable
-        // broker must never hold Postgres row locks (or the open
-        // transaction they imply) for as long as Kafka takes to answer;
-        // see ClaimBatchAsync's own comment for what stops a second
-        // poller from picking up the same rows in the meantime.
-        //
-        // The Kafka-side attempt for each message runs concurrently,
-        // bounded by Outbox:MaxConcurrentPublishes - IOutboxEventDispatcher's
-        // own contract never touches this method's DbContext (each
-        // implementation only ever calls its own IOrderEventPublisher/
-        // IPaymentEventPublisher/IInventoryEventPublisher), so this is the
-        // one part of a batch that's actually safe to parallelize. Every
-        // DbContext mutation (MarkPublished/MarkFailed/dead-letter) still
-        // happens sequentially, back on this one thread, once every
-        // attempt below has settled - DbContext itself is not thread-safe,
-        // so that part was never a candidate for concurrency. Raising
-        // Outbox:BatchSize without this would just serialize a bigger
-        // batch through the same one-at-a-time Kafka round trip; see
-        // docs/roadmap-milestones-91-99.md, "the shared outbox publishes 5
-        // rows at a time, one await each".
         var attempts = await PublishAllAsync(messages, dispatcher, cancellationToken);
         foreach (var (message, attempt) in attempts)
         {
@@ -141,19 +91,7 @@ public sealed class OutboxPublisher<TDbContext>(
         return messages.Count;
     }
 
-    /// <summary>
-    /// Claims a batch by pushing each row's NextAttemptAt forward by
-    /// Outbox:ClaimWindowSeconds, inside a transaction that commits
-    /// immediately - not by holding the FOR UPDATE lock (and the
-    /// transaction that implies) open across the Kafka publish that follows
-    /// in ProcessBatchAsync. Another poller's own claim query
-    /// (next_attempt_at &lt;= now) will not see these rows again until that
-    /// window elapses, which is what makes this a claim and not just a
-    /// read - the standard at-least-once outbox contract already tolerates
-    /// a message being sent twice (every consumer dedups on EventId via its
-    /// inbox), so a claim that outlives a crashed instance is a redelivery,
-    /// not a new failure mode.
-    /// </summary>
+    /// <summary>Claims a batch by pushing each row's NextAttemptAt forward, inside a transaction that commits immediately.</summary>
     private async Task<List<OutboxMessage>> ClaimBatchAsync(TDbContext dbContext, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
@@ -186,11 +124,7 @@ public sealed class OutboxPublisher<TDbContext>(
         return messages;
     }
 
-    /// <summary>
-    /// Sampled, not run on every batch - PollIntervalMilliseconds can drive
-    /// ProcessBatchAsync several times a second, and the gauge only needs
-    /// to be roughly current, not exact to the tick.
-    /// </summary>
+    /// <summary>Sampled, not run on every batch; the gauge only needs to be roughly current.</summary>
     private async Task SamplePendingIfDueAsync(TDbContext dbContext, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
@@ -201,20 +135,11 @@ public sealed class OutboxPublisher<TDbContext>(
 
         _nextPendingSampleAt = now.AddSeconds(_options.PendingSampleIntervalSeconds);
 
-        // The real backlog, not just this batch - uses the
-        // same partial index (ix_outbox_messages_pending) the claim query
-        // above filters on, so this is an index-only count, not a table scan.
         var pending = await dbContext.OutboxMessages.CountAsync(message => message.ProcessedAt == null, cancellationToken);
         OrdersTelemetry.RecordOutboxPending(pending);
     }
 
-    /// <summary>
-    /// Phase one: attempt every message's Kafka publish concurrently,
-    /// bounded by Outbox:MaxConcurrentPublishes - see ProcessBatchAsync's
-    /// own comment for why this is the safe-to-parallelize half. Returns
-    /// each message paired with its outcome; nothing here touches the
-    /// DbContext.
-    /// </summary>
+    /// <summary>Phase one: attempts every message's Kafka publish concurrently, bounded by Outbox:MaxConcurrentPublishes.</summary>
     private async Task<List<(OutboxMessage Message, PublishAttempt Attempt)>> PublishAllAsync(
         List<OutboxMessage> messages,
         IOutboxEventDispatcher dispatcher,
@@ -254,13 +179,7 @@ public sealed class OutboxPublisher<TDbContext>(
         }
     }
 
-    /// <summary>
-    /// Phase two: apply one message's already-settled publish outcome to
-    /// this method's own DbContext - sequential by construction (called
-    /// once per message, in a plain foreach, back on ProcessBatchAsync's
-    /// single calling thread), since DbContext's change tracker is not
-    /// thread-safe.
-    /// </summary>
+    /// <summary>Phase two: applies one message's already-settled publish outcome to this method's own DbContext, sequentially.</summary>
     private async Task ApplyPublishAttemptAsync(
         TDbContext dbContext, OutboxMessage message, PublishAttempt attempt, CancellationToken cancellationToken)
     {
@@ -313,17 +232,7 @@ public sealed class OutboxPublisher<TDbContext>(
             new(false, null, null, exception);
     }
 
-    /// <summary>
-    /// Moves a row that exhausted OutboxOptions.MaximumAttempts out of the
-    /// pending set for good - see OutboxOptions.MaximumAttempts for why an
-    /// unbounded retry loop was worse than giving up loudly. The INSERT
-    /// happens on this same DbContext's connection but outside its own
-    /// transaction (ProcessBatchAsync's SaveChangesAsync call, further
-    /// down, is what actually removes the row from outbox_messages) - a
-    /// crash between the two leaves the row dead-lettered twice on the
-    /// next attempt at worst, never lost, since Remove() only takes effect
-    /// once SaveChangesAsync commits.
-    /// </summary>
+    /// <summary>Moves a row that exhausted OutboxOptions.MaximumAttempts out of the pending set for good.</summary>
     private static async Task DeadLetterAsync(TDbContext dbContext, OutboxMessage message, CancellationToken cancellationToken)
     {
         await dbContext.Database.ExecuteSqlInterpolatedAsync(

@@ -1,23 +1,4 @@
 #!/usr/bin/env bash
-# Guardrail: memory leak / unbounded heap growth detection ("heap without
-# ref" - objects that should have become unreachable but are still
-# retained by a lingering reference: an unsubscribed event handler, a
-# cache with no eviction, a static collection that only ever grows).
-#
-# Rather than reaching for dotnet-counters/dotnet-gcdump (which need to
-# attach to the live process - awkward against a containerized pod
-# without the SDK installed in the runtime image), this reuses telemetry
-# the stack already collects: OpenTelemetry's System.Runtime instrumentation
-# exports dotnet_gc_last_collection_heap_size_bytes per generation to
-# Prometheus already. A real leak's signature is long-lived generations
-# (gen2 + LOH - short-lived gen0/gen1 churn constantly and aren't
-# meaningful here) trending upward across a sustained load run instead of
-# stabilizing once the garbage collector has had several chances to run.
-#
-# Drives scripts/k6-run.sh's `soak` profile (5 minutes, constant load
-# against orders-api) as the sustained-load generator, then compares the
-# first third of the run's gen2+LOH heap samples against the last third
-# per replica pod.
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -49,8 +30,6 @@ curl -s -G "${prometheus_url}/api/v1/query_range" \
   --data-urlencode "end=${end_epoch}" \
   --data-urlencode "step=15" > "$range_json_file"
 
-# range_json_file is passed as argv, not piped on stdin: `python3 -` reads the
-# script itself from stdin via this heredoc, so stdin isn't free for the JSON.
 python3 - "$growth_threshold_pct" "$range_json_file" <<'PYEOF'
 import json
 import sys

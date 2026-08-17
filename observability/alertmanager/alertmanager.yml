@@ -1,8 +1,3 @@
-# No real notification integrations are configured - this is a personal lab,
-# not a paged on-call rotation. The "null" receiver still gives Alertmanager
-# a full routing pipeline to exercise (grouping, inhibition, resolution),
-# which is what Milestone 16 validates: alerts actually reaching a firing
-# state and clearing, not where a notification would eventually go.
 route:
   receiver: null-receiver
   group_by: ["alertname"]

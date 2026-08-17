@@ -1,10 +1,3 @@
-# No PodDisruptionBudget for this Deployment, deliberately - unlike
-# cart-service/catalog-service/inventory-service/orders-api/storefront-
-# service, which all define one. Its replica count is owned by
-# orders-worker-scaledobject.yaml (KEDA), not this manifest, so a static
-# minAvailable/maxUnavailable here would fight the same autoscaler
-# kubernetes/argocd/application.yaml already tells Argo CD not to fight
-# over the replicas field. Don't "fix" this by adding one back.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,10 +6,6 @@ metadata:
     app.kubernetes.io/name: orders-worker
     app.kubernetes.io/component: worker
 spec:
-  # No replicas: here - orders-worker-scaledobject.yaml owns this field
-  # (minReplicaCount: 1), and kubernetes/argocd/application.yaml now tells
-  # Argo CD to ignore drift on it. Stating a value here would just be the
-  # thing Argo CD fights KEDA over on every sync.
   revisionHistoryLimit: 2
   strategy:
     type: RollingUpdate
@@ -35,21 +24,7 @@ spec:
       annotations:
         linkerd.io/inject: enabled
     spec:
-      # Milestone 26: a dedicated ServiceAccount, not the namespace default
-      # every other pod still uses - Linkerd's mTLS identity is derived from
-      # the pod's ServiceAccount, so sharing "default" across every workload
-      # (the case until this milestone) makes per-service AuthorizationPolicy
-      # meaningless: every pod would present the same identity. This is what
-      # lets kubernetes/cluster-policies/orders-api-authz.yaml distinguish
-      # "a request that's actually orders-worker" from "a request that's
-      # some other meshed pod."
       serviceAccountName: orders-worker
-      # Milestone 36: flipped from false (Milestone 26's hardening default)
-      # to true - LeaderElectionService needs the projected ServiceAccount
-      # token to authenticate to the API server for Lease read/write.
-      # RBAC (kubernetes/base/orders-worker-rbac.yaml)
-      # scopes this ServiceAccount to nothing but Lease objects in this one
-      # namespace - it still can't read Pods, Secrets, or anything else.
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -107,9 +82,6 @@ spec:
               value: redis:6379
             - name: Catalog__BaseUrl
               value: http://catalog-service
-            # AntiEntropySweeper - previously relied entirely on
-            # AntiEntropyOptions' own code defaults, with no operator-facing
-            # knob anywhere. Explicit here matching those defaults exactly.
             - name: AntiEntropy__SweepIntervalSeconds
               value: "300"
             - name: AntiEntropy__BatchSize
@@ -120,17 +92,6 @@ spec:
               value: http://inventory-service
             - name: AntiEntropy__ProjectionLagThresholdSeconds
               value: "120"
-            # Missing entirely here previously - AntiEntropySweeper's two
-            # cross-service HTTP calls (GET /payments/by-order,
-            # GET /inventory/backorders) go through BearerTokenHandler,
-            # which needs KeycloakTokenProvider to actually fetch a token.
-            # KeycloakTokenProvider's own defaults (TokenUrl=localhost:18081,
-            # ClientSecret="") are the same self-referencing-pod trap
-            # Authentication__Authority already hit elsewhere in this
-            # manifest set - every anti-entropy sweep tick would have failed
-            # authentication silently. The secret this references
-            # (keycloak-client-secret) is already in orders-runtime; it was
-            # just never wired to this Deployment.
             - name: Keycloak__TokenUrl
               value: http://keycloak:8080/realms/orders-lab/protocol/openid-connect/token
             - name: Keycloak__ClientId
@@ -156,16 +117,6 @@ spec:
               value: http://pyroscope:4040
             - name: PYROSCOPE_APPLICATION_NAME
               value: orders-worker
-            # The CLR profiler attach variables - moved out of the Dockerfile's
-            # own ENV (where they used to be unconditional and applied to
-            # every environment, Compose included, regardless of
-            # PYROSCOPE_PROFILING_ENABLED above) so a build with no
-            # profiling configuration - Compose - genuinely runs with no
-            # profiler attached, instead of CORECLR_ENABLE_PROFILING loading
-            # one at process startup and only Pyroscope's own
-            # PYROSCOPE_PROFILING_ENABLED (read after that point) deciding
-            # whether it does anything. The .so files themselves stay baked
-            # into the image - only the decision to attach lives here now.
             - name: CORECLR_ENABLE_PROFILING
               value: "1"
             - name: CORECLR_PROFILER
@@ -180,9 +131,6 @@ spec:
               value: orders-lab
             - name: LeaderElection__LeaseName
               value: orders-worker-saga-sweeper
-            # Orchestration is the normal path because it includes inventory
-            # reservation. Sourced from saga-config so this and
-            # payments-service's Saga__Mode can't drift apart.
             - name: Saga__Mode
               valueFrom:
                 configMapKeyRef:

@@ -1,18 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 53 live proof: orders-api runs 2 replicas and Milestone 27's
-# postgres-ha CNPG cluster has 2 read replicas that have sat unused since -
-# every read in this codebase, live or in that cluster, goes to the
-# primary. This proves what routing GETs to a replica would actually cost:
-# a classic read-your-writes violation, made deterministic by pausing WAL
-# replay on one replica (pg_wal_replay_pause/resume - a native Postgres
-# mechanism, not a chaos tool) rather than racing real (sub-millisecond,
-# same-host) replication lag. Then proves the fix: gate the read on the
-# replica's replay LSN actually reaching the primary's LSN at write time,
-# rather than reading immediately.
-#
-# Runs against the isolated postgres-ha cluster from Milestone 27 (NOT the
-# live orders/payments Postgres) - same reasoning as every other isolated
-# demo cluster this lab has built for a similarly disruptive experiment.
 set -euo pipefail
 
 namespace="postgres-ha"

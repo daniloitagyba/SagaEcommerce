@@ -1,20 +1,4 @@
 #!/usr/bin/env bash
-# Milestone 50 live proof: SagaTimeoutSweeper compares `DateTimeOffset.UtcNow`
-# (orders-worker's own local clock) against a saga's `requested_at`
-# (written in real time, possibly by a different moment or even a
-# different pod) to decide if it's been running longer than
-# SagaOrchestrationOptions.TimeoutSeconds (default 5s). Skewing
-# orders-worker's clock forward makes it think far more time has passed
-# than really has - a saga that's genuinely only been open for a couple of
-# real seconds gets swept as timed out.
-#
-# Rather than racing a real saga's natural speed (it usually completes in
-# well under a second, leaving almost no window to inject the fault before
-# the row completes and deletes itself), this inserts one synthetic
-# saga_orchestration_states row directly - real, unskewed `requested_at` -
-# then applies the clock skew and watches the REAL SagaTimeoutSweeper /
-# ClaimTimedOutAsync code path react to it. The mechanism under test is
-# exactly the production one; only the row's origin is synthetic.
 set -euo pipefail
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

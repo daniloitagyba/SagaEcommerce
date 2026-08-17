@@ -1,14 +1,6 @@
 namespace Orders.Domain;
 
-/// <summary>
-/// A coupon with a life, replacing the earlier
-/// configuration dictionary that had no notion of a coupon being
-/// <em>used</em> - a leaked code could be redeemed indefinitely by anyone.
-/// Enforcing MaxTotalRedemptions under concurrent checkout is the same
-/// class of distributed problem as reserving stock, and gets the same
-/// treatment: an atomic guarded UPDATE, and a redemption that participates
-/// in the saga so a cancelled order gives its slot back.
-/// </summary>
+/// <summary>A coupon with tracked redemption state, enforced under concurrency via an atomic guarded UPDATE.</summary>
 public sealed class Coupon
 {
     private Coupon()
@@ -28,20 +20,15 @@ public sealed class Coupon
     /// <summary>Orders below this subtotal cannot use the coupon at all.</summary>
     public decimal MinimumOrderAmount { get; private set; }
 
-    /// <summary>Null means unlimited - the original behaviour, now opt-in rather than the only option.</summary>
+    /// <summary>Null means unlimited redemptions.</summary>
     public int? MaxTotalRedemptions { get; private set; }
 
     public int? MaxPerCustomer { get; private set; }
 
-    /// <summary>
-    /// Counts reservations, not completions: a slot is taken the moment a
-    /// checkout claims it and only given back if that order is cancelled.
-    /// Counting completions instead would let unlimited concurrent
-    /// checkouts all pass the limit check before any of them finished.
-    /// </summary>
+    /// <summary>Counts reservations, not completions; a slot is taken the moment a checkout claims it.</summary>
     public int RedemptionCount { get; private set; }
 
-    /// <summary>Coupons sharing a group do not stack with each other or with any other promotion in the same group - the best-value one wins; see NRulesPricingEngine's exclusivity reduction.</summary>
+    /// <summary>Coupons sharing a group do not stack with each other or any other promotion in the group.</summary>
     public string? ExclusivityGroup { get; private set; }
 
     public static Coupon Create(
@@ -71,11 +58,7 @@ public sealed class Coupon
     }
 }
 
-/// <summary>
-/// One checkout's claim on a coupon. Reserved at checkout, then confirmed
-/// or released as the order settles - which is what makes a coupon
-/// redemption a saga participant rather than a fire-and-forget increment.
-/// </summary>
+/// <summary>One checkout's claim on a coupon, reserved at checkout and confirmed or released as the order settles.</summary>
 public sealed class CouponRedemption
 {
     private CouponRedemption()
@@ -86,7 +69,7 @@ public sealed class CouponRedemption
 
     public string Code { get; private set; } = string.Empty;
 
-    /// <summary>Unique: an order redeems a given coupon at most once, which is also what makes retrying a checkout safe.</summary>
+    /// <summary>Unique: an order redeems a given coupon at most once.</summary>
     public Guid OrderId { get; private set; }
 
     public string CustomerId { get; private set; } = string.Empty;
@@ -110,11 +93,7 @@ public enum CouponRejectionReason
     CustomerRedemptionLimitReached
 }
 
-/// <summary>
-/// A coupon as the checkout reads it - a point-in-time snapshot, not a
-/// tracked entity, because eligibility has to be decided from values that
-/// cannot shift underneath the decision.
-/// </summary>
+/// <summary>A point-in-time snapshot of a coupon as checkout reads it, so eligibility cannot shift mid-decision.</summary>
 public sealed record CouponSnapshot(
     string Code,
     string Description,
@@ -129,13 +108,7 @@ public sealed record CouponSnapshot(
 
 public static class CouponEligibility
 {
-    /// <summary>
-    /// Pure and advisory: runs before pricing, so the limits it reads can
-    /// still be taken by a concurrent checkout before the actual
-    /// reservation closes that race with an atomic guarded UPDATE. This
-    /// pass exists to give the shopper a specific reason instead of a bare
-    /// failure, and to avoid claiming a slot for an order that won't qualify.
-    /// </summary>
+    /// <summary>Pure, advisory eligibility check run before pricing; the actual reservation still guards atomically.</summary>
     public static CouponRejectionReason Evaluate(
         CouponSnapshot? coupon,
         decimal subtotal,

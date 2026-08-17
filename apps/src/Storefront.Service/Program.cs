@@ -6,17 +6,11 @@ using Storefront.Service;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Match ProxyEndpoints' explicit forwarding limit and also cover chunked
-// requests whose Content-Length is absent before any endpoint reads the body.
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = 5 * 1024 * 1024;
 });
 
-// Same guard Orders.Api already carries, where
-// one unregistered IProducer took the whole outbox down while the service
-// went on reporting healthy - a background loop cannot fail loudly on its
-// own, so the failure has to happen at startup instead.
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateOnBuild = true;
@@ -55,9 +49,6 @@ builder.Services.AddOptions<ProductSummaryOptions>()
     .Bind(builder.Configuration.GetSection(ProductSummaryOptions.SectionName))
     .Validate(options => options.HedgeDelayMilliseconds >= 0, "Hedge delay cannot be negative.")
     .ValidateOnStart();
-// catalog/cart/inventory back browse-time display (product listings,
-// cart contents, stock) - a failure there is recoverable by the shopper
-// retrying, unlike orders below.
 builder.Services.AddHttpClient("catalog", (serviceProvider, client) =>
 {
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<CatalogProxyOptions>>().Value.BaseUrl);
@@ -68,8 +59,6 @@ builder.Services.AddHttpClient("cart", (serviceProvider, client) =>
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<CartProxyOptions>>().Value.BaseUrl);
 }).AddBestEffortHttpResilience();
 
-// Checkout's own forward - the one client on this BFF's genuinely
-// critical path.
 builder.Services.AddHttpClient("orders", (serviceProvider, client) =>
 {
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<OrdersProxyOptions>>().Value.BaseUrl);
@@ -79,13 +68,6 @@ builder.Services.AddHttpClient("inventory", (serviceProvider, client) =>
 {
     client.BaseAddress = new Uri(serviceProvider.GetRequiredService<IOptions<InventoryProxyOptions>>().Value.BaseUrl);
 })
-// The tail-latency benchmark routes this client through a
-// Toxiproxy latency toxic with a toxicity probability - Toxiproxy applies
-// that probability per proxied TCP connection, not per HTTP request, so a
-// pooled/reused keep-alive connection would be either always or never
-// toxic for its entire lifetime instead of the intended "N% of requests
-// are slow." Forcing a fresh connection per request makes the toxicity
-// roll happen per request, matching the fault this benchmark models.
 .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMilliseconds(1) })
 .AddBestEffortHttpResilience();
 

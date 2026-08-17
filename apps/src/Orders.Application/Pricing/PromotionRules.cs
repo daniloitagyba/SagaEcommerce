@@ -7,21 +7,17 @@ using Orders.Domain.Pricing;
 namespace Orders.Application.Pricing;
 
 /// <summary>
-/// The policy facts the rules match against, inserted as a fact rather than
-/// closed over so a rule's condition can depend on configuration.
+/// Provides promotion policy facts.
 /// </summary>
 public sealed record PromotionPolicy(PricingOptions Options);
 
 /// <summary>
-/// Marker fact: a rule decided this order ships free, so other rules
-/// (loyalty tier, campaign week) can grant it too without recomputing it.
+/// Marks an order as eligible for free shipping.
 /// </summary>
 public sealed record FreeShippingGranted(string Reason);
 
 /// <summary>
-/// A percentage-off coupon the shopper presented, already looked up and
-/// validated (see CouponEligibility) by the time this rule sees it - its
-/// only job here is the arithmetic.
+/// Applies a percentage coupon discount.
 /// </summary>
 public sealed class CouponPercentageRule : Rule
 {
@@ -29,7 +25,6 @@ public sealed class CouponPercentageRule : Rule
     {
         PricingRequest request = null!;
 
-        // `!= null`, not `is not null`: NRules compiles conditions into expression trees.
         When()
             .Match(() => request, r => r.Coupon != null);
 
@@ -50,12 +45,7 @@ public sealed class CouponPercentageRule : Rule
 }
 
 /// <summary>
-/// The automatic, budget-limited counterpart to CouponPercentageRule
-/// (Milestone 90) - fires whenever OrderPricingService resolved a still-
-/// funded campaign, exactly the way a shopper-typed coupon fires. A flat
-/// amount, not a percentage: the amount was fixed the moment the campaign
-/// was resolved, since the atomic budget claim that follows checkout needs
-/// to know exactly how much it is claiming.
+/// Applies a promotion campaign discount.
 /// </summary>
 public sealed class CampaignDiscountRule : Rule
 {
@@ -81,8 +71,7 @@ public sealed class CampaignDiscountRule : Rule
 }
 
 /// <summary>
-/// A category-wide promotion, using NRules' Collect aggregate to gather
-/// every line in the discounted category as one declarative clause.
+/// Applies a category discount.
 /// </summary>
 public sealed class CategoryDiscountRule : Rule
 {
@@ -132,8 +121,7 @@ public sealed class CategoryDiscountRule : Rule
 }
 
 /// <summary>
-/// Volume pricing on a single SKU. Matches one line at a time, so the
-/// engine evaluates it independently per line with no loop to get wrong.
+/// Volume pricing on a single SKU, matched and evaluated independently per line.
 /// </summary>
 public sealed class BulkQuantityRule : Rule
 {
@@ -165,9 +153,7 @@ public sealed class BulkQuantityRule : Rule
 }
 
 /// <summary>
-/// A standing discount for customers who have earned it -
-/// not requested like the others, but stacked with them the same way, with
-/// the engine's cap keeping all four from exceeding the order's value.
+/// Applies a customer tier discount.
 /// </summary>
 public sealed class LoyaltyTierRule : Rule
 {
@@ -201,10 +187,7 @@ public sealed class LoyaltyTierRule : Rule
 }
 
 /// <summary>
-/// Free shipping above a spend threshold - evaluated against the gross
-/// subtotal, deliberately: a shopper who qualifies for free shipping and
-/// then applies a coupon does not lose the free shipping, which is both
-/// what storefronts do and what avoids a confusing order of operations.
+/// Applies free shipping above a threshold.
 /// </summary>
 public sealed class FreeShippingRule : Rule
 {

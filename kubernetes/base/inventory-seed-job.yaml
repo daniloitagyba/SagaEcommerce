@@ -6,13 +6,6 @@ metadata:
     app.kubernetes.io/name: inventory-seed
     app.kubernetes.io/component: migration
   annotations:
-    # PostSync, not PreSync - matches Milestone 40's catalog-seed-m40
-    # precedent: seeding demo data only needs the schema (created by the
-    # PreSync inventory-migrations Job) and postgres itself, both of which
-    # are guaranteed to exist by the time PostSync hooks run. Using PostSync
-    # here sidesteps any same-phase hook-ordering ambiguity between this Job
-    # and inventory-migrations rather than relying on both being PreSync and
-    # hoping Argo runs them in file order.
     argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
@@ -34,15 +27,10 @@ spec:
         - name: inventory-seed
           image: saga-ecommerce/inventory-service:latest
           imagePullPolicy: IfNotPresent
-          # Idempotent (InventorySeeder no-ops if any row already exists),
-          # safe to run on every sync like the migration Jobs.
           args: ["--seed"]
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
-            # Missing here previously - AddKeycloakJwtBearer throws during
-            # service registration without it, crashing this Job before it
-            # ever reaches the --seed branch. Must match compose.yaml's value.
             - name: Authentication__Authority
               value: http://keycloak:8080/realms/orders-lab
             - name: ConnectionStrings__Inventory

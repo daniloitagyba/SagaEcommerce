@@ -6,10 +6,6 @@ metadata:
     app.kubernetes.io/name: orders-api
     app.kubernetes.io/component: api
 spec:
-  # No replicas: here - orders-api-hpa.yaml owns this field (minReplicas:
-  # 3), and kubernetes/argocd/application.yaml now tells Argo CD to ignore
-  # drift on it. Stating a value here would just be the thing Argo CD
-  # fights the HPA over on every sync.
   revisionHistoryLimit: 2
   strategy:
     canary:
@@ -39,9 +35,6 @@ spec:
       serviceAccountName: orders-api
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
-      # Milestone 65: see cart-service.yaml for the full rationale - a
-      # no-op on this single-node cluster today, a real guardrail once a
-      # second node exists.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -80,11 +73,6 @@ spec:
               value: http://keycloak:8080/realms/orders-lab
             - name: Redis__ConnectionString
               value: redis:6379
-            # Milestone 66: checkout prices line items against the live
-            # catalog server-side, so orders-api now depends on
-            # catalog-service. CatalogClientOptions defaults to
-            # localhost:5080, which would resolve to the pod itself. Use the
-            # Service port (80), not the catalog container port (8080).
             - name: Catalog__BaseUrl
               value: http://catalog-service
             - name: Cache__TimeToLiveSeconds
@@ -111,16 +99,6 @@ spec:
               value: http://pyroscope:4040
             - name: PYROSCOPE_APPLICATION_NAME
               value: orders-api
-            # The CLR profiler attach variables - moved out of the Dockerfile's
-            # own ENV (where they used to be unconditional and applied to
-            # every environment, Compose included, regardless of
-            # PYROSCOPE_PROFILING_ENABLED above) so a build with no
-            # profiling configuration - Compose - genuinely runs with no
-            # profiler attached, instead of CORECLR_ENABLE_PROFILING loading
-            # one at process startup and only Pyroscope's own
-            # PYROSCOPE_PROFILING_ENABLED (read after that point) deciding
-            # whether it does anything. The .so files themselves stay baked
-            # into the image - only the decision to attach lives here now.
             - name: CORECLR_ENABLE_PROFILING
               value: "1"
             - name: CORECLR_PROFILER
@@ -131,12 +109,6 @@ spec:
               value: /opt/Pyroscope.Linux.ApiWrapper.x64.so
             - name: LD_LIBRARY_PATH
               value: /opt
-            # OutboxPublisher<OrdersDbContext> - previously relied entirely
-            # on OutboxOptions' own code defaults, with no operator-facing
-            # knob anywhere. Explicit here matching those defaults exactly,
-            # so a future default change in code can't silently change
-            # deployed behavior - the same reasoning already applied to
-            # Saga__Mode.
             - name: Outbox__BatchSize
               value: "5"
             - name: Outbox__PollIntervalMilliseconds
@@ -197,10 +169,6 @@ spec:
               cpu: 200m
               memory: 128Mi
             limits:
-              # Pyroscope's native profiler refuses to start below a 1-core
-              # CPU limit ("CPU limit is too low for the profiler to work
-              # properly" - logged at container startup with DD_TRACE_DEBUG=1).
-              # Was 500m before continuous profiling was added.
               cpu: 1000m
               memory: 256Mi
           securityContext:
@@ -233,15 +201,6 @@ spec:
     - name: grpc
       port: 81
       targetPort: grpc
-      # "kubernetes.io/h2c" is the exact string Linkerd's outbound policy
-      # controller recognizes for HTTP/2 cleartext (confirmed directly in
-      # its source, policy-controller/core/src/outbound.rs's AppProtocol
-      # parser) - anything else, including the seemingly-more-correct
-      # "grpc", falls into an Unknown variant. Without the recognized
-      # value, the outbound proxy never sets the ALPN hint that tells the
-      # destination this is HTTP/2, and the receiving Server's
-      # proxyProtocol: gRPC declaration then denies the connection outright
-      # for arriving with no negotiated protocol at all.
       appProtocol: kubernetes.io/h2c
       protocol: TCP
 ---

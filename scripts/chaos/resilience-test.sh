@@ -76,9 +76,6 @@ if [[ "$traffic_started" != true ]]; then
 fi
 
 printf 'Restarting Orders API while traffic is active\n'
-# orders-api is an Argo Rollout (Milestone 15); "kubectl rollout restart" only
-# supports Deployment/StatefulSet/DaemonSet, so trigger the equivalent via the
-# Rollout's own restartAt field, then poll for full availability.
 kubectl patch rollout/orders-api --namespace "$namespace" --type merge \
   --patch "{\"spec\":{\"restartAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
 for _ in $(seq 1 90); do
@@ -117,9 +114,6 @@ worker_revision_after=$(
     --output jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}'
 )
 
-# restartAt cycles pods without bumping the Rollout's own revision annotation
-# (unlike a Deployment rolling restart), so confirm every pod was actually
-# replaced by checking the running pod names are now entirely different.
 if [[ -n "$(comm -12 <(tr ' ' '\n' <<<"$api_pods_before" | sort) <(tr ' ' '\n' <<<"$api_pods_after" | sort))" ]]; then
   echo "Orders API pods were not fully replaced by the restart." >&2
   exit 1

@@ -11,15 +11,7 @@ using Polly.Registry;
 
 namespace Orders.IntegrationTests;
 
-/// <summary>
-/// Reproduces the race at its source, in Payments.Service
-/// itself - a capture command arrives after the authorization has already
-/// expired (the sweeper won the race). Before reconciliation was added,
-/// PaymentSettlementProcessor's `if (!changed)` branch logged
-/// "AlreadySettled" and returned without publishing anything, so this
-/// exact outcome was indistinguishable from a harmless redelivered capture
-/// and invisible to the rest of the system.
-/// </summary>
+/// <summary>Reproduces the race at its source in Payments.Service: a capture command arrives after the authorization has already expired. Before reconciliation, this outcome was indistinguishable from a harmless redelivered capture.</summary>
 [Collection(PostgresCollectionDefinition.Name)]
 public sealed class PaymentSettlementProcessorTests(PostgresFixture fixture) : IAsyncLifetime
 {
@@ -52,9 +44,6 @@ public sealed class PaymentSettlementProcessorTests(PostgresFixture fixture) : I
 
         var result = await processor.ProcessAsync(CaptureConsumeResult(orderId), CancellationToken.None);
 
-        // Not Duplicate: this is not a harmless redelivery of a capture
-        // that already succeeded - it's a capture that can never succeed
-        // now, and the caller needs to know the difference.
         Assert.Equal(MessageProcessingResult.Processed, result);
 
         await using var scope = _serviceProvider.CreateAsyncScope();
@@ -63,10 +52,6 @@ public sealed class PaymentSettlementProcessorTests(PostgresFixture fixture) : I
         Assert.Equal(nameof(PaymentSettlementReplied), outboxMessage.EventType);
         var reply = System.Text.Json.JsonSerializer.Deserialize<PaymentSettlementReplied>(outboxMessage.Payload, SerializerOptions);
         Assert.Equal(PaymentStates.Expired, reply!.State);
-        // The flag OrderSagaReplyConsumer.HandleSettlementRepliedAsync
-        // actually branches on - without it set, this reply is
-        // indistinguishable from an ordinary successful settlement and the
-        // saga would never learn the capture failed.
         Assert.True(reply.RequiresReconciliation);
     }
 
@@ -104,20 +89,12 @@ public sealed class PaymentSettlementProcessorTests(PostgresFixture fixture) : I
         var outboxMessage = await dbContext.OutboxMessages.SingleAsync();
         var reply = System.Text.Json.JsonSerializer.Deserialize<PaymentSettlementReplied>(outboxMessage.Payload, SerializerOptions);
         Assert.Equal(PaymentStates.Captured, reply!.State);
-        // An ordinary successful settlement - the saga must not react.
         Assert.False(reply.RequiresReconciliation);
     }
 
     [Fact]
     public async Task CancellingAnOrderWithACapturedPixPaymentRefundsItInsteadOfLoggingAHarmlessNoOp()
     {
-        // Reproduces the bug at its source. Before the fix,
-        // Orders never even sent a settlement command for a Pix
-        // order on cancellation (RequiresCapture gated the whole branch) -
-        // this test exercises Payments' side of the fix in isolation: a
-        // Cancel command against an already-Captured payment must refund,
-        // not fall through to a void that would refuse (Captured is not
-        // IsAwaitingSettlement) and leave the reply logged as a harmless duplicate.
         var orderId = Guid.NewGuid();
         await SeedApprovedPaymentAsync(orderId, PaymentMethods.Pix, PaymentStates.Captured);
         var processor = CreateProcessor();
@@ -157,9 +134,6 @@ public sealed class PaymentSettlementProcessorTests(PostgresFixture fixture) : I
     [Fact]
     public async Task CancellingAnOrderWithADeclinedPaymentIsDroppedSilentlyNotReportedAsAMismatch()
     {
-        // Nothing was ever approved - there is nothing to void or refund,
-        // and unlike a capture mismatch, this must not surface as one:
-        // the order is cancelled either way and there is no money at risk.
         var orderId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
         var payment = Payment.Authorize(

@@ -10,10 +10,6 @@ public sealed class ProductRepository
 
     static ProductRepository()
     {
-        // Must run before the driver serializes/deserializes a Product for
-        // the first time - a static constructor guarantees that regardless
-        // of whether the caller is Program.cs or a test fixture that never
-        // runs application startup.
         MongoClassMaps.Register();
     }
 
@@ -64,11 +60,7 @@ public sealed class ProductRepository
         return await _products.Find(product => product.Sku == normalizedSku).FirstOrDefaultAsync(cancellationToken);
     }
 
-    /// <summary>
-    /// Batches the lookup GetBestsellersAsync previously did with one
-    /// FindBySkuAsync call per ranked entry (up to 50 sequential Mongo
-    /// round-trips) - same $in pattern FindByIdsAsync already uses.
-    /// </summary>
+    /// <summary>Batches a SKU lookup into a single $in query.</summary>
     public async Task<IReadOnlyList<Product>> FindBySkusAsync(IReadOnlyCollection<string> skus, CancellationToken cancellationToken)
     {
         if (skus.Count == 0)

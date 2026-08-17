@@ -9,21 +9,7 @@ using Polly.Registry;
 
 namespace Payments.Service;
 
-/// <summary>
-/// Releases card authorizations nobody ever captured, so a
-/// hold from a lost capture command or an unfulfilled order doesn't
-/// encumber the shopper's funds indefinitely - what real acquirers do too.
-///
-/// <para>
-/// Uses a Postgres advisory lock rather than a Kubernetes Lease like
-/// Orders.Worker's SagaTimeoutSweeper: <c>FOR UPDATE SKIP LOCKED</c> already
-/// makes concurrent sweeps safe (each replica claims a disjoint batch), so
-/// the lock only needs to stop wasted polling, not guarantee correctness. A
-/// Lease would mean new RBAC and a service account token this pod
-/// deliberately doesn't carry; the advisory lock needs no
-/// new infrastructure and releases itself if a replica dies mid-sweep.
-/// </para>
-/// </summary>
+/// <summary>Releases card authorizations nobody ever captured, so a lost hold doesn't encumber the shopper's funds indefinitely.</summary>
 public sealed class PaymentAuthorizationSweeper(
     IServiceScopeFactory scopeFactory,
     IOptions<PaymentSettlementOptions> options,
@@ -31,17 +17,11 @@ public sealed class PaymentAuthorizationSweeper(
     ILogger<PaymentAuthorizationSweeper> logger,
     ResiliencePipelineProvider<string> pipelineProvider) : BackgroundService
 {
-    /// <summary>
-    /// Arbitrary but fixed - advisory locks share one namespace per
-    /// database, so this number must not collide with another one. It is
-    /// the only advisory lock this database uses.
-    /// </summary>
+    /// <summary>Arbitrary but fixed; the only advisory lock this database uses.</summary>
     private const long SweepLockKey = 6800_0001;
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentSettlementOptions _options = options.Value;
-    // No-retry transactional pipeline, not the retrying PostgresPipeline -
-    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -61,8 +41,6 @@ public sealed class PaymentAuthorizationSweeper(
             }
             catch (Exception exception)
             {
-                // A failed sweep must never take the host down - the holds
-                // it did not release this time are still there next time.
                 PaymentSweeperLog.SweepFailed(logger, exception);
             }
         }
@@ -77,11 +55,6 @@ public sealed class PaymentAuthorizationSweeper(
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-            // pg_try_advisory_xact_lock never waits: a replica that does not get
-            // the lock skips this tick entirely instead of queueing behind the
-            // one that did. Transaction-scoped, so it is released on commit or
-            // rollback - including the rollback in the catch above - and there
-            // is no unlock call that can be missed.
             var isSweeper = await dbContext.Database
                 .SqlQuery<bool>($"SELECT pg_try_advisory_xact_lock({SweepLockKey}) AS \"Value\"")
                 .SingleAsync(ct);
@@ -94,9 +67,6 @@ public sealed class PaymentAuthorizationSweeper(
 
             var now = timeProvider.GetUtcNow();
 
-            // SKIP LOCKED is what makes running this on every replica safe:
-            // each one claims a disjoint batch instead of contending for the
-            // same rows, and none of them waits on another's lock.
             var claimedIds = await dbContext.Database
                 .SqlQuery<Guid>($"""
                     SELECT id AS "Value"
@@ -124,8 +94,6 @@ public sealed class PaymentAuthorizationSweeper(
             var expired = 0;
             foreach (var payment in payments)
             {
-                // Goes through the domain guard rather than a bulk UPDATE, so a
-                // payment captured between the claim and here is left alone.
                 if (!payment.TrySettleWithoutCapture(PaymentStates.Expired, "payment window elapsed without settlement", now))
                 {
                     continue;

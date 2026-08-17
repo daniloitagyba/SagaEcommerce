@@ -11,12 +11,7 @@ using Polly.Registry;
 
 namespace Inventory.Service;
 
-/// <summary>
-/// The consumer WarehouseReplenishmentNeeded never had.
-/// Records a purchase order the moment a warehouse crosses its reorder
-/// point; PurchaseOrderReceivingSweeper is the other half, turning it into
-/// an actual restock once its lead time elapses.
-/// </summary>
+/// <summary>Records a purchase order the moment a warehouse crosses its reorder point.</summary>
 public sealed class ReplenishmentRequestProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<InventoryKafkaOptions> kafkaOptions,
@@ -27,8 +22,6 @@ public sealed class ReplenishmentRequestProcessor(
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly InventoryKafkaOptions _kafkaOptions = kafkaOptions.Value;
     private readonly ReplenishmentOptions _replenishmentOptions = replenishmentOptions.Value;
-    // No-retry transactional pipeline, not the retrying PostgresPipeline -
-    // see ResilienceExtensions.PostgresTransactionPipeline's own comment.
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
 
     public async Task<MessageProcessingResult> ProcessAsync(
@@ -84,8 +77,6 @@ public sealed class ReplenishmentRequestProcessor(
                 return MessageProcessingResult.Duplicate;
             }
 
-            // Restocks to a multiple of the reorder point, not merely back to
-            // it - see ReplenishmentOptions.TargetMultiplier.
             var target = signal.ReorderPoint * _replenishmentOptions.TargetMultiplier;
             var quantity = Math.Max(target - signal.AvailableQuantity, signal.ReorderPoint);
 

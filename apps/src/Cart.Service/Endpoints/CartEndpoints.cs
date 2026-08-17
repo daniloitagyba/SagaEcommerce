@@ -8,16 +8,7 @@ public sealed record UpdateCartItemRequest(int Quantity);
 
 public sealed record CartObservedDot(string ReplicaId, long Counter);
 
-/// <summary>
-/// One operation a client tracked while it couldn't reach
-/// this service - a different tab, a device that went offline - replayed
-/// here rather than shipped as raw CRDT dots, which are an implementation
-/// detail this wire contract has no reason to expose. Kind is
-/// "Increase" | "Decrease" | "Remove". OperationId is minted once by the
-/// client and retained across retries; the server derives the CRDT replica
-/// component from it, making a retry idempotent without collapsing two
-/// genuinely different offline operations.
-/// </summary>
+/// <summary>An offline cart operation to replay; Kind is "Increase" | "Decrease" | "Remove".</summary>
 public sealed record CartMergeOperation(
     string Sku,
     string Kind,
@@ -30,15 +21,7 @@ public sealed record CartMergeOperation(
 
 public sealed record CartMergeRequest(IReadOnlyList<CartMergeOperation>? Operations);
 
-/// <summary>
-/// Every route resolves to the caller's own cart - there is
-/// no cartId left in the URL to name someone else's. Before,
-/// cartId was a client-supplied opaque string with no owner
-/// check at all: anyone who could guess or enumerate one could read or
-/// clear another shopper's cart. Deriving the storage key from the
-/// authenticated caller's own identity removes that surface rather than
-/// guarding it - there is nothing left to enumerate.
-/// </summary>
+/// <summary>Cart endpoints; every route resolves to the caller's own cart via their authenticated identity.</summary>
 public static class CartEndpoints
 {
     public static IEndpointRouteBuilder MapCartEndpoints(this IEndpointRouteBuilder endpoints)
@@ -89,8 +72,6 @@ public static class CartEndpoints
 
         if (existing is not null)
         {
-            // Quantity change on a SKU already in the cart: no Catalog call,
-            // no re-snapshotting of price/name - see CartLineItem's comment.
             item = existing.WithQuantity(request.Quantity);
         }
         else
@@ -110,16 +91,7 @@ public static class CartEndpoints
         return Results.Ok(ToCartResponse(snapshot));
     }
 
-    /// <summary>
-    /// Answers the checkout PriceMismatch that would otherwise have no
-    /// resolution short of DELETE-then-PUT: re-reads the SKU's current
-    /// price from the catalog and overwrites just this line's snapshot
-    /// (CartStore.RefreshItemPriceAsync / CartCrdtState.RefreshMetadata),
-    /// leaving quantity and every other line untouched. 404 either way a
-    /// price can't be refreshed - the SKU isn't in this cart, or the
-    /// catalog no longer carries it - so the caller doesn't have to tell
-    /// those two apart to know retrying checkout with this SKU won't help.
-    /// </summary>
+    /// <summary>Re-reads the SKU's current price from the catalog and overwrites just this line's snapshot.</summary>
     private static async Task<IResult> RefreshItemPriceAsync(
         string sku,
         HttpContext httpContext,
@@ -190,14 +162,7 @@ public static class CartEndpoints
                 title: "Cart Changed");
     }
 
-    /// <summary>
-    /// Reconciles what a client tracked while it couldn't
-    /// reach this cart against whatever is currently stored - see
-    /// CartCrdtState.Merge and CartStore.MergeAsync for the actual CRDT
-    /// join. Every real operation still goes through PutItemAsync/
-    /// DeleteItemAsync above unchanged; this route exists specifically for
-    /// the divergent-then-reconciled case those two were never meant to solve.
-    /// </summary>
+    /// <summary>Reconciles offline-tracked operations against the currently stored cart state.</summary>
     private static async Task<IResult> MergeAsync(
         CartMergeRequest request,
         HttpContext httpContext,
@@ -217,14 +182,7 @@ public static class CartEndpoints
         return Results.Ok(ToCartResponse(snapshot));
     }
 
-    /// <summary>
-    /// Not private: Cart.UnitTests exercises this directly - it's the whole
-    /// reconciliation algorithm (validate each offline operation, fold it
-    /// into a CRDT state to merge), with nothing in it that touches Redis.
-    /// Only the final CartStore.MergeAsync call in MergeAsync above needs a
-    /// live store; everything that decides whether a batch of operations is
-    /// even valid happens here first.
-    /// </summary>
+    /// <summary>Validates and folds offline operations into a CRDT state, without touching the store.</summary>
     internal static (CartCrdtState? State, IReadOnlyDictionary<string, string[]>? Errors) BuildClientState(
         IReadOnlyList<CartMergeOperation>? operations,
         TimeProvider? timeProvider = null)
@@ -258,10 +216,6 @@ public static class CartEndpoints
                 });
             }
 
-            // One PN-counter component per stable operation. Replaying the
-            // same request merges the same component with Math.Max (no
-            // double application); a genuinely new operation has a new
-            // component and therefore contributes independently.
             var replicaId = $"offline-operation:{operation.OperationId:N}";
 
             switch (operation.Kind)

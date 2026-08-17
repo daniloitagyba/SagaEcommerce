@@ -39,11 +39,6 @@ kubectl wait \
   deployment/orders-worker \
   --timeout=120s >/dev/null
 
-# orders-api is an Argo Rollout, not a Deployment (Milestone 15) - it has no
-# "Available" condition, and its own status.phase is "Progressing" (not
-# "Healthy") for the whole duration of an active canary, which this script
-# must be able to run load against. Poll for at least one available replica
-# instead of requiring the rollout to be fully promoted.
 for _ in $(seq 1 60); do
   available=$(kubectl get rollout orders-api --namespace "$namespace" --output jsonpath='{.status.availableReplicas}' 2>/dev/null)
   if [[ -n "$available" && "$available" -ge 1 ]]; then

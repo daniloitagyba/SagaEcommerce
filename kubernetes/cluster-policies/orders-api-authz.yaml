@@ -1,12 +1,3 @@
-# Milestone 26: narrows orders-api's mesh-visible inbound traffic (port
-# 8080) to only requests authenticated as the orders-worker workload
-# identity - Linkerd's own AuthorizationPolicy layer, independent of and
-# complementary to the OIDC/JWT authorization Orders.Api itself now
-# enforces. Linkerd's defaultInboundPolicy is "all-unauthenticated"
-# cluster-wide (Milestone 24); this is the first workload-specific
-# narrowing of that default. Applied imperatively - cluster infrastructure,
-# same category as the Linkerd install itself and the Kyverno policies in
-# this same directory, not an Argo CD-managed application manifest.
 apiVersion: policy.linkerd.io/v1beta3
 kind: Server
 metadata:
@@ -43,29 +34,6 @@ spec:
       kind: MeshTLSAuthentication
       name: orders-worker-identity
 ---
-# Milestone 31: a real regression from this same Server's policy, found
-# while building this milestone's game day script and traced back to
-# Milestone 26. Every load-testing/chaos script that talks to orders-api's
-# ClusterIP directly from the host (k6-run.sh and everything that depends
-# on it - every k6 profile; saga-chaos-test.sh; resilience-chaos.sh's
-# outage-window requests) had been silently getting a real 403 from this
-# exact policy since Milestone 26 - undetected because nothing re-ran a k6
-# profile against the live mesh between Milestones 26 and 31.
-# kubectl port-forward (Milestone 24's usual workaround) isn't a full fix
-# here: it's a single-stream tunnel that can't sustain the throughput
-# k6's higher-volume profiles (autoscale, overload, soak) need, a limit
-# already hit and documented for the Mac-local k6 runner earlier in this
-# lab's history. The real fix: host-originated traffic to a ClusterIP
-# arrives SNATed to the flannel bridge gateway (10.42.0.1 on this node,
-# confirmed directly in Milestone 24's own investigation), and Linkerd
-# supports authorizing by source network as an alternative to identity -
-# the same mechanism linkerd-viz's own "kubelet" NetworkAuthentication
-# (0.0.0.0/0, since kubelet's node IP isn't known in advance) already
-# uses for exactly this kind of node-originated traffic. Scoped to this
-# specific node's actual bridge gateway address rather than reused as
-# permissively - multiple AuthorizationPolicy resources targeting the same
-# Server are OR'd together, so this adds an allowed path without loosening
-# the orders-worker mesh-identity requirement above.
 apiVersion: policy.linkerd.io/v1alpha1
 kind: NetworkAuthentication
 metadata:
@@ -90,12 +58,6 @@ spec:
       kind: NetworkAuthentication
       name: k3s-node-bridge-gateway
 ---
-# Milestone 45: the exact same class of regression M31 already found and
-# documented above - a third real caller (Storefront.Service's
-# checkout proxy) hitting this Server's mesh-level allow-list for the
-# first time and getting a real 403 from Linkerd itself, in ~6ms, before
-# the request ever reached Orders.Api's own JWT auth. OR'd with the two
-# policies above rather than replacing either.
 apiVersion: policy.linkerd.io/v1alpha1
 kind: MeshTLSAuthentication
 metadata:
@@ -119,19 +81,3 @@ spec:
     - group: policy.linkerd.io
       kind: MeshTLSAuthentication
       name: storefront-service-identity
-
-# Milestone 30 deliberately does NOT add an equivalent Server/
-# AuthorizationPolicy pair for orders-api's gRPC port (8081/"grpc").
-# A Server with proxyProtocol: gRPC (also tried: HTTP/2) paired with this
-# same MeshTLSAuthentication denied every connection outright - including
-# ones presenting exactly the permitted orders-worker identity - logged as
-# "Connection denied ... negotiated_protocol: None" regardless of the
-# client's actual identity. Removing the Server/AuthorizationPolicy pair
-# entirely (falling back to the cluster's defaultInboundPolicy:
-# all-unauthenticated, Milestone 24) made the identical call succeed
-# immediately. Orders.Api's own JWT bearer authentication (Milestone 26)
-# still fully protects this endpoint independent of Linkerd's policy layer
-# - confirmed live: an unauthenticated gRPC call gets a real 401 from the
-# application itself, not a mesh-level bypass. See
-# docs/cicd/milestone-30-grpc-and-mesh-load-balancing.md for the full
-# investigation.
