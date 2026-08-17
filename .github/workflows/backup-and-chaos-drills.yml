@@ -24,7 +24,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.job == 'backup-drill' || github.event.schedule == '0 5 1 * *'
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: link the lab-only Compose environment
         run: |
@@ -58,7 +58,7 @@ jobs:
 
       - name: upload backup/restore evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: backup-restore-evidence-${{ github.run_id }}
           path: drill-evidence
@@ -69,7 +69,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.job == 'chaos-gameday' || github.event.schedule == '0 6 1 1,4,7,10 *'
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: link the lab-only Compose environment
         run: |
@@ -101,7 +101,7 @@ jobs:
 
       - name: upload chaos evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: chaos-evidence-${{ github.run_id }}
           path: drill-evidence
