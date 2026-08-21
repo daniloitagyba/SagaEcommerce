@@ -10,6 +10,9 @@ COPY apps/src/BuildingBlocks.Messaging/BuildingBlocks.Messaging.csproj apps/src/
 COPY apps/src/BuildingBlocks.Observability/BuildingBlocks.Observability.csproj apps/src/BuildingBlocks.Observability/
 COPY apps/src/BuildingBlocks.Persistence/BuildingBlocks.Persistence.csproj apps/src/BuildingBlocks.Persistence/
 COPY apps/src/BuildingBlocks.Resilience/BuildingBlocks.Resilience.csproj apps/src/BuildingBlocks.Resilience/
+COPY apps/src/Orders.Domain/Orders.Domain.csproj apps/src/Orders.Domain/
+COPY apps/src/Orders.Application/Orders.Application.csproj apps/src/Orders.Application/
+COPY apps/src/Orders.Infrastructure/Orders.Infrastructure.csproj apps/src/Orders.Infrastructure/
 COPY apps/src/Orders.Worker/Orders.Worker.csproj apps/src/Orders.Worker/
 RUN dotnet restore apps/src/Orders.Worker/Orders.Worker.csproj
 
@@ -20,6 +23,9 @@ COPY apps/src/BuildingBlocks.Messaging/ apps/src/BuildingBlocks.Messaging/
 COPY apps/src/BuildingBlocks.Observability/ apps/src/BuildingBlocks.Observability/
 COPY apps/src/BuildingBlocks.Persistence/ apps/src/BuildingBlocks.Persistence/
 COPY apps/src/BuildingBlocks.Resilience/ apps/src/BuildingBlocks.Resilience/
+COPY apps/src/Orders.Domain/ apps/src/Orders.Domain/
+COPY apps/src/Orders.Application/ apps/src/Orders.Application/
+COPY apps/src/Orders.Infrastructure/ apps/src/Orders.Infrastructure/
 COPY apps/src/Orders.Worker/ apps/src/Orders.Worker/
 RUN dotnet publish apps/src/Orders.Worker/Orders.Worker.csproj \
     --configuration Release \
