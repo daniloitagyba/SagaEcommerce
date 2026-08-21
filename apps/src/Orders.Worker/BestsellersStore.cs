@@ -8,9 +8,6 @@ public interface IBestsellersStore
     Task RecordSaleAsync(string sku, string? categorySlug, int quantity, CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// Tracks best-selling products.
-/// </summary>
 public sealed class RedisBestsellersStore(IConnectionMultiplexer connectionMultiplexer) : IBestsellersStore
 {
     public async Task RecordSaleAsync(string sku, string? categorySlug, int quantity, CancellationToken cancellationToken)

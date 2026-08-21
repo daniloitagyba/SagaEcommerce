@@ -29,17 +29,16 @@ public sealed class ProductRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task InsertedProductCanBeFoundByIdAndListedByCategory()
     {
-        var product = new Product
-        {
-            Name = "Test Notebook",
-            Description = "A notebook for testing.",
-            CategorySlug = "electronics",
-            Price = 1999.90m,
-            Currency = "BRL",
-            Sku = $"SKU-TEST-{Guid.NewGuid():N}",
-            Attributes = new Dictionary<string, string> { ["ram"] = "8GB" },
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+        var product = Product.Create(
+            "Test Notebook",
+            "A notebook for testing.",
+            "electronics",
+            1999.90m,
+            "BRL",
+            $"SKU-TEST-{Guid.NewGuid():N}",
+            new Dictionary<string, string> { ["ram"] = "8GB" },
+            images: null,
+            createdAt: DateTimeOffset.UtcNow);
 
         await _repository.InsertAsync(product, CancellationToken.None);
 
@@ -60,14 +59,9 @@ public sealed class ProductRepositoryTests : IAsyncLifetime
     public async Task FindBySkuAsyncFindsTheProductAndReturnsNullForAnUnknownSku()
     {
         var sku = $"SKU-BY-SKU-{Guid.NewGuid():N}";
-        var product = new Product
-        {
-            Name = "Findable by SKU",
-            CategorySlug = "electronics",
-            Price = 10m,
-            Sku = sku,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+        var product = Product.Create(
+            "Findable by SKU", string.Empty, "electronics", 10m, "BRL", sku,
+            attributes: null, images: null, createdAt: DateTimeOffset.UtcNow);
         await _repository.InsertAsync(product, CancellationToken.None);
 
         var found = await _repository.FindBySkuAsync(sku, CancellationToken.None);
@@ -90,8 +84,12 @@ public sealed class ProductRepositoryTests : IAsyncLifetime
     public async Task DuplicateSkuIsRejectedByTheUniqueIndex()
     {
         var sku = $"SKU-DUP-{Guid.NewGuid():N}";
-        var first = new Product { Name = "First", CategorySlug = "books", Price = 10m, Sku = sku, CreatedAt = DateTimeOffset.UtcNow };
-        var second = new Product { Name = "Second", CategorySlug = "books", Price = 20m, Sku = sku, CreatedAt = DateTimeOffset.UtcNow };
+        var first = Product.Create(
+            "First", string.Empty, "books", 10m, "BRL", sku,
+            attributes: null, images: null, createdAt: DateTimeOffset.UtcNow);
+        var second = Product.Create(
+            "Second", string.Empty, "books", 20m, "BRL", sku,
+            attributes: null, images: null, createdAt: DateTimeOffset.UtcNow);
 
         await _repository.InsertAsync(first, CancellationToken.None);
 

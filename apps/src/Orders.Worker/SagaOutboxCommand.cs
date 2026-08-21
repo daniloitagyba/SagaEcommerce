@@ -5,9 +5,6 @@ using NpgsqlTypes;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Represents a persisted saga command.
-/// </summary>
 public sealed record SagaOutboxCommand(
     Guid Id,
     Guid OrderId,

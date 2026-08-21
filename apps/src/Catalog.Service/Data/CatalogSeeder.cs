@@ -8,6 +8,7 @@ public static class CatalogSeeder
     public static async Task SeedAsync(
         CategoryRepository categoryRepository,
         ProductRepository productRepository,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         var existingCategories = await categoryRepository.ListAsync(cancellationToken);
@@ -15,10 +16,10 @@ public static class CatalogSeeder
 
         var categories = new[]
         {
-            new Category { Id = Guid.NewGuid().ToString("N"), Slug = "electronics", Name = "Eletrônicos" },
-            new Category { Id = Guid.NewGuid().ToString("N"), Slug = "books", Name = "Livros" },
-            new Category { Id = Guid.NewGuid().ToString("N"), Slug = "clothing", Name = "Roupas" },
-            new Category { Id = Guid.NewGuid().ToString("N"), Slug = "home", Name = "Casa" }
+            Category.Create(Guid.NewGuid().ToString("N"), "electronics", "Eletrônicos"),
+            Category.Create(Guid.NewGuid().ToString("N"), "books", "Livros"),
+            Category.Create(Guid.NewGuid().ToString("N"), "clothing", "Roupas"),
+            Category.Create(Guid.NewGuid().ToString("N"), "home", "Casa")
         };
         foreach (var category in categories)
         {
@@ -34,7 +35,6 @@ public static class CatalogSeeder
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
         var products = new[]
         {
             new Product

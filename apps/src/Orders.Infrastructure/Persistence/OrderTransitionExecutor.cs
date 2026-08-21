@@ -11,7 +11,8 @@ namespace Orders.Infrastructure.Persistence;
 
 public sealed class OrderTransitionExecutor(
     NpgsqlDataSource dataSource,
-    ResiliencePipelineProvider<string> pipelineProvider)
+    ResiliencePipelineProvider<string> pipelineProvider,
+    TimeProvider? timeProvider = null)
 {
     private const string TransitionSql = """
         WITH previous AS (
@@ -26,6 +27,7 @@ public sealed class OrderTransitionExecutor(
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<OrderTransition> TryTransitionAsync(
         Guid orderId,
@@ -80,7 +82,7 @@ public sealed class OrderTransitionExecutor(
                 null);
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         await QueueOutboxAsync(
             connection, transaction, nameof(OrderStatusChanged),
             new OrderStatusChanged(Guid.NewGuid(), orderId, targetStatus, now, correlationId,

@@ -4,9 +4,6 @@ using NpgsqlTypes;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Settles promotion campaign claims.
-/// </summary>
 public sealed class PromotionCampaignStore
 {
     private const string ConfirmSql = """

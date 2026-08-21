@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Orders.Worker;
 
 namespace Orders.UnitTests;
@@ -27,7 +28,7 @@ public sealed class KeycloakTokenProviderTests
     [Fact]
     public async Task GetTokenAsyncRefetchesAfterTheCachedTokenExpires()
     {
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 8, 17, 12, 0, 0, TimeSpan.Zero));
         var handler = new CountingTokenHandler(expiresIn: 60);
         var provider = CreateProvider(handler, clock);
 
@@ -50,15 +51,6 @@ public sealed class KeycloakTokenProviderTests
             ClientSecret = "test-secret-not-a-real-credential"
         });
         return new KeycloakTokenProvider(httpClient, options, timeProvider);
-    }
-
-    private sealed class FakeTimeProvider(DateTimeOffset start) : TimeProvider
-    {
-        private DateTimeOffset _now = start;
-
-        public override DateTimeOffset GetUtcNow() => _now;
-
-        public void Advance(TimeSpan by) => _now += by;
     }
 
     private sealed class CountingTokenHandler(int expiresIn) : HttpMessageHandler

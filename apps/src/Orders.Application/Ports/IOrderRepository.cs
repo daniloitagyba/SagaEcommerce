@@ -8,14 +8,8 @@ public interface IOrderRepository
     Task<Order?> FindByIdAsync(Guid id, CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// Defines the order write contract.
-/// </summary>
 public interface IOrderCreationRepository : IOrderRepository
 {
-    /// <summary>
-    /// Persists an order and its effects.
-    /// </summary>
     Task<OrderWriteResult> AddAsync(
         Order order,
         OutboxMessage outboxMessage,

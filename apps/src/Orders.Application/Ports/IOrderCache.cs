@@ -16,8 +16,6 @@ public interface IOrderCache
         Func<CancellationToken, Task<CachedOrder?>> factory,
         CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Drops the cached order so the next read sees the new status.
-    /// </summary>
+    /// <summary>Drops the cached order so the next read sees the new status.</summary>
     Task InvalidateAsync(Guid id, CancellationToken cancellationToken);
 }

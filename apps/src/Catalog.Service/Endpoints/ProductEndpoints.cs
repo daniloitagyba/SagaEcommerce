@@ -226,20 +226,17 @@ public static class ProductEndpoints
             });
         }
 
-        existing.Name = request.Name;
-        existing.Description = request.Description;
-        existing.CategorySlug = request.CategorySlug;
-        existing.Price = request.Price;
-        existing.Currency = request.Currency;
-        existing.Sku = request.Sku;
-        existing.Attributes = request.Attributes is null
-            ? []
-            : new Dictionary<string, string>(request.Attributes, StringComparer.Ordinal);
-        existing.Images = request.Images is null ? [] : [.. request.Images];
-
         try
         {
-            existing.EnsureValid();
+            existing.UpdateDetails(
+                request.Name,
+                request.Description,
+                request.CategorySlug,
+                request.Price,
+                request.Currency,
+                request.Sku,
+                request.Attributes,
+                request.Images);
         }
         catch (ArgumentException exception)
         {

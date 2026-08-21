@@ -7,9 +7,6 @@ public enum SagaLineCompletion
     Failed
 }
 
-/// <summary>
-/// Aggregates multi-line saga replies.
-/// </summary>
 public static class SagaLineCompletionPolicy
 {
     public static SagaLineCompletion Reservations(IReadOnlyList<SagaLineRecord> lines) =>

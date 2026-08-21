@@ -3,9 +3,6 @@ using FluentValidation.Results;
 
 namespace Orders.Application.UseCases.CreateOrder;
 
-/// <summary>
-/// Validates order creation commands.
-/// </summary>
 public sealed class CreateOrderCommandRules : AbstractValidator<CreateOrderCommand>
 {
     public const int MaximumItems = 50;

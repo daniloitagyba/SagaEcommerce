@@ -4,9 +4,7 @@ using Npgsql;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Resolves orchestrated sagas whose downstream service did not reply.
-/// </summary>
+/// <summary>Resolves orchestrated sagas whose downstream service did not reply.</summary>
 public sealed class SagaTimeoutSweeper(
     IOptions<SagaOrchestrationOptions> options,
     SagaOrchestrationStore store,
@@ -56,9 +54,6 @@ public sealed class SagaTimeoutSweeper(
         return timedOut.Count;
     }
 
-    /// <summary>
-    /// Resolves a timed-out saga order.
-    /// </summary>
     private Task ResolveWithinTransactionAsync(
         Guid orderId,
         SagaOrchestrationRecord saga,

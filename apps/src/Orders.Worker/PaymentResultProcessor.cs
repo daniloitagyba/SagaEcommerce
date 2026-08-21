@@ -15,10 +15,12 @@ public sealed class PaymentResultProcessor(
     OrderStatusStore orderStatusStore,
     IOrderCacheInvalidator cacheInvalidator,
     IOptions<PaymentResultKafkaOptions> options,
-    ILogger<PaymentResultProcessor> logger)
+    ILogger<PaymentResultProcessor> logger,
+    TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentResultKafkaOptions _options = options.Value;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, string> consumeResult,
@@ -58,7 +60,7 @@ public sealed class PaymentResultProcessor(
             consumeResult.Partition.Value,
             consumeResult.Offset.Value,
             correlationId,
-            DateTimeOffset.UtcNow,
+            _timeProvider.GetUtcNow(),
             cancellationToken);
 
         if (!inserted)

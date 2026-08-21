@@ -12,7 +12,8 @@ public sealed record RateLimitDecision(bool Allowed, int Count, int Limit);
 public sealed class RedisSlidingWindowRateLimiter(
     IConnectionMultiplexer connectionMultiplexer,
     ResiliencePipelineProvider<string> pipelineProvider,
-    IOptions<DistributedRateLimitOptions> options)
+    IOptions<DistributedRateLimitOptions> options,
+    TimeProvider? timeProvider = null)
 {
     private const string SlidingWindowScript = """
         local key = KEYS[1]
@@ -35,6 +36,7 @@ public sealed class RedisSlidingWindowRateLimiter(
 
     private readonly DistributedRateLimitOptions _options = options.Value;
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.RedisPipeline);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<RateLimitDecision> TryAcquireAsync(string key, CancellationToken cancellationToken)
     {
@@ -43,7 +45,7 @@ public sealed class RedisSlidingWindowRateLimiter(
             return await _pipeline.ExecuteAsync(async ct =>
             {
                 var database = connectionMultiplexer.GetDatabase();
-                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
                 var windowMilliseconds = (long)TimeSpan.FromSeconds(_options.WindowSeconds).TotalMilliseconds;
 
                 var result = (long)await database.ScriptEvaluateAsync(

@@ -5,9 +5,6 @@ using Microsoft.Extensions.Options;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Defines the leader election contract.
-/// </summary>
 public enum LeaderElectionMode
 {
     Kubernetes,
@@ -19,9 +16,6 @@ public interface ILeaderElection
     bool IsLeader { get; }
 }
 
-/// <summary>
-/// Provides leader election for a single instance.
-/// </summary>
 public sealed class SingleNodeLeaderElection : ILeaderElection
 {
     public bool IsLeader => true;
@@ -42,9 +36,7 @@ public sealed class LeaderElectionOptions
     public int RetryPeriodSeconds { get; init; } = 2;
 }
 
-/// <summary>
-/// Provides Kubernetes lease-based leader election.
-/// </summary>
+/// <summary>Provides Kubernetes lease-based leader election.</summary>
 public sealed class LeaderElectionService(
     IOptions<LeaderElectionOptions> options,
     IConfiguration configuration,

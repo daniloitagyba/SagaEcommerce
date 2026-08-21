@@ -29,6 +29,7 @@ builder.Logging.AddOrdersOpenTelemetryLogging("payments-service", instanceId, bu
 
 builder.Services.AddOrdersObservability("payments-service", instanceId, builder.Environment.EnvironmentName);
 
+builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddOptions<PaymentsKafkaOptions>()
     .Bind(builder.Configuration.GetSection(PaymentsKafkaOptions.SectionName))
@@ -128,6 +129,9 @@ builder.Services.AddSingleton<IPaymentEventPublisher, KafkaPaymentEventPublisher
 builder.Services.AddSingleton<IPaymentDecisionReplyPublisher, KafkaPaymentDecisionReplyPublisher>();
 builder.Services.AddSingleton<IPaymentSettlementPublisher, KafkaPaymentSettlementPublisher>();
 builder.Services.AddSingleton<PaymentSettlementProcessor>();
+builder.Services.AddScoped<IPaymentHistoryReader, EfPaymentHistoryReader>();
+builder.Services.AddSingleton(serviceProvider => new PaymentRiskPolicy(
+    serviceProvider.GetRequiredService<IOptions<PaymentRiskOptions>>().Value));
 builder.Services.AddScoped<PaymentRiskEvaluator>();
 builder.Services.AddScoped<PaymentDecisionCoordinator>();
 builder.Services.AddSingleton<PaymentMessageProcessor>();
@@ -218,6 +222,11 @@ app.UseExceptionHandler();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

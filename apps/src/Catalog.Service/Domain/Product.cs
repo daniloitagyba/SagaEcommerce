@@ -11,6 +11,10 @@ public sealed class Product
     private const int MaxImageCount = 10;
     private const int MaxImageLength = 2_000_000;
 
+    internal Product()
+    {
+    }
+
     public static Product Create(
         string name,
         string description,
@@ -39,6 +43,30 @@ public sealed class Product
 
         product.EnsureValid();
         return product;
+    }
+
+    public void UpdateDetails(
+        string name,
+        string description,
+        string categorySlug,
+        decimal price,
+        string currency,
+        string sku,
+        Dictionary<string, string>? attributes,
+        IReadOnlyList<string>? images)
+    {
+        Name = name?.Trim() ?? string.Empty;
+        Description = description?.Trim() ?? string.Empty;
+        CategorySlug = categorySlug?.Trim() ?? string.Empty;
+        Price = price;
+        Currency = currency ?? string.Empty;
+        Sku = sku?.Trim() ?? string.Empty;
+        Attributes = attributes is null
+            ? []
+            : new Dictionary<string, string>(attributes, StringComparer.Ordinal);
+        Images = images is null ? [] : [.. images];
+
+        EnsureValid();
     }
 
     /// <summary>Validates all invariants and normalizes Sku/Currency casing in place.</summary>
@@ -98,23 +126,23 @@ public sealed class Product
         Currency = normalizedCurrency;
     }
 
-    public string Id { get; set; } = string.Empty;
+    public string Id { get; internal set; } = string.Empty;
 
-    public string Name { get; set; } = string.Empty;
+    public string Name { get; internal set; } = string.Empty;
 
-    public string Description { get; set; } = string.Empty;
+    public string Description { get; internal set; } = string.Empty;
 
-    public string CategorySlug { get; set; } = string.Empty;
+    public string CategorySlug { get; internal set; } = string.Empty;
 
-    public decimal Price { get; set; }
+    public decimal Price { get; internal set; }
 
-    public string Currency { get; set; } = "BRL";
+    public string Currency { get; internal set; } = "BRL";
 
-    public string Sku { get; set; } = string.Empty;
+    public string Sku { get; internal set; } = string.Empty;
 
-    public Dictionary<string, string> Attributes { get; set; } = [];
+    public Dictionary<string, string> Attributes { get; internal set; } = [];
 
-    public IReadOnlyList<string> Images { get; set; } = [];
+    public IReadOnlyList<string> Images { get; internal set; } = [];
 
-    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; internal set; }
 }

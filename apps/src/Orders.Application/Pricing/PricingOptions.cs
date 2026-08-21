@@ -1,8 +1,5 @@
 namespace Orders.Application.Pricing;
 
-/// <summary>
-/// Configures an automatic promotion rule.
-/// </summary>
 public sealed record PromotionWindow(
     DateTimeOffset? ValidFrom,
     DateTimeOffset? ValidUntil,
@@ -13,9 +10,6 @@ public sealed record PromotionWindow(
         (ValidFrom is null || at >= ValidFrom) && (ValidUntil is null || at < ValidUntil);
 }
 
-/// <summary>
-/// Configures promotion pricing.
-/// </summary>
 public sealed class PricingOptions
 {
     public const string SectionName = "Pricing";

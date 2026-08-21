@@ -9,6 +9,7 @@ using Orders.Application.Ports;
 using Orders.Infrastructure.Caching;
 using Orders.Infrastructure.Data;
 using Orders.Infrastructure.Messaging;
+using Orders.Infrastructure.Observability;
 using Orders.Infrastructure.RateLimiting;
 using Orders.Infrastructure.Persistence;
 using Npgsql;
@@ -99,6 +100,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ICouponRepository, Persistence.EfCouponRepository>();
         services.AddScoped<ICampaignRepository, Persistence.EfCampaignRepository>();
         services.AddScoped<ICustomerRepository, Persistence.EfCustomerRepository>();
+        services.AddSingleton<IOrderMetrics, OpenTelemetryOrderMetrics>();
         services.AddScoped<IOrderStatusRepository, Persistence.EfOrderStatusRepository>();
         services.AddScoped<IOrderReturnRepository, Persistence.EfOrderReturnRepository>();
         services.Configure<Messaging.PaymentSettlementCommandOptions>(

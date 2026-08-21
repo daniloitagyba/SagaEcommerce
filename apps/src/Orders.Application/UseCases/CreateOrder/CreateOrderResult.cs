@@ -2,9 +2,6 @@ using Orders.Domain;
 
 namespace Orders.Application.UseCases.CreateOrder;
 
-/// <summary>
-/// Represents a changed catalog price.
-/// </summary>
 public sealed record PriceMismatch(decimal ExpectedSubtotal, decimal ActualSubtotal);
 
 public sealed record IdempotencyConflict(string IdempotencyKey);

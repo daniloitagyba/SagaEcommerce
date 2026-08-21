@@ -31,9 +31,6 @@ public enum SagaLineOutcomeField
     Released
 }
 
-/// <summary>
-/// The four steps this saga walks through.
-/// </summary>
 public static class SagaStep
 {
     public const string ReserveInventory = "ReserveInventory";

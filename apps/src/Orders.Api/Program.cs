@@ -35,6 +35,7 @@ builder.Logging.AddOrdersOpenTelemetryLogging("orders-api", instanceId, builder.
 
 builder.Services.AddOrdersObservability("orders-api", instanceId, builder.Environment.EnvironmentName);
 
+builder.Services.AddOpenApi();
 builder.Services.AddExceptionHandler<BadHttpRequestExceptionHandler>();
 builder.Services.AddExceptionHandler<InfrastructureUnavailableExceptionHandler>();
 builder.Services.AddProblemDetails();
@@ -109,6 +110,11 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Instance-ID"] = instanceId;
     await next(context);
 });
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

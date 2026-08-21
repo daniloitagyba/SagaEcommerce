@@ -22,10 +22,12 @@ public sealed class OrderMessageProcessor(
     InboxStore inboxStore,
     ISchemaRegistryClient schemaRegistryClient,
     IOptions<KafkaOptions> options,
-    ILogger<OrderMessageProcessor> logger)
+    ILogger<OrderMessageProcessor> logger,
+    TimeProvider? timeProvider = null)
 {
     private readonly KafkaOptions _options = options.Value;
     private readonly AvroDeserializer<GenericRecord> _avroDeserializer = new(schemaRegistryClient);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, byte[]> consumeResult,
@@ -57,7 +59,7 @@ public sealed class OrderMessageProcessor(
             ["TraceId"] = activity?.TraceId.ToString() ?? string.Empty
         });
 
-        await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
+        await Task.Delay(TimeSpan.FromMilliseconds(25), _timeProvider, cancellationToken);
         var inserted = await inboxStore.TryRecordAsync(
             _options.ConsumerGroup,
             orderCreated.EventId,
@@ -65,7 +67,7 @@ public sealed class OrderMessageProcessor(
             consumeResult.Partition.Value,
             consumeResult.Offset.Value,
             correlationId,
-            DateTimeOffset.UtcNow,
+            _timeProvider.GetUtcNow(),
             cancellationToken);
 
         if (!inserted)

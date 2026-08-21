@@ -3,9 +3,6 @@ using NpgsqlTypes;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Maintains customer tiers from completed orders.
-/// </summary>
 public sealed class CustomerTierStore
 {
     private const string RecordSql = """
@@ -35,9 +32,6 @@ public sealed class CustomerTierStore
         CancellationToken cancellationToken) =>
         ExecuteAsync(connection, transaction, RecordSql, customerId, amount, cancellationToken);
 
-    /// <summary>
-    /// Reverses a completed order's contribution to standing.
-    /// </summary>
     public Task ReverseCompletedOrderAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -73,9 +67,7 @@ public sealed class CustomerTierStore
     }
 }
 
-/// <summary>
-/// Mirrors Orders.Domain.CustomerTiers.
-/// </summary>
+/// <summary>Mirrors Orders.Domain.CustomerTiers.</summary>
 public static class CustomerTierThresholds
 {
     public const decimal Silver = 1_000m;

@@ -1,5 +1,5 @@
 using BuildingBlocks;
-using Cart.Service.Data;
+using Cart.Service.Application;
 using Cart.Service.Domain;
 
 namespace Cart.Service.Endpoints;
@@ -40,7 +40,7 @@ public static class CartEndpoints
 
     private static async Task<IResult> GetCartAsync(
         HttpContext httpContext,
-        CartStore cartStore,
+        ICartStore cartStore,
         CancellationToken cancellationToken)
     {
         var cartId = httpContext.GetCustomerId();
@@ -53,7 +53,7 @@ public static class CartEndpoints
         string sku,
         UpdateCartItemRequest request,
         HttpContext httpContext,
-        CartStore cartStore,
+        ICartStore cartStore,
         ICatalogClient catalogClient,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -95,7 +95,7 @@ public static class CartEndpoints
     private static async Task<IResult> RefreshItemPriceAsync(
         string sku,
         HttpContext httpContext,
-        CartStore cartStore,
+        ICartStore cartStore,
         ICatalogClient catalogClient,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -123,7 +123,7 @@ public static class CartEndpoints
     private static async Task<IResult> DeleteItemAsync(
         string sku,
         HttpContext httpContext,
-        CartStore cartStore,
+        ICartStore cartStore,
         CancellationToken cancellationToken)
     {
         var removed = await cartStore.RemoveItemAsync(httpContext.GetCustomerId(), sku, cancellationToken);
@@ -134,7 +134,7 @@ public static class CartEndpoints
         string? cartId,
         long? expectedVersion,
         HttpContext httpContext,
-        CartStore cartStore,
+        ICartStore cartStore,
         CancellationToken cancellationToken)
     {
         var ownerId = httpContext.GetCustomerId();
@@ -166,7 +166,7 @@ public static class CartEndpoints
     private static async Task<IResult> MergeAsync(
         CartMergeRequest request,
         HttpContext httpContext,
-        CartStore cartStore,
+        ICartStore cartStore,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {

@@ -17,12 +17,14 @@ public sealed class ReplenishmentRequestProcessor(
     IOptions<InventoryKafkaOptions> kafkaOptions,
     IOptions<ReplenishmentOptions> replenishmentOptions,
     ILogger<ReplenishmentRequestProcessor> logger,
-    ResiliencePipelineProvider<string> pipelineProvider)
+    ResiliencePipelineProvider<string> pipelineProvider,
+    TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly InventoryKafkaOptions _kafkaOptions = kafkaOptions.Value;
     private readonly ReplenishmentOptions _replenishmentOptions = replenishmentOptions.Value;
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, string> consumeResult,
@@ -62,7 +64,7 @@ public sealed class ReplenishmentRequestProcessor(
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-            var processedAt = DateTimeOffset.UtcNow;
+            var processedAt = _timeProvider.GetUtcNow();
             var inboxConsumerName = $"{_kafkaOptions.ConsumerGroup}-replenishment";
             var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
                 dbContext.Database, inboxConsumerName, signal.EventId,

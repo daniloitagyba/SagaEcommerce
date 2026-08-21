@@ -11,7 +11,8 @@ public sealed class CreateOrderHandler(
     IOrderCreationRepository repository,
     OrderPricingService pricingService,
     TimeProvider timeProvider,
-    ILogger<CreateOrderHandler> logger)
+    ILogger<CreateOrderHandler> logger,
+    IOrderMetrics? metrics = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
@@ -151,7 +152,7 @@ public sealed class CreateOrderHandler(
                 cancellationToken);
         }
 
-        OrdersTelemetry.RecordCreated(order.Currency);
+        (metrics ?? NullOrderMetrics.Instance).RecordCreated(order.Currency);
         CreateOrderLog.OrderAccepted(
             logger,
             order.Id,

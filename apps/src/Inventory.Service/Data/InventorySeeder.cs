@@ -19,14 +19,16 @@ public static class InventorySeeder
         ("SKU-HOME-002", 25)
     ];
 
-    public static async Task SeedAsync(InventoryDbContext dbContext, CancellationToken cancellationToken)
+    public static async Task SeedAsync(
+        InventoryDbContext dbContext,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         if (await dbContext.InventoryItems.AnyAsync(cancellationToken))
         {
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
         foreach (var (sku, quantity) in SeedData)
         {
             dbContext.InventoryItems.Add(InventoryItem.Create(sku, quantity, now));

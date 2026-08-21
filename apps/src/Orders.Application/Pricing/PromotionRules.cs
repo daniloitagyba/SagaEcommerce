@@ -6,19 +6,10 @@ using Orders.Domain.Pricing;
 
 namespace Orders.Application.Pricing;
 
-/// <summary>
-/// Provides promotion policy facts.
-/// </summary>
 public sealed record PromotionPolicy(PricingOptions Options);
 
-/// <summary>
-/// Marks an order as eligible for free shipping.
-/// </summary>
 public sealed record FreeShippingGranted(string Reason);
 
-/// <summary>
-/// Applies a percentage coupon discount.
-/// </summary>
 public sealed class CouponPercentageRule : Rule
 {
     public override void Define()
@@ -44,9 +35,6 @@ public sealed class CouponPercentageRule : Rule
     }
 }
 
-/// <summary>
-/// Applies a promotion campaign discount.
-/// </summary>
 public sealed class CampaignDiscountRule : Rule
 {
     public override void Define()
@@ -70,9 +58,6 @@ public sealed class CampaignDiscountRule : Rule
     }
 }
 
-/// <summary>
-/// Applies a category discount.
-/// </summary>
 public sealed class CategoryDiscountRule : Rule
 {
     public override void Define()
@@ -120,9 +105,7 @@ public sealed class CategoryDiscountRule : Rule
     }
 }
 
-/// <summary>
-/// Volume pricing on a single SKU, matched and evaluated independently per line.
-/// </summary>
+/// <summary>Volume pricing on a single SKU, matched and evaluated independently per line.</summary>
 public sealed class BulkQuantityRule : Rule
 {
     public override void Define()
@@ -152,9 +135,6 @@ public sealed class BulkQuantityRule : Rule
     }
 }
 
-/// <summary>
-/// Applies a customer tier discount.
-/// </summary>
 public sealed class LoyaltyTierRule : Rule
 {
     public override void Define()
@@ -186,9 +166,6 @@ public sealed class LoyaltyTierRule : Rule
     }
 }
 
-/// <summary>
-/// Applies free shipping above a threshold.
-/// </summary>
 public sealed class FreeShippingRule : Rule
 {
     public override void Define()

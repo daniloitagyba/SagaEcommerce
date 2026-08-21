@@ -37,10 +37,10 @@ public sealed record PricingRequest(
     PricingDestination? Destination = null,
     /// <summary>The best currently-active, still-funded campaign, if any.</summary>
     ResolvedCampaign? Campaign = null,
-    /// <summary>The instant every promotion's validity window is checked against; defaults to now.</summary>
+    /// <summary>The instant every promotion's validity window is checked against; callers that omit it get a deterministic epoch rather than an ambient clock.</summary>
     DateTimeOffset? EvaluatedAt = null)
 {
-    public DateTimeOffset EffectiveEvaluatedAt => EvaluatedAt ?? DateTimeOffset.UtcNow;
+    public DateTimeOffset EffectiveEvaluatedAt => EvaluatedAt ?? DateTimeOffset.UnixEpoch;
 
     public Money Subtotal => Lines.Aggregate(
         new Money(0m, Currency),

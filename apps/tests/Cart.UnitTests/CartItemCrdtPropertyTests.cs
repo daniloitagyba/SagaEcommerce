@@ -85,6 +85,32 @@ public class CartItemCrdtPropertyTests
     }
 
     [Fact]
+    public void EffectiveQuantitySaturatesAtTheHttpQuantityLimit()
+    {
+        var state = new CartItemCrdt(
+            new HashSet<CartDot> { new("replica-a", 1) },
+            new HashSet<CartDot>(),
+            new Dictionary<string, (long Positive, long Negative)>
+            {
+                ["replica-a"] = (long.MaxValue, 0),
+                ["replica-b"] = (long.MaxValue, 0)
+            });
+
+        Assert.Equal(int.MaxValue, state.EffectiveQuantity);
+    }
+
+    [Fact]
+    public void CounterMutationSaturatesInsteadOfOverflowing()
+    {
+        var state = CartItemCrdt.Empty
+            .Increase("replica-a", long.MaxValue, dotCounter: 1)
+            .Increase("replica-a", 1, dotCounter: 2);
+
+        Assert.Equal(long.MaxValue, state.Counters["replica-a"].Positive);
+        Assert.Equal(int.MaxValue, state.EffectiveQuantity);
+    }
+
+    [Fact]
     public void SequentialAddThenRemoveOnTheSameReplicaNeverResurrectsUnderAnyMerge()
     {
         Gen.Select(GenState, Gen.Int[1, 20]).Sample(t =>

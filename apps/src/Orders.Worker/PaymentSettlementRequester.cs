@@ -6,9 +6,6 @@ using NpgsqlTypes;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Requests payment settlement.
-/// </summary>
 public sealed class PaymentSettlementRequester
 {
     private const string InsertOutboxSql = """
@@ -34,9 +31,6 @@ public sealed class PaymentSettlementRequester
         return QueueAsync(connection, transaction, nameof(PaymentCaptureRequested), request, correlationId, occurredAt, cancellationToken);
     }
 
-    /// <summary>
-    /// Settles a cancelled order payment.
-    /// </summary>
     public Task RequestCancellationAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,

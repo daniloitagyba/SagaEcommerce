@@ -32,8 +32,13 @@ public sealed class PaymentRiskEvaluatorTests : IAsyncLifetime, IDisposable
         await _connection.DisposeAsync();
     }
 
-    private PaymentRiskEvaluator Evaluator(PaymentRiskOptions? options = null) =>
-        new(_dbContext, Options.Create(options ?? new PaymentRiskOptions()));
+    private PaymentRiskEvaluator Evaluator(PaymentRiskOptions? options = null)
+    {
+        var effectiveOptions = options ?? new PaymentRiskOptions();
+        return new PaymentRiskEvaluator(
+            new EfPaymentHistoryReader(_dbContext, Options.Create(effectiveOptions)),
+            new PaymentRiskPolicy(effectiveOptions));
+    }
 
     private async Task SeedAsync(string customerId, decimal amount, DateTimeOffset decidedAt, bool approved = true, string postalPrefix = "01")
     {

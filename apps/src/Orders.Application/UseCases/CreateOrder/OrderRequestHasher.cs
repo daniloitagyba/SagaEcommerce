@@ -3,9 +3,6 @@ using System.Text.Json;
 
 namespace Orders.Application.UseCases.CreateOrder;
 
-/// <summary>
-/// Produces a stable order request hash.
-/// </summary>
 internal static class OrderRequestHasher
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);

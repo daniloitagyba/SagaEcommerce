@@ -79,9 +79,6 @@ public sealed partial class OrderSagaReplyConsumer
         }
     }
 
-    /// <summary>
-    /// Confirms an order after inventory commit.
-    /// </summary>
     private async Task ResolveCommitConfirmationWithinTransactionAsync(
         Guid orderId,
         SagaOrchestrationRecord saga,
@@ -154,9 +151,6 @@ public sealed partial class OrderSagaReplyConsumer
         await cacheInvalidator.InvalidateAsync(reply.OrderId, cancellationToken);
     }
 
-    /// <summary>
-    /// Reconciles incomplete payment changes.
-    /// </summary>
     private async Task HandleSettlementRepliedAsync(string payload, CancellationToken cancellationToken)
     {
         var reply = Deserialize<PaymentSettlementReplied>(payload);

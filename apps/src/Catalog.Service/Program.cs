@@ -25,6 +25,7 @@ builder.Logging.AddJsonConsole(options =>
 builder.Logging.AddOrdersOpenTelemetryLogging("catalog-service", instanceId, builder.Environment.EnvironmentName);
 
 builder.Services.AddOrdersObservability("catalog-service", instanceId, builder.Environment.EnvironmentName);
+builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddOptions<CatalogMongoOptions>()
@@ -68,7 +69,8 @@ await using (var scope = app.Services.CreateAsyncScope())
 
     if (args.Contains("--seed", StringComparer.Ordinal))
     {
-        await CatalogSeeder.SeedAsync(categoryRepository, productRepository, CancellationToken.None);
+        var timeProvider = scope.ServiceProvider.GetRequiredService<TimeProvider>();
+        await CatalogSeeder.SeedAsync(categoryRepository, productRepository, timeProvider.GetUtcNow(), CancellationToken.None);
         return;
     }
 }
@@ -77,6 +79,11 @@ app.UseExceptionHandler();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

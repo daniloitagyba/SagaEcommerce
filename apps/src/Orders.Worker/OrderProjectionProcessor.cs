@@ -18,11 +18,13 @@ public sealed class OrderProjectionProcessor(
     OrderProjectionStore projectionStore,
     ISchemaRegistryClient schemaRegistryClient,
     IOptions<OrderProjectionOptions> options,
-    ILogger<OrderProjectionProcessor> logger)
+    ILogger<OrderProjectionProcessor> logger,
+    TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly OrderProjectionOptions _options = options.Value;
     private readonly AvroDeserializer<GenericRecord> _avroDeserializer = new(schemaRegistryClient);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, byte[]> consumeResult,
@@ -66,7 +68,7 @@ public sealed class OrderProjectionProcessor(
             consumeResult.Partition.Value,
             consumeResult.Offset.Value,
             correlationId,
-            DateTimeOffset.UtcNow,
+            _timeProvider.GetUtcNow(),
             cancellationToken);
 
         if (!inserted)
@@ -76,7 +78,7 @@ public sealed class OrderProjectionProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        var projectedAt = DateTimeOffset.UtcNow;
+        var projectedAt = _timeProvider.GetUtcNow();
         await projectionStore.ProjectOrderCreatedAsync(
             orderCreated.OrderId,
             orderCreated.CustomerId,
@@ -111,7 +113,7 @@ public sealed class OrderProjectionProcessor(
             consumeResult.Partition.Value,
             consumeResult.Offset.Value,
             correlationId,
-            DateTimeOffset.UtcNow,
+            _timeProvider.GetUtcNow(),
             cancellationToken);
 
         if (!inserted)
@@ -121,7 +123,7 @@ public sealed class OrderProjectionProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        var projectedAt = DateTimeOffset.UtcNow;
+        var projectedAt = _timeProvider.GetUtcNow();
         var status = paymentDecided.Approved ? "Confirmed" : "Cancelled";
         await projectionStore.ProjectPaymentDecidedAsync(
             paymentDecided.OrderId,
@@ -135,9 +137,6 @@ public sealed class OrderProjectionProcessor(
         return MessageProcessingResult.Processed;
     }
 
-    /// <summary>
-    /// Projects order status changes.
-    /// </summary>
     private async Task<MessageProcessingResult> ProcessOrderStatusChangedAsync(
         ConsumeResult<string, byte[]> consumeResult,
         CancellationToken cancellationToken)
@@ -158,7 +157,7 @@ public sealed class OrderProjectionProcessor(
             consumeResult.Partition.Value,
             consumeResult.Offset.Value,
             correlationId,
-            DateTimeOffset.UtcNow,
+            _timeProvider.GetUtcNow(),
             cancellationToken);
 
         if (!inserted)
@@ -168,7 +167,7 @@ public sealed class OrderProjectionProcessor(
             return MessageProcessingResult.Duplicate;
         }
 
-        var projectedAt = DateTimeOffset.UtcNow;
+        var projectedAt = _timeProvider.GetUtcNow();
         await projectionStore.ProjectPaymentDecidedAsync(
             statusChanged.OrderId,
             statusChanged.Status,

@@ -6,9 +6,6 @@ using NpgsqlTypes;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Detects order consistency divergences.
-/// </summary>
 public sealed partial class AntiEntropySweeper(
     NpgsqlDataSource dataSource,
     IHttpClientFactory httpClientFactory,
@@ -113,9 +110,6 @@ public sealed partial class AntiEntropySweeper(
         return divergences;
     }
 
-    /// <summary>
-    /// Detects committed inventory for cancelled orders.
-    /// </summary>
     private async Task<int> CheckCommittedInventoryBelongsToLiveOrdersAsync(CancellationToken cancellationToken)
     {
         var inventoryClient = httpClientFactory.CreateClient("anti-entropy-inventory");

@@ -28,6 +28,7 @@ builder.Logging.AddOrdersOpenTelemetryLogging("inventory-service", instanceId, b
 
 builder.Services.AddOrdersObservability("inventory-service", instanceId, builder.Environment.EnvironmentName);
 
+builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddOptions<InventoryKafkaOptions>()
     .Bind(builder.Configuration.GetSection(InventoryKafkaOptions.SectionName))
@@ -243,7 +244,8 @@ if (args.Contains("--seed", StringComparer.Ordinal))
 {
     await using var scope = app.Services.CreateAsyncScope();
     var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
-    await InventorySeeder.SeedAsync(dbContext, CancellationToken.None);
+    var timeProvider = scope.ServiceProvider.GetRequiredService<TimeProvider>();
+    await InventorySeeder.SeedAsync(dbContext, timeProvider.GetUtcNow(), CancellationToken.None);
     return;
 }
 
@@ -251,6 +253,11 @@ app.UseExceptionHandler();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

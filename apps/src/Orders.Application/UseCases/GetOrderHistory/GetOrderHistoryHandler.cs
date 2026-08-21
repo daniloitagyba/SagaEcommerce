@@ -6,9 +6,6 @@ namespace Orders.Application.UseCases.GetOrderHistory;
 
 public sealed record OrderHistoryEvent(long Id, string EventType, string Payload, DateTimeOffset OccurredAt);
 
-/// <summary>
-/// Represents an order state at a point in time.
-/// </summary>
 public sealed record OrderSnapshot(
     Guid OrderId,
     string? CustomerId,
@@ -19,9 +16,6 @@ public sealed record OrderSnapshot(
 
 public sealed record OrderHistoryResult(OrderSnapshot? Snapshot, IReadOnlyList<OrderHistoryEvent> Events);
 
-/// <summary>
-/// Reconstructs order history from events.
-/// </summary>
 public sealed class GetOrderHistoryHandler(IOrderEventStoreRepository repository)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);

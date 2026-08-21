@@ -44,7 +44,15 @@ public static class CategoryEndpoints
             return Results.ValidationProblem(validationErrors);
         }
 
-        var category = new Category { Id = Guid.NewGuid().ToString("N"), Slug = request.Slug.Trim(), Name = request.Name.Trim() };
+        Category category;
+        try
+        {
+            category = Category.Create(Guid.NewGuid().ToString("N"), request.Slug, request.Name);
+        }
+        catch (ArgumentException exception)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["request"] = [exception.Message] });
+        }
 
         try
         {

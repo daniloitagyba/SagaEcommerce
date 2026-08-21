@@ -10,10 +10,12 @@ public sealed class KafkaDeadLetterPublisher<TValue>(
     IProducer<string, string> producer,
     string deadLetterTopic,
     string activityName,
-    Func<TValue, string> encodePayload)
+    Func<TValue, string> encodePayload,
+    TimeProvider? timeProvider = null)
 {
     private const int MaximumFailureMessageLength = 2_000;
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task PublishAsync(
         ConsumeResult<string, TValue> consumeResult,
@@ -34,7 +36,7 @@ public sealed class KafkaDeadLetterPublisher<TValue>(
             exception.GetType().Name,
             failureMessage,
             attemptCount,
-            DateTimeOffset.UtcNow);
+            _timeProvider.GetUtcNow());
 
         var traceParent = GetHeader(consumeResult.Message.Headers, MessagingHeaders.TraceParent);
         var traceState = GetHeader(consumeResult.Message.Headers, MessagingHeaders.TraceState);

@@ -55,9 +55,6 @@ public sealed class InventoryItem
         return true;
     }
 
-    /// <summary>
-    /// Restocks returned units.
-    /// </summary>
     public void Restock(int quantity, DateTimeOffset now)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quantity);
@@ -80,9 +77,6 @@ public sealed class InventoryItem
         return true;
     }
 
-    /// <summary>
-    /// Updates the SKU stock projection.
-    /// </summary>
     public void SynchronizeFromWarehouses(int availableQuantity, int reservedQuantity, DateTimeOffset now)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(availableQuantity);

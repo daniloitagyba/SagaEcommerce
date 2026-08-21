@@ -11,9 +11,10 @@ public class DomainEncapsulationTests
         [
             typeof(Payments.Service.Domain.Payment).Assembly,
             typeof(Inventory.Service.Domain.InventoryItem).Assembly,
+            typeof(Catalog.Service.Domain.Product).Assembly,
         ];
 
-        string[] namespaces = ["Payments.Service.Domain", "Inventory.Service.Domain"];
+        string[] namespaces = ["Payments.Service.Domain", "Inventory.Service.Domain", "Catalog.Service.Domain"];
 
         foreach (var assembly in assemblies)
         {

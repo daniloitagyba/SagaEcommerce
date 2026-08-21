@@ -30,12 +30,14 @@ public sealed class PaymentMessageProcessor(
     ISchemaRegistryClient schemaRegistryClient,
     IOptions<PaymentsKafkaOptions> kafkaOptions,
     ILogger<PaymentMessageProcessor> logger,
-    ResiliencePipelineProvider<string> pipelineProvider)
+    ResiliencePipelineProvider<string> pipelineProvider,
+    TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentsKafkaOptions _kafkaOptions = kafkaOptions.Value;
     private readonly AvroDeserializer<GenericRecord> _avroDeserializer = new(schemaRegistryClient);
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, byte[]> consumeResult,
@@ -74,7 +76,7 @@ public sealed class PaymentMessageProcessor(
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-            var processedAt = DateTimeOffset.UtcNow;
+            var processedAt = _timeProvider.GetUtcNow();
             var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
                 dbContext.Database, _kafkaOptions.ConsumerGroup, orderCreated.EventId,
                 consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,

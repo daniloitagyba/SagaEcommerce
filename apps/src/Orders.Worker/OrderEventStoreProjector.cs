@@ -8,9 +8,6 @@ using Microsoft.Extensions.Options;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Appends order events to the event store.
-/// </summary>
 public sealed class OrderEventStoreProjector(
     IOptions<OrderEventStoreOptions> options,
     OrderEventStoreAppender appender,
@@ -63,9 +60,7 @@ public sealed class OrderEventStoreProjector(
         OrderEventStoreLog.Appended(logger, paymentDecided.OrderId, eventType);
     }
 
-    /// <summary>
-    /// Appends a warehouse move or a shopper's self-service cancellation to the timeline.
-    /// </summary>
+    /// <summary>Appends a warehouse move or a shopper's self-service cancellation to the timeline.</summary>
     private async Task AppendOrderStatusChangedAsync(byte[] payload, CancellationToken cancellationToken)
     {
         var statusChanged = JsonSerializer.Deserialize<OrderStatusChanged>(payload, SerializerOptions)

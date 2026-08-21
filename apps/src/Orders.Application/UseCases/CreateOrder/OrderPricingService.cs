@@ -17,9 +17,7 @@ public sealed record PricedCheckout(
     string? CampaignCode = null,
     decimal CampaignAmount = 0m);
 
-/// <summary>
-/// Turns a SKU+quantity request into a priced order using today's server-side catalog price.
-/// </summary>
+/// <summary>Turns a SKU+quantity request into a priced order using today's server-side catalog price.</summary>
 public sealed class OrderPricingService(
     ICatalogClient catalogClient,
     ICouponRepository couponRepository,

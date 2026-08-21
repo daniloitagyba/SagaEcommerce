@@ -61,9 +61,7 @@ public sealed class OrderProjectionStore(NpgsqlDataSource dataSource, Resilience
         }, cancellationToken).AsTask();
     }
 
-    /// <summary>
-    /// Projects a payment decision or status change into order_summaries.
-    /// </summary>
+    /// <summary>Projects a payment decision or status change into order_summaries.</summary>
     public Task ProjectPaymentDecidedAsync(
         Guid orderId,
         string status,

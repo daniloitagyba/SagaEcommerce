@@ -8,9 +8,6 @@ using Microsoft.Extensions.Options;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Starts order sagas.
-/// </summary>
 public sealed class InvalidSagaMessageException(string message, Exception? innerException = null)
     : Exception(message, innerException);
 

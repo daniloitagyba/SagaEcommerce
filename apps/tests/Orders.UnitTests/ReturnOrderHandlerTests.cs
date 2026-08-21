@@ -1,6 +1,7 @@
 using BuildingBlocks;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Orders.Application;
 using Orders.Application.Ports;
 using Orders.Application.UseCases.ReturnOrder;
@@ -21,11 +22,6 @@ public sealed class ReturnOrderHandlerTests
             discountTotal: 0m, shippingTotal: 10m, taxTotal: 0m, paymentMethod: "Pix", shippingAddress: null);
         typeof(Order).GetProperty(nameof(Order.Status))!.SetValue(order, OrderStatuses.Delivered);
         return order;
-    }
-
-    private sealed class FakeTimeProvider(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class FakeOrderReturnRepository(Order? order) : IOrderReturnRepository

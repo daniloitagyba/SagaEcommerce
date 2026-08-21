@@ -11,9 +11,11 @@ namespace Orders.Infrastructure.Persistence;
 
 public sealed class EfCustomerRepository(
     OrdersDbContext dbContext,
-    ResiliencePipelineProvider<string> pipelineProvider) : ICustomerRepository
+    ResiliencePipelineProvider<string> pipelineProvider,
+    TimeProvider? timeProvider = null) : ICustomerRepository
 {
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresPipeline);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<Customer> GetOrCreateAsync(string customerId, CancellationToken cancellationToken)
     {
@@ -29,7 +31,7 @@ public sealed class EfCustomerRepository(
                     return existing;
                 }
 
-                var createdAt = DateTimeOffset.UtcNow;
+                var createdAt = _timeProvider.GetUtcNow();
                 await dbContext.Database.ExecuteSqlInterpolatedAsync(
                     $"""
                     INSERT INTO customers (id, tier, lifetime_spend, completed_order_count, created_at)

@@ -47,9 +47,6 @@ public sealed partial class SagaOrchestrationStore
         CancellationToken cancellationToken) =>
         ClaimTimedOutCoreAsync(timeout, now, batchSize, commandFactory, null, cancellationToken);
 
-    /// <summary>
-    /// Resolves timed-out sagas.
-    /// </summary>
     public Task<IReadOnlyList<(Guid OrderId, SagaOrchestrationRecord Saga)>> ClaimTimedOutAndResolveAsync(
         TimeSpan timeout,
         DateTimeOffset now,
@@ -174,9 +171,6 @@ public sealed partial class SagaOrchestrationStore
         }, cancellationToken).AsTask();
     }
 
-    /// <summary>
-    /// Records a backordered saga line.
-    /// </summary>
     public Task MarkParkedAsync(Guid orderId, DateTimeOffset parkedAt, CancellationToken cancellationToken)
     {
         return _pipeline.ExecuteAsync(async ct =>

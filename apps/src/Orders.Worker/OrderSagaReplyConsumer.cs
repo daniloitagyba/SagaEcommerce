@@ -5,9 +5,6 @@ using Microsoft.Extensions.Options;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Consumes replies for order sagas.
-/// </summary>
 public sealed partial class OrderSagaReplyConsumer(
     IOptions<SagaOrchestrationOptions> options,
     SagaOrchestrationStore store,
@@ -135,9 +132,7 @@ public sealed partial class OrderSagaReplyConsumer(
 
     }
 
-    /// <summary>
-    /// Completes a saga and releases reserved inventory.
-    /// </summary>
+    /// <summary>Completes a saga and releases reserved inventory.</summary>
     private async Task CancelDuringSagaAsync(Guid orderId, string expectedStep, string outcome, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();

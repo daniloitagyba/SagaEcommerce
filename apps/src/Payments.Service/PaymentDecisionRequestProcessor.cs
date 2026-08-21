@@ -19,11 +19,13 @@ public sealed class PaymentDecisionRequestProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<PaymentDecisionRequestOptions> requestOptions,
     ILogger<PaymentDecisionRequestProcessor> logger,
-    ResiliencePipelineProvider<string> pipelineProvider)
+    ResiliencePipelineProvider<string> pipelineProvider,
+    TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly PaymentDecisionRequestOptions _requestOptions = requestOptions.Value;
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResilienceExtensions.PostgresTransactionPipeline);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<MessageProcessingResult> ProcessAsync(
         ConsumeResult<string, string> consumeResult,
@@ -60,7 +62,7 @@ public sealed class PaymentDecisionRequestProcessor(
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
 
-            var processedAt = DateTimeOffset.UtcNow;
+            var processedAt = _timeProvider.GetUtcNow();
             var insertedRows = await InboxStore.TryRecordWithinTransactionAsync(
                 dbContext.Database, _requestOptions.ConsumerGroup, request.OrderId,
                 consumeResult.Topic, consumeResult.Partition.Value, consumeResult.Offset.Value,

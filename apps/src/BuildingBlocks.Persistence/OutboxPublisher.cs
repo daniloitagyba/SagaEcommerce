@@ -24,11 +24,13 @@ public sealed class OutboxPublisher<TDbContext>(
     IServiceScopeFactory scopeFactory,
     IOptions<OutboxOptions> options,
     IConfiguration configuration,
-    ILogger<OutboxPublisher<TDbContext>> logger) : BackgroundService
+    ILogger<OutboxPublisher<TDbContext>> logger,
+    TimeProvider? timeProvider = null) : BackgroundService
     where TDbContext : DbContext, IOutboxDbContext
 {
     private readonly OutboxOptions _options = options.Value;
     private readonly string _instanceId = configuration["InstanceId"] ?? Environment.MachineName;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private DateTimeOffset _nextPendingSampleAt = DateTimeOffset.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -53,7 +55,7 @@ public sealed class OutboxPublisher<TDbContext>(
 
                 if (shouldDelay)
                 {
-                    await Task.Delay(_options.PollIntervalMilliseconds, stoppingToken);
+                    await Task.Delay(TimeSpan.FromMilliseconds(_options.PollIntervalMilliseconds), _timeProvider, stoppingToken);
                 }
             }
         }
@@ -94,7 +96,7 @@ public sealed class OutboxPublisher<TDbContext>(
     /// <summary>Claims a batch by pushing each row's NextAttemptAt forward, inside a transaction that commits immediately.</summary>
     private async Task<List<OutboxMessage>> ClaimBatchAsync(TDbContext dbContext, CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         var messages = await dbContext.OutboxMessages
@@ -127,7 +129,7 @@ public sealed class OutboxPublisher<TDbContext>(
     /// <summary>Sampled, not run on every batch; the gauge only needs to be roughly current.</summary>
     private async Task SamplePendingIfDueAsync(TDbContext dbContext, CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         if (now < _nextPendingSampleAt)
         {
             return;
@@ -193,13 +195,13 @@ public sealed class OutboxPublisher<TDbContext>(
             };
             using var logScope = logger.BeginScope(scopeState);
 
-            message.MarkPublished(DateTimeOffset.UtcNow);
+            message.MarkPublished(_timeProvider.GetUtcNow());
             OrdersTelemetry.RecordOutboxPublished(message.EventType);
             OutboxPublisherLog.Published(logger, message.Id, _instanceId);
             return;
         }
 
-        message.MarkFailed(DateTimeOffset.UtcNow, attempt.Exception!.Message, _options.MaximumRetryDelaySeconds);
+        message.MarkFailed(_timeProvider.GetUtcNow(), attempt.Exception!.Message, _options.MaximumRetryDelaySeconds);
         OrdersTelemetry.RecordOutboxRetry(message.EventType);
 
         if (message.AttemptCount >= _options.MaximumAttempts)
@@ -233,7 +235,7 @@ public sealed class OutboxPublisher<TDbContext>(
     }
 
     /// <summary>Moves a row that exhausted OutboxOptions.MaximumAttempts out of the pending set for good.</summary>
-    private static async Task DeadLetterAsync(TDbContext dbContext, OutboxMessage message, CancellationToken cancellationToken)
+    private async Task DeadLetterAsync(TDbContext dbContext, OutboxMessage message, CancellationToken cancellationToken)
     {
         await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
@@ -241,7 +243,7 @@ public sealed class OutboxPublisher<TDbContext>(
                 (id, event_type, payload, occurred_at, correlation_id, trace_parent, trace_state, attempt_count, last_error, dead_lettered_at)
             VALUES
                 ({message.Id}, {message.EventType}, {message.Payload}, {message.OccurredAt}, {message.CorrelationId},
-                 {message.TraceParent}, {message.TraceState}, {message.AttemptCount}, {message.LastError}, {DateTimeOffset.UtcNow})
+                 {message.TraceParent}, {message.TraceState}, {message.AttemptCount}, {message.LastError}, {_timeProvider.GetUtcNow()})
             ON CONFLICT (id) DO NOTHING
             """,
             cancellationToken);

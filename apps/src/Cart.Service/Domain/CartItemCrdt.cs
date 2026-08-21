@@ -15,8 +15,21 @@ public sealed record CartItemCrdt(
     /// <summary>Whether this SKU belongs in the cart at all - distinct from quantity, which can be 0 mid-merge and still be "present."</summary>
     public bool IsPresent => LiveDots.Count > 0;
 
-    /// <summary>Net of every replica's contributions, never negative - a PN-Counter can transiently sum negative under a partial merge, which a shopper must never see as a negative line.</summary>
-    public int EffectiveQuantity => (int)Math.Max(0, Counters.Values.Sum(counter => counter.Positive - counter.Negative));
+    /// <summary>Net of every replica's contributions, clamped to the HTTP quantity range so a hostile or corrupted CRDT state cannot overflow an API response.</summary>
+    public int EffectiveQuantity
+    {
+        get
+        {
+            var total = Counters.Values.Aggregate(
+                0m,
+                static (current, counter) => current + counter.Positive - counter.Negative);
+            return total <= 0m
+                ? 0
+                : total >= int.MaxValue
+                    ? int.MaxValue
+                    : decimal.ToInt32(decimal.Truncate(total));
+        }
+    }
 
     /// <summary>An add or an increase; both mint a fresh dot so the assertion survives a concurrent remove.</summary>
     public CartItemCrdt Increase(string replicaId, long delta, long dotCounter)
@@ -26,7 +39,7 @@ public sealed record CartItemCrdt(
         var liveDots = new HashSet<CartDot>(LiveDots) { new(replicaId, dotCounter) };
         var counters = new Dictionary<string, (long Positive, long Negative)>(Counters);
         var (positive, negative) = counters.GetValueOrDefault(replicaId);
-        counters[replicaId] = (positive + delta, negative);
+        counters[replicaId] = (SaturatingAdd(positive, delta), negative);
 
         return this with { LiveDots = liveDots, Counters = counters };
     }
@@ -38,7 +51,7 @@ public sealed record CartItemCrdt(
 
         var counters = new Dictionary<string, (long Positive, long Negative)>(Counters);
         var (positive, negative) = counters.GetValueOrDefault(replicaId);
-        counters[replicaId] = (positive, negative + delta);
+        counters[replicaId] = (positive, SaturatingAdd(negative, delta));
 
         return this with { Counters = counters };
     }
@@ -71,4 +84,8 @@ public sealed record CartItemCrdt(
 
         return new CartItemCrdt(liveDots, tombstoneDots, counters);
     }
+
+    private static long SaturatingAdd(long value, long delta) => value > long.MaxValue - delta
+        ? long.MaxValue
+        : value + delta;
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Cart.Service.Application;
 using Cart.Service.Domain;
 using Microsoft.Extensions.Options;
 using Polly;
@@ -7,18 +8,12 @@ using StackExchange.Redis;
 
 namespace Cart.Service.Data;
 
-public sealed record CartSnapshot(
-    string CartId,
-    IReadOnlyList<CartLineItem> Items,
-    TimeSpan? TimeToLive,
-    long Version,
-    CartCrdtState State);
-
 /// <summary>Redis-backed cart store; Redis is the system of record, not a cache, and a cart is a single Redis Hash.</summary>
 public sealed class CartStore(
     IConnectionMultiplexer connectionMultiplexer,
     ResiliencePipelineProvider<string> pipelineProvider,
-    IOptions<CartOptions> options)
+    IOptions<CartOptions> options,
+    TimeProvider? timeProvider = null) : ICartStore
 {
     public const string ResiliencePipelineName = "cart-redis";
     private const int MaximumCasAttempts = 100;
@@ -26,6 +21,7 @@ public sealed class CartStore(
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly CartOptions _options = options.Value;
     private readonly ResiliencePipeline _pipeline = pipelineProvider.GetPipeline(ResiliencePipelineName);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public Task<CartSnapshot> GetSnapshotAsync(string ownerId, CancellationToken cancellationToken)
     {
@@ -215,7 +211,7 @@ public sealed class CartStore(
                     return (IReadOnlyList<CartLineItem>)merged.ToLineItems().OrderBy(item => item.AddedAt).ToList();
                 }
 
-                await Task.Delay(TimeSpan.FromMilliseconds(1), ct);
+                await Task.Delay(TimeSpan.FromMilliseconds(1), _timeProvider, ct);
             }
 
             throw new InvalidOperationException($"The cart changed too frequently to merge after {MaximumCasAttempts} attempts.");
@@ -248,7 +244,7 @@ public sealed class CartStore(
                     return true;
                 }
 
-                await Task.Delay(TimeSpan.FromMilliseconds(1), ct);
+                await Task.Delay(TimeSpan.FromMilliseconds(1), _timeProvider, ct);
             }
 
             throw new InvalidOperationException($"The cart changed too frequently to mutate after {MaximumCasAttempts} attempts.");

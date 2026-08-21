@@ -1,5 +1,6 @@
 using BuildingBlocks;
 using BuildingBlocks.WebAuthentication;
+using Cart.Service.Application;
 using Cart.Service.Data;
 using Cart.Service.Endpoints;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -23,6 +24,7 @@ builder.Logging.AddOrdersOpenTelemetryLogging("cart-service", instanceId, builde
 
 builder.Services.AddOrdersObservability("cart-service", instanceId, builder.Environment.EnvironmentName);
 
+builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddOrdersRedis(builder.Configuration);
 builder.Services.AddOrdersResilience();
@@ -37,6 +39,7 @@ builder.Services.AddOptions<CatalogClientOptions>()
     .ValidateOnStart();
 
 builder.Services.AddSingleton<CartStore>();
+builder.Services.AddSingleton<ICartStore>(serviceProvider => serviceProvider.GetRequiredService<CartStore>());
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddHttpClient<ICatalogClient, CatalogClient>((serviceProvider, client) =>
 {
@@ -56,6 +59,11 @@ app.UseExceptionHandler();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

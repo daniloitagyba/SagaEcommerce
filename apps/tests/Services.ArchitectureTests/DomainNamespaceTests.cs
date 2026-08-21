@@ -69,6 +69,36 @@ public class DomainNamespaceTests
         Assert.True(result.IsSuccessful, Describe(result));
     }
 
+    [Fact]
+    public void CartEndpointsDependOnTheCartStorePortInsteadOfTheRedisAdapter()
+    {
+        var assembly = typeof(Cart.Service.Endpoints.CartEndpoints).Assembly;
+
+        var result = Types.InAssembly(assembly)
+            .That()
+            .ResideInNamespace("Cart.Service.Endpoints")
+            .ShouldNot()
+            .HaveDependencyOn("Cart.Service.Data.CartStore")
+            .GetResult();
+
+        Assert.True(result.IsSuccessful, Describe(result));
+    }
+
+    [Fact]
+    public void PaymentRiskPolicyHasNoEfCoreDependency()
+    {
+        var assembly = typeof(Payments.Service.Risk.PaymentRiskPolicy).Assembly;
+
+        var result = Types.InAssembly(assembly)
+            .That()
+            .HaveName("PaymentRiskPolicy")
+            .ShouldNot()
+            .HaveDependencyOn("Microsoft.EntityFrameworkCore")
+            .GetResult();
+
+        Assert.True(result.IsSuccessful, Describe(result));
+    }
+
     [Theory]
     [InlineData("Microsoft.EntityFrameworkCore")]
     [InlineData("Npgsql")]

@@ -14,9 +14,6 @@ public sealed class KeycloakOptions
     public string ClientSecret { get; init; } = string.Empty;
 }
 
-/// <summary>
-/// Provides access tokens for Orders Worker.
-/// </summary>
 public sealed class KeycloakTokenProvider(
     HttpClient httpClient,
     Microsoft.Extensions.Options.IOptions<KeycloakOptions> options,

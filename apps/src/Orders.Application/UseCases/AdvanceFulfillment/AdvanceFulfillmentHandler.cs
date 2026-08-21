@@ -16,18 +16,13 @@ public enum AdvanceFulfillmentOutcome
 
 public sealed record AdvanceFulfillmentResult(AdvanceFulfillmentOutcome Outcome, string? Status);
 
-/// <summary>
-/// Moves an order through the fulfilment states an external actor drives.
-/// </summary>
+/// <summary>Moves an order through the fulfilment states an external actor drives.</summary>
 public sealed class AdvanceFulfillmentHandler(
     IOrderStatusRepository repository,
     IOrderRepository orderRepository,
     IOrderCache orderCache,
     ILogger<AdvanceFulfillmentHandler> logger)
 {
-    /// <summary>
-    /// The states a shopper may cancel their own order from.
-    /// </summary>
     private static readonly string[] SelfServiceCancellableFrom =
         [OrderStatuses.Created, OrderStatuses.Confirmed, OrderStatuses.Backordered];
 
@@ -69,9 +64,6 @@ public sealed class AdvanceFulfillmentHandler(
         }
     }
 
-    /// <summary>
-    /// Lets a shopper cancel their own order via the self-service route.
-    /// </summary>
     public async Task<AdvanceFulfillmentResult> HandleSelfServiceCancelAsync(
         Guid orderId,
         CallerIdentity caller,

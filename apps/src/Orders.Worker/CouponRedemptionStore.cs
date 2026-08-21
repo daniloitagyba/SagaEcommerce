@@ -4,9 +4,7 @@ using NpgsqlTypes;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Settles a coupon redemption once its order reaches a terminal state.
-/// </summary>
+/// <summary>Settles a coupon redemption once its order reaches a terminal state.</summary>
 public sealed class CouponRedemptionStore
 {
     private const string ConfirmSql = """

@@ -24,9 +24,13 @@ public sealed class RetentionOptions
     public int SweepIntervalMinutes { get; set; } = 60;
 }
 
-public sealed class RetentionSweeper(IOptions<RetentionOptions> options, ILogger<RetentionSweeper> logger) : BackgroundService
+public sealed class RetentionSweeper(
+    IOptions<RetentionOptions> options,
+    ILogger<RetentionSweeper> logger,
+    TimeProvider? timeProvider = null) : BackgroundService
 {
     private readonly RetentionOptions _options = options.Value;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -53,7 +57,7 @@ public sealed class RetentionSweeper(IOptions<RetentionOptions> options, ILogger
                 }
             }
 
-            await Task.Delay(TimeSpan.FromMinutes(_options.SweepIntervalMinutes), stoppingToken);
+            await Task.Delay(TimeSpan.FromMinutes(_options.SweepIntervalMinutes), _timeProvider, stoppingToken);
         }
     }
 
@@ -62,7 +66,7 @@ public sealed class RetentionSweeper(IOptions<RetentionOptions> options, ILogger
         await using var connection = new NpgsqlConnection(_options.ConnectionString);
         await connection.OpenAsync(cancellationToken);
 
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-(target.RetentionDaysOverride ?? _options.RetentionDays));
+        var cutoff = _timeProvider.GetUtcNow().AddDays(-(target.RetentionDaysOverride ?? _options.RetentionDays));
         long totalDeleted = 0;
 
         while (!cancellationToken.IsCancellationRequested)

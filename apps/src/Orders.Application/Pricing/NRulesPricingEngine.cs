@@ -6,9 +6,6 @@ using Orders.Domain.Pricing;
 
 namespace Orders.Application.Pricing;
 
-/// <summary>
-/// Prices orders using promotion rules.
-/// </summary>
 public sealed class NRulesPricingEngine : IPricingEngine
 {
     private readonly ISessionFactory _sessionFactory;
@@ -121,9 +118,6 @@ public sealed class NRulesPricingEngine : IPricingEngine
         return _options.TaxRatePercentage;
     }
 
-    /// <summary>
-    /// Resolves promotion exclusivity groups.
-    /// </summary>
     private static List<AppliedDiscount> ResolveExclusivity(List<AppliedDiscount> discounts)
     {
         var ungrouped = discounts.Where(discount => discount.ExclusivityGroup is null);
@@ -138,9 +132,6 @@ public sealed class NRulesPricingEngine : IPricingEngine
         return [.. ungrouped.Concat(winners).OrderBy(discount => discount.Code, StringComparer.Ordinal)];
     }
 
-    /// <summary>
-    /// Caps discounts at the order subtotal.
-    /// </summary>
     private static List<AppliedDiscount> CapDiscounts(
         List<AppliedDiscount> discounts,
         Money subtotal,
@@ -170,9 +161,6 @@ public sealed class NRulesPricingEngine : IPricingEngine
     }
 }
 
-/// <summary>
-/// Ranks discounts for payout.
-/// </summary>
 internal static class DiscountPriority
 {
     private static readonly string[] AutomaticPrefixes = ["CATEGORY-", "BULK-", "TIER-"];

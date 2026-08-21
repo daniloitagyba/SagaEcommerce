@@ -11,14 +11,9 @@ public interface ICouponRepository
         CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// A checkout's claim on a coupon, reserved in the same transaction that persists the order.
-/// </summary>
+/// <summary>A checkout's claim on a coupon, reserved in the same transaction that persists the order.</summary>
 public sealed record CouponReservation(string Code, Guid OrderId, string CustomerId, DateTimeOffset ReservedAt);
 
-/// <summary>
-/// Represents a coupon reservation conflict.
-/// </summary>
 public sealed class CouponRedemptionUnavailableException(string code, string reason)
     : Exception($"Coupon '{code}' could not be redeemed: {reason}")
 {

@@ -5,6 +5,8 @@
          handler (timeout, retry, circuit breaker) that Orders.Worker and
          Cart.Service already use for the same client. -->
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.OpenApi" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\BuildingBlocks.Caching\BuildingBlocks.Caching.csproj" />

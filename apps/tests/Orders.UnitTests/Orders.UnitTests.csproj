@@ -17,6 +17,7 @@
          which is exactly what generated inputs find. -->
     <PackageReference Include="CsCheck" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <!-- Microsoft.EntityFrameworkCore.Sqlite 10.0.4 transitively pulls
          SQLitePCLRaw.lib.e_sqlite3 2.1.11, which NuGet's own vulnerability
          audit (Milestone 59's guardrail) flags as a known high-severity

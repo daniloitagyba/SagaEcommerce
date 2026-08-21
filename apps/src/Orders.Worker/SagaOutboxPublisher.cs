@@ -10,9 +10,6 @@ using Polly.Registry;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Publishes persisted saga commands.
-/// </summary>
 public sealed class SagaOutboxPublisher(
     NpgsqlDataSource dataSource,
     IProducer<string, string> producer,
@@ -61,9 +58,6 @@ public sealed class SagaOutboxPublisher(
         return messages.Count;
     }
 
-    /// <summary>
-    /// Claims pending saga commands.
-    /// </summary>
     private async Task<List<PendingSagaCommand>> ClaimBatchAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
@@ -196,9 +190,6 @@ public sealed class SagaOutboxPublisher(
         }, cancellationToken);
     }
 
-    /// <summary>
-    /// Marks an exhausted saga command as failed.
-    /// </summary>
     private async Task MoveToDeadLetterAsync(PendingSagaCommand item, int attemptCount, string error, CancellationToken cancellationToken)
     {
         const string sql = """

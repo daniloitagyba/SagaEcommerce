@@ -6,9 +6,6 @@ using Polly.Registry;
 
 namespace Orders.Worker;
 
-/// <summary>
-/// Stores saga orchestration state in PostgreSQL.
-/// </summary>
 public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, ResiliencePipelineProvider<string> pipelineProvider)
 {
     private const string InsertParentSql = """
@@ -183,9 +180,6 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
         }, cancellationToken).AsTask();
     }
 
-    /// <summary>
-    /// Deletes a saga at the expected step.
-    /// </summary>
     public Task<SagaOrchestrationRecord?> TryCompleteAsync(
         Guid orderId,
         string expectedCurrentStep,
@@ -199,9 +193,6 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
         CancellationToken cancellationToken) =>
         TryCompleteCoreAsync(orderId, expectedCurrentStep, commandFactory, null, cancellationToken);
 
-    /// <summary>
-    /// Completes a saga and transitions its order.
-    /// </summary>
     public Task<SagaOrchestrationRecord?> TryCompleteAndResolveAsync(
         Guid orderId,
         string expectedCurrentStep,
@@ -255,9 +246,6 @@ public sealed partial class SagaOrchestrationStore(NpgsqlDataSource dataSource, 
         }, cancellationToken).AsTask();
     }
 
-    /// <summary>
-    /// Records a saga line outcome.
-    /// </summary>
     public async Task<IReadOnlyList<SagaLineRecord>?> RecordLineOutcomeAsync(
         Guid orderId,
         Guid reservationId,

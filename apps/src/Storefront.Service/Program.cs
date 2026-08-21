@@ -27,6 +27,7 @@ builder.Logging.AddJsonConsole(options =>
 builder.Logging.AddOrdersOpenTelemetryLogging("storefront-service", instanceId, builder.Environment.EnvironmentName);
 
 builder.Services.AddOrdersObservability("storefront-service", instanceId, builder.Environment.EnvironmentName);
+builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddOptions<CatalogProxyOptions>()
@@ -77,6 +78,11 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseMiddleware<CorrelationIdMiddleware>();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = _ => false });

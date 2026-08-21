@@ -46,9 +46,6 @@ public sealed partial class AntiEntropySweeper
         return divergences;
     }
 
-    /// <summary>
-    /// Detects stale order summary projections.
-    /// </summary>
     private async Task<int> CheckWriteModelMatchesReadModelAsync(CancellationToken cancellationToken)
     {
         const string sql = """
@@ -100,9 +97,6 @@ public sealed partial class AntiEntropySweeper
         return divergences;
     }
 
-    /// <summary>
-    /// Detects incomplete orders without a saga.
-    /// </summary>
     private async Task<int> CheckOrdersStuckWithoutASagaRowAsync(CancellationToken cancellationToken)
     {
         const string sql = """
@@ -172,9 +166,6 @@ public sealed partial class AntiEntropySweeper
         return results;
     }
 
-    /// <summary>
-    /// Reads a named check's saved position.
-    /// </summary>
     private async Task<(DateTimeOffset CreatedAt, Guid Id)> GetCursorAsync(string checkName, CancellationToken cancellationToken)
     {
         await using var command = dataSource.CreateCommand(
@@ -190,9 +181,6 @@ public sealed partial class AntiEntropySweeper
         return (DateTimeOffset.MinValue, Guid.Empty);
     }
 
-    /// <summary>
-    /// Advances an anti-entropy check cursor.
-    /// </summary>
     private async Task AdvanceCursorAsync(
         string checkName, int rowsReturned, int batchSize, DateTimeOffset lastCreatedAt, Guid lastId, CancellationToken cancellationToken)
     {

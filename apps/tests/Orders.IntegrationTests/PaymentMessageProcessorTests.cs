@@ -37,6 +37,9 @@ public sealed class PaymentMessageProcessorTests(PostgresFixture fixture) : IAsy
         var services = new ServiceCollection();
         services.AddDbContext<PaymentsDbContext>(options => options.UseNpgsql(connectionString));
         services.Configure<PaymentRiskOptions>(_ => { });
+        services.AddScoped<IPaymentHistoryReader, EfPaymentHistoryReader>();
+        services.AddSingleton(serviceProvider => new PaymentRiskPolicy(
+            serviceProvider.GetRequiredService<IOptions<PaymentRiskOptions>>().Value));
         services.AddScoped<PaymentRiskEvaluator>();
         services.AddScoped<PaymentDecisionCoordinator>();
         services.AddOrdersResilience();

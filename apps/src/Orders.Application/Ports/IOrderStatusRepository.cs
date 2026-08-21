@@ -13,9 +13,6 @@ public sealed record OrderTransition(OrderTransitionOutcome Outcome, string? Pay
 
 public interface IOrderStatusRepository
 {
-    /// <summary>
-    /// Transitions an order to the target status.
-    /// </summary>
     Task<OrderTransition> TryTransitionAsync(
         Guid orderId,
         string targetStatus,

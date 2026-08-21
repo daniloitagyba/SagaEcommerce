@@ -18,9 +18,7 @@ public sealed record ReturnOrderResult(
     bool OrderFullyReturned,
     bool OrderNotFound);
 
-/// <summary>
-/// Accepts a partial return and works out what it is worth.
-/// </summary>
+/// <summary>Accepts a partial return and works out what it is worth.</summary>
 public sealed class ReturnOrderHandler(
     IOrderReturnRepository repository,
     IOrderCache orderCache,
