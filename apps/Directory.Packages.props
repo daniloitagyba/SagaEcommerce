@@ -8,7 +8,7 @@
     <PackageVersion Include="Confluent.Kafka" Version="2.15.0" />
     <PackageVersion Include="Confluent.SchemaRegistry" Version="2.15.0" />
     <PackageVersion Include="Confluent.SchemaRegistry.Serdes.Avro" Version="2.15.0" />
-    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="CsCheck" Version="4.8.0" />
     <PackageVersion Include="FluentValidation" Version="12.1.1" />
     <PackageVersion Include="Grpc.AspNetCore" Version="2.80.0" />
