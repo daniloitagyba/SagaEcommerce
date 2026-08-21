@@ -258,7 +258,7 @@ jobs:
           dotnet tool install --global dotnet-reportgenerator-globaltool
           reportgenerator -reports:"./coverage/**/coverage.cobertura.xml" \
             -targetdir:./coverage/report -reporttypes:"Html;TextSummary" \
-            -classfilters:"-*.Migrations.*"
+            -classfilters:"-*.Migrations.*;-Orders.Infrastructure.Persistence.*"
           cat ./coverage/report/Summary.txt
 
       - name: upload coverage report
